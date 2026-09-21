@@ -1,0 +1,21 @@
+{
+  "trigger_next_round": "获取本轮玩家行动。phase_plan 填恢复结果，包含 Countdowns、Pending_Triggers 数组、Forced_Checks；可传对象或 JSON 对象字符串。",
+  "append_story": "追加玩家可见正文 content 和一句话摘要 one_line_summary_of_content。正文不可改写，不重复已发布内容。",
+  "end_the_round": "发布正文并保存变更后，提交 NEXT_TURN_CACHE 结束本轮；Story_Phase 必填，终局加 game_over:true。成功后停止。",
+  "roll_dice": "按规则掷骰。dice_dict 的值为 NdM、-NdM 或整数，不支持混合算式；修正填 left_modifiers/right_modifiers。检定用 target_value 和 compare_mode，仅计算用 calculate_only:true；暗骰用 is_secret:true，大成功/失败范围为 \"[min,max]\"。",
+  "generate_random_number": "生成 min_val 到 max_val 的闭区间随机整数；骰子检定用 roll_dice。",
+  "random_select": "从 items 按 weights 随机选一项；权重非负且不能全为零，省略时取对象 weight 或 1。",
+  "calculate_difficulty_class": "根据 subject_value 与 target_value 计算相对难度，返回 calculated_dc；具体使用服从世界规则。",
+  "read_file": "读取文本；offset 从零起、limit 按字符计。按 totalLength/truncated 继续分页。支持 /workspace 和 /.reference。",
+  "read_multiple_files": "批量读取 paths 中最多 20 个文本文件；limit 为每文件字符上限。",
+  "list_dir": "列出 path 的直属文件和子目录。",
+  "tree": "显示 path 的目录树；depth 为展开层数，默认 3，范围 0 到 10。truncated 表示省略，可缩小路径查看。",
+  "search": "按 pattern 搜索世界文件名或正文，用 path 限定目录。",
+  "write_file": "创建或覆盖文本文件；覆盖前先读取最新内容，保留未修改部分。",
+  "append_file": "向已有文本文件末尾原样追加 content，不自动换行；先读取最新内容。",
+  "apply_patch": "将文件中唯一匹配的 old_str 替换为 new_str；先读取最新内容。",
+  "mkdir": "创建世界目录。",
+  "move": "移动或重命名文件及目录，维护引用，不改 Player-* ID。",
+  "copy": "复制文件及目录，不创建额外 Player-*。",
+  "delete": "删除文件或目录；先读取受影响文本，确认无后续用途，优先保留历史事实。"
+}

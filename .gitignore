@@ -1,0 +1,8 @@
+node_modules/
+dist/
+others/
+tests/
+docs/
+assets/trpg_rule_books/
+参考/
+assets/modules.json

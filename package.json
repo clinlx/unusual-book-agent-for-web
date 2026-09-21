@@ -1,0 +1,11 @@
+{
+  "name": "single-player-trpg",
+  "private": true,
+  "scripts": {
+    "build": "node build.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "devDependencies": {
+    "javascript-obfuscator": "5.7.0"
+  }
+}
