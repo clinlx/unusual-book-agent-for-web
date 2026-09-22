@@ -7,6 +7,78 @@ const ZIP = (() => {
     return new Uint8Array(await stream.arrayBuffer());
   }
 
+
+  const UTF8_LOOSE = new TextDecoder('utf-8');
+  const UTF8_FATAL = new TextDecoder('utf-8', { fatal: true });
+
+  function decodeWith(label, bytes, fatal = true) {
+    try { return new TextDecoder(label, { fatal }).decode(bytes); }
+    catch (_) { return null; }
+  }
+
+  function unicodePathFromExtra(extra, rawName) {
+    for (let off = 0; off + 4 <= extra.length;) {
+      const id = extra[off] | (extra[off + 1] << 8);
+      const size = extra[off + 2] | (extra[off + 3] << 8);
+      off += 4;
+      if (off + size > extra.length) break;
+      if (id === 0x7075 && size >= 5 && extra[off] === 1) {
+        const storedCrc = (extra[off + 1] | (extra[off + 2] << 8) |
+          (extra[off + 3] << 16) | (extra[off + 4] << 24)) >>> 0;
+        if (storedCrc === crc32(rawName)) {
+          const decoded = decodeWith('utf-8', extra.subarray(off + 5, off + size), true);
+          if (decoded !== null) return decoded;
+        }
+      }
+      off += size;
+    }
+    return null;
+  }
+
+  function legacyNameScore(text, label) {
+    let score = label === 'gb18030' ? 0.35 : label === 'big5' ? 0.25 : 0;
+    for (const ch of text) {
+      const cp = ch.codePointAt(0);
+      if (cp === 0xfffd) score -= 100;
+      else if (cp < 0x20 || cp === 0x7f) score -= 20;
+      else if ((cp >= 0x4e00 && cp <= 0x9fff) || (cp >= 0x3400 && cp <= 0x4dbf)) score += 2.2;
+      else if (cp >= 0x3040 && cp <= 0x30ff) score += 1.8;
+      else if (cp >= 0xac00 && cp <= 0xd7af) score += 1.8;
+      else if (cp < 0x80) score += 0.05;
+      else score += 0.2;
+    }
+    return score;
+  }
+
+  function decodeZipName(rawName, flags, extra) {
+    // Info-ZIP Unicode Path Extra Field (0x7075) is the most reliable source
+    // for archives whose legacy filename bytes are not UTF-8.
+    const unicodeName = unicodePathFromExtra(extra, rawName);
+    if (unicodeName !== null) return unicodeName;
+
+    // General-purpose bit 11 explicitly declares UTF-8 filenames.
+    if (flags & 0x0800) return UTF8_LOOSE.decode(rawName);
+
+    // Some writers store UTF-8 correctly but forget to set bit 11.
+    try { return UTF8_FATAL.decode(rawName); }
+    catch (_) {}
+
+    // Legacy ZIPs have no universal filename encoding. Try common East Asian
+    // encodings and choose the most plausible lossless decoding.
+    const candidates = [];
+    for (const label of ['gb18030', 'big5', 'shift_jis', 'euc-kr']) {
+      const text = decodeWith(label, rawName, true);
+      if (text !== null) candidates.push({ text, score: legacyNameScore(text, label) });
+    }
+    if (candidates.length) {
+      candidates.sort((a, b) => b.score - a.score);
+      return candidates[0].text;
+    }
+
+    // Last resort preserves the previous replacement-character behavior.
+    return UTF8_LOOSE.decode(rawName);
+  }
+
   async function parseZip(arrayBuffer) {
     const dv = new DataView(arrayBuffer);
     const bytes = new Uint8Array(arrayBuffer);
@@ -18,10 +90,10 @@ const ZIP = (() => {
     if (eocd === -1) throw new Error('不是有效的 zip 文件');
     const count = dv.getUint16(eocd + 10, true);
     let ptr = dv.getUint32(eocd + 16, true);
-    const dec = new TextDecoder();
     const files = [];
     for (let i = 0; i < count; i++) {
       if (dv.getUint32(ptr, true) !== 0x02014b50) throw new Error('中央目录损坏');
+      const flags = dv.getUint16(ptr + 8, true);
       const method = dv.getUint16(ptr + 10, true);
       const time = dv.getUint16(ptr + 12, true), date = dv.getUint16(ptr + 14, true);
       const month = (date >> 5) & 15, day = date & 31;
@@ -32,7 +104,9 @@ const ZIP = (() => {
       const extraLen = dv.getUint16(ptr + 30, true);
       const commentLen = dv.getUint16(ptr + 32, true);
       const localOff = dv.getUint32(ptr + 42, true);
-      const name = dec.decode(bytes.subarray(ptr + 46, ptr + 46 + nameLen));
+      const nameBytes = bytes.subarray(ptr + 46, ptr + 46 + nameLen);
+      const extraBytes = bytes.subarray(ptr + 46 + nameLen, ptr + 46 + nameLen + extraLen);
+      const name = decodeZipName(nameBytes, flags, extraBytes);
       
       const lNameLen = dv.getUint16(localOff + 26, true);
       const lExtraLen = dv.getUint16(localOff + 28, true);
@@ -43,7 +117,7 @@ const ZIP = (() => {
       else if (method === 8) raw = await inflateRaw(comp);
       else throw new Error('不支持的压缩方法: ' + method);
       const isDir = name.endsWith('/');
-      files.push({ name, isDir, text: isDir ? '' : dec.decode(raw), bytes: raw, mtime });
+      files.push({ name, isDir, text: isDir ? '' : UTF8_LOOSE.decode(raw), bytes: raw, mtime });
       ptr += 46 + nameLen + extraLen + commentLen;
     }
     return files;
