@@ -1,0 +1,278 @@
+{
+  "CHARACTER_INFO_VARIANTS": {
+    "姓名": [
+      "姓名",
+      "Name",
+      "name",
+      "昵称",
+      "Nickname",
+      "nickname"
+    ],
+    "性别": [
+      "性别",
+      "Gender",
+      "gender",
+      "Sex",
+      "sex"
+    ],
+    "外貌": [
+      "外貌",
+      "Appearance",
+      "appearance",
+      "Look",
+      "look"
+    ],
+    "穿戴": [
+      "穿戴",
+      "Wearing",
+      "wearing"
+    ],
+    "性格": [
+      "性格",
+      "Personality",
+      "personality",
+      "Character",
+      "character"
+    ],
+    "职业": [
+      "职业",
+      "Occupation",
+      "occupation",
+      "Job",
+      "job"
+    ],
+    "身份": [
+      "身份",
+      "Identity",
+      "identity",
+      "Role",
+      "role"
+    ],
+    "说话习惯": [
+      "说话习惯",
+      "SpeakingStyle",
+      "speaking_style",
+      "Tone",
+      "tone"
+    ],
+    "原则": [
+      "原则",
+      "Principles",
+      "principles"
+    ],
+    "喜好/厌恶": [
+      "喜好/厌恶",
+      "Likes/Dislikes",
+      "likes_dislikes",
+      "Preferences",
+      "preferences",
+      "喜好",
+      "厌恶"
+    ],
+    "技能": [
+      "技能",
+      "Skill",
+      "skill",
+      "Skills",
+      "skills"
+    ],
+    "属性": [
+      "属性",
+      "Stats",
+      "stats",
+      "Attributes"
+    ],
+    "主动技能": [
+      "主动技能",
+      "ActiveSkills",
+      "active_skills"
+    ],
+    "状态": [
+      "状态",
+      "Status",
+      "status",
+      "CurrentState"
+    ],
+    "buff栏": [
+      "buff",
+      "Buff栏",
+      "buff栏",
+      "Buffs",
+      "buffs",
+      "BuffList"
+    ],
+    "当前位置": [
+      "当前位置",
+      "所在位置",
+      "位置",
+      "Location",
+      "location",
+      "Pos",
+      "pos"
+    ]
+  },
+  "BUFF_VARIANTS": {
+    "名称": [
+      "名称",
+      "Name",
+      "BuffID"
+    ],
+    "描述": [
+      "描述",
+      "Desc",
+      "EffectText",
+      "description"
+    ],
+    "修正": [
+      "修正",
+      "Modifier",
+      "StatsMod",
+      "modifier"
+    ],
+    "剩余时间": [
+      "剩余时间",
+      "Duration",
+      "TurnsLeft",
+      "duration"
+    ],
+    ".隐藏效果": [
+      ".隐藏效果",
+      ".HiddenEffect",
+      ".hidden_effect"
+    ],
+    ".当结束时": [
+      ".当结束时",
+      ".WhenEnd",
+      ".when_end"
+    ]
+  },
+  "ACTIVE_SKILL_VARIANTS": {
+    "名称": [
+      "名称",
+      "SkillName",
+      "ActionID",
+      "name",
+      "Name",
+      "SkillID"
+    ],
+    "描述": [
+      "描述",
+      "FlavorText",
+      "Effect",
+      "description",
+      "Desc",
+      "EffectText"
+    ],
+    "修正": [
+      "修正",
+      "Modifier",
+      "CombatMod",
+      "modifier"
+    ],
+    "消耗": [
+      "消耗",
+      "Cost",
+      "Resources",
+      "cost"
+    ],
+    "冷却": [
+      "冷却",
+      "Cooldown",
+      "cooldown",
+      "CD"
+    ],
+    "当前冷却状态": [
+      "当前冷却状态",
+      "CooldownStatus",
+      "cooldown_status"
+    ],
+    "范围": [
+      "范围",
+      "Range",
+      "Area",
+      "range"
+    ],
+    "前置条件": [
+      "前置条件",
+      "Requirements",
+      "Pre",
+      "requirements"
+    ],
+    ".隐藏效果": [
+      ".隐藏效果",
+      ".HiddenEffect",
+      ".hidden_effect"
+    ]
+  },
+  "STATUS_VARIANTS": {
+    "HP": [
+      "HP",
+      "Health",
+      "生命值"
+    ],
+    "MAXHP": [
+      "MAXHP",
+      "MaxHealth",
+      "生命值上限",
+      "最大生命值"
+    ],
+    "MP": [
+      "MP",
+      "Mana",
+      "魔法值",
+      "魔力值"
+    ],
+    "MAXMP": [
+      "MAXMP",
+      "MaxMana",
+      "魔法值上限",
+      "最大魔法值",
+      "魔力值上限"
+    ],
+    "Enabled": [
+      "Enabled",
+      "enabled",
+      "Active",
+      "active"
+    ],
+    "Alive": [
+      "Alive",
+      "alive",
+      "Living",
+      "living"
+    ]
+  },
+  "FORBIDDEN_CHARACTER_INFO_KEYS": [
+    "背包",
+    "Backpack",
+    "backpack",
+    "Inventory",
+    "inventory",
+    "Bag",
+    "bag",
+    "Items",
+    "items",
+    "ItemList",
+    "item_list"
+  ],
+  "OPTIONAL_STATUS_VARIANTS": {
+    "SAN": [
+      "SAN",
+      "Sanity",
+      "理智",
+      "理智值"
+    ],
+    "MAXSAN": [
+      "MAXSAN",
+      "MaxSanity",
+      "理智上限",
+      "理智值上限",
+      "最大理智值"
+    ]
+  },
+  "DERIVED_VARIANTS": [
+    "衍生属性",
+    "DerivedStats",
+    "DerivedAttributes"
+  ]
+}

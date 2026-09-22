@@ -6,3 +6,4 @@ docs/
 assets/trpg_rule_books/
 参考/
 assets/modules.json
+__pycache__

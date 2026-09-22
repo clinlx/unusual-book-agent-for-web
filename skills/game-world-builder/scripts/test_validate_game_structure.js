@@ -1,0 +1,38 @@
+'use strict';
+const {test}=require('node:test'),a=require('node:assert/strict');
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),{spawnSync}=require('node:child_process');
+const {validateStructure}=require('./validate_game_structure');
+function fixture(t) {
+  const temp=fs.mkdtempSync(path.join(os.tmpdir(),'world-validation-')),root=path.join(temp,'world');
+  t.after(()=>fs.rmSync(temp,{recursive:true,force:true}));
+  const write=(p,text)=>{const full=path.join(root,p);fs.mkdirSync(path.dirname(full),{recursive:true});fs.writeFileSync(full,text);};
+  const json=(p,value)=>write(p,JSON.stringify(value));
+  for(const d of ['存档-索引-NPC','存档-索引-物品','存档-旧']) fs.mkdirSync(path.join(root,d),{recursive:true});
+  for(const p of ['模组.md','开场白.md','样例开场.md','剧情线与进度/主线剧情.md','世界状态和世界规则/世界规则.md','世界状态和世界规则/掷骰规则.md','世界状态和世界规则/检定与触发器索引.md','存档-世界/世界日志.txt']) write(p,'测试世界。'.repeat(30));
+  json('世界状态和世界规则/世界共识.json',{世界时间:'第一天'});
+  const doc=fs.readFileSync(path.join(__dirname,'../reference/WorldDataContract.md'),'utf8');
+  const info=JSON.parse(doc.split('```json\n')[1].split('```')[0]);
+  json('Player-pc/基础信息.json',info);
+  for(const f of ['关系记忆.json','格式化记忆.json','关系图.json','待办与目标.json']) json('Player-pc/'+f,{});
+  json('Player-pc/背包.json',[]);write('Player-pc/日志.txt','');
+  const item=(owner='Player-pc')=>{json('存档-索引-物品/key/物品基础信息.json',{名称:'钥匙',信息:'开门',位置所属:owner,可见性:'可见',余量:1,Action字典:{}});write('存档-索引-物品/key/物品日志.txt','');};
+  return {temp,root,write,json,info,item,errors:()=>validateStructure(root)};
+}
+test('documented character creation template passes without derived stats',t=>a.deepEqual(fixture(t).errors(),[]));
+test('multiple players and empty player IDs fail',t=>{const f=fixture(t);fs.cpSync(path.join(f.root,'Player-pc'),path.join(f.root,'Player-p2'),{recursive:true});a.match(f.errors().join('\n'),/玩家数量/);fs.rmSync(path.join(f.root,'Player-p2'),{recursive:true});fs.renameSync(path.join(f.root,'Player-pc'),path.join(f.root,'Player-'));a.match(f.errors().join('\n'),/玩家ID/);});
+for(const value of ['not json','','[NaN]']) test('invalid backpack '+JSON.stringify(value),t=>{const f=fixture(t);f.write('Player-pc/背包.json',value);a.match(f.errors().join('\n'),/JSON.*背包.json/);});
+for(const name of ['剧情线与进度/custom.json','Player-pc/关系记忆.json','存档-世界/场景/场景信息.json','存档-世界/场景/场景台本.json']) test('all JSON parsed: '+name,t=>{const f=fixture(t);f.write(name,'not json');a.ok(f.errors().some(e=>e.includes('JSON')&&e.includes(name)));});
+test('UTF-8 BOM is accepted',t=>{const f=fixture(t);f.write('Player-pc/基础信息.json','\uFEFF'+JSON.stringify(f.info));f.write('Player-pc/背包.json','\uFEFF[]');a.deepEqual(f.errors(),[]);});
+for(const ref of ['key','存档-索引-物品/key','存档-索引-物品/key/物品基础信息.json','/workspace/存档-索引-物品/key/物品基础信息.json','存档-索引-物品\\key\\物品基础信息.json']) test('item reference '+ref,t=>{const f=fixture(t);f.item();f.json('Player-pc/背包.json',[ref]);a.deepEqual(f.errors(),[]);});
+test('missing attire reference fails',t=>{const f=fixture(t);f.info.穿戴={右手:'missing'};f.json('Player-pc/基础信息.json',f.info);a.match(f.errors().join('\n'),/missing/);});
+test('NPC attire counts as a location',t=>{const f=fixture(t);fs.cpSync(path.join(f.root,'Player-pc'),path.join(f.root,'存档-索引-NPC/guard'),{recursive:true});f.info.穿戴={右手:'key'};f.json('存档-索引-NPC/guard/基础信息.json',f.info);f.item('存档-索引-NPC/guard/基础信息.json');a.deepEqual(f.errors(),[]);});
+test('owner shorthand remains supported',t=>{const f=fixture(t);f.item('pc');f.json('Player-pc/背包.json',['key']);a.deepEqual(f.errors(),[]);});
+test('state values cannot live in attributes',t=>{const f=fixture(t);f.info.属性.Health=f.info.状态.HP;delete f.info.状态.HP;f.json('Player-pc/基础信息.json',f.info);a.match(f.errors().join('\n'),/数值归属/);});
+test('alias duplicates and optional sanity',t=>{const f=fixture(t);f.info.状态.生命值=1;f.json('Player-pc/基础信息.json',f.info);a.match(f.errors().join('\n'),/重复数值/);delete f.info.状态.生命值;Object.assign(f.info.状态,{SAN:50,MAXSAN:99});f.json('Player-pc/基础信息.json',f.info);a.deepEqual(f.errors(),[]);f.info.衍生属性={理智值:50};f.json('Player-pc/基础信息.json',f.info);a.match(f.errors().join('\n'),/数值归属/);});
+test('same stat across groups fails',t=>{const f=fixture(t);f.info.属性.STR=10;f.info.衍生属性={str:10};f.json('Player-pc/基础信息.json',f.info);a.match(f.errors().join('\n'),/重复数值/);});
+test('normalized active skill aliases are checked',t=>{const f=fixture(t);delete f.info.主动技能;f.info['active-skills']=[{Name:'冲刺'}];f.json('Player-pc/基础信息.json',f.info);a.match(f.errors().join('\n'),/消耗/);});
+test('external references fail',t=>{const f=fixture(t);fs.writeFileSync(path.join(f.temp,'outside.json'),'{}');f.json('Player-pc/背包.json',['../outside.json']);a.match(f.errors().join('\n'),/引用错误/);});
+test('wrong directory type does not crash',t=>{const f=fixture(t);fs.rmdirSync(path.join(f.root,'存档-索引-NPC'));f.write('存档-索引-NPC','');a.match(f.errors().join('\n'),/目录缺失/);});
+test('fixed opening requires opening story text',t=>{const f=fixture(t);f.write('故事.txt','既定主角');a.match(f.errors().join('\n'),/开场剧情.txt/);f.write('开场剧情.txt','开场');a.deepEqual(f.errors(),[]);});
+test('scene containers account for item locations',t=>{const f=fixture(t);const dir='存档-世界/区域/大厅';f.item(dir);f.json(dir+'/场景信息.json',{});f.json(dir+'/场景台本.json',[]);f.json(dir+'/NPC列表.json',[]);f.json(dir+'/场景物品列表.json',['key']);f.write(dir+'/场景日志.txt','');a.deepEqual(f.errors(),[]);f.json(dir+'/场景物品列表.json',[]);a.match(f.errors().join('\n'),/不可访问物品/);});
+test('CLI handles cwd, absolute paths, invalid targets and arguments',t=>{const f=fixture(t),script=path.join(__dirname,'validate_game_structure.js');for(const [cwd,args] of [[f.root,[]],[f.temp,['world']],[f.temp,[f.root]]]){const r=spawnSync(process.execPath,[script,...args],{cwd,encoding:'utf8'});a.equal(r.status,0,r.stdout+r.stderr);}for(const [args,code] of [[[path.join(f.root,'模组.md')],1],[['--unknown'],2],[['--help'],0]]){const r=spawnSync(process.execPath,[script,...args],{encoding:'utf8'});a.equal(r.status,code);}});
