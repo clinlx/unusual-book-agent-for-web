@@ -2,7 +2,7 @@
   "trigger_next_round": "获取本轮玩家行动。phase_plan 填恢复结果，包含 Countdowns、Pending_Triggers 数组、Forced_Checks；可传对象或 JSON 对象字符串。",
   "append_story": "追加玩家可见正文 content 和一句话摘要 one_line_summary_of_content。正文不可改写，不重复已发布内容。",
   "end_the_round": "发布正文并保存变更后，提交 NEXT_TURN_CACHE 结束本轮；Story_Phase 必填，终局加 game_over:true。成功后停止。",
-  "roll_dice": "按规则掷骰。dice_dict 的值为 NdM、-NdM 或整数，不支持混合算式；修正填 left_modifiers/right_modifiers。检定用 target_value 和 compare_mode，仅计算用 calculate_only:true。is_secret 必须每次显式填写：暗骰填 true，公开骰填 false。大成功/失败范围为 \"[min,max]\"。",
+  "roll_dice": "按规则掷骰。dice_dict 的值为 NdM、-NdM 或整数，不支持混合算式；修正填 left_modifiers/right_modifiers。检定用 target_value 和 compare_mode，仅计算用 calculate_only:true。involves_player 与 is_secret 必须每次显式填写：涉及当前玩家时 involves_player:true，否则 false；公开骰 is_secret:false，暗骰 true。显示规则固定为：玩家相关公开骰显示详情；玩家相关暗骰仅提示发生过暗骰；非玩家相关骰无论是否暗骰都对玩家完全隐藏。大成功/失败范围为 \"[min,max]\"。",
   "generate_random_number": "生成 min_val 到 max_val 的闭区间随机整数；骰子检定用 roll_dice。",
   "random_select": "从 items 按 weights 随机选一项；权重非负且不能全为零，省略时取对象 weight 或 1。",
   "calculate_difficulty_class": "根据 subject_value 与 target_value 计算相对难度，返回 calculated_dc；具体使用服从世界规则。",
