@@ -6,9 +6,17 @@ const GameImport=(()=>{
   const core=typeof module!=='undefined'&&module.exports?require('./game-core.js'):GameCore;
   const history=typeof module!=='undefined'&&module.exports?require('./game-history.js'):GameHistory;
   const MANIFEST='.trpg-save.json';
+  function toBase64(bytes){
+    let out='';
+    for(let i=0;i<bytes.length;i+=32768)out+=String.fromCharCode(...bytes.subarray(i,i+32768));
+    return btoa(out);
+  }
   async function importSave(file){
-    if(!/\.zip$/i.test(file.name))throw Error('请选择 ZIP 存档');
-    const entries=await importer.prepare([file],{extractZip:true});
+    if(!/\.(zip|png)$/i.test(file.name))throw Error('请选择 ZIP 存档或带存档数据的 PNG');
+    const buffer=await file.arrayBuffer();
+    const coverBytes=zip.extractPngPrefix(buffer);
+    const archiveFile={name:file.name.replace(/\.png$/i,'.zip'),lastModified:file.lastModified,arrayBuffer:async()=>buffer};
+    const entries=await importer.prepare([archiveFile],{extractZip:true});
     const manifest=entries.find(e=>e.name===MANIFEST&&!e.isDir);
     const tree=vfs.createTree();vfs.mkdirp(tree,['workspace']);
     const seen=new Set();
@@ -18,7 +26,7 @@ const GameImport=(()=>{
       if(e.isDir)vfs.mkdirp(tree,core.path(e.name).split('/').filter(Boolean));
       else vfs.writeFile(tree,core.path(e.name),e.content,{encoding:e.encoding});
     }
-    const s=core.createSave(file.name.replace(/\.zip$/i,''),tree);
+    const s=core.createSave(file.name.replace(/\.(zip|png)$/i,''),tree);
     if(manifest){
       let m;try{m=JSON.parse(manifest.content);}catch(_){throw Error('完整存档的进度数据已损坏');}
       if(m.format!=='trpg-single-player'||m.version!==1||!m.state)throw Error('无法识别完整存档版本');
@@ -31,6 +39,7 @@ const GameImport=(()=>{
       if(s.activeRound&&!s.activeRound.complete)s.status='interrupted';
       s.playerPath=core.validateTree(s.tree);
     }else history.restoreReference(s);
+    if(coverBytes)s.cover={mime:'image/png',data:toBase64(coverBytes)};
     history.backfill(s);core.pruneRollback(s);return s;
   }
   function exportSave(s){
