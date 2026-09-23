@@ -213,7 +213,16 @@ const GameCore = (() => {
           s.playerPath=validateTree(s.tree);player(s);
           s.cache=copy(cache);s.round=round.number;s.status=cache.game_over===true?'ended':'waiting';round.complete=true;
           s.summaries.push({round:s.round,content:round.summary.join('；'),worldTime:data.worldTime(s),at:Date.now()});
-          emit(s,'round_end',{content:'第 '+s.round+' 回合结束'});history.archive(s);
+          emit(s,'round_end',{content:'第 '+s.round+' 回合结束'});
+          const roundStart=s.snapshots.at(-1)?.tree;
+          let playerState;
+          if(roundStart){
+            const beforePlayer=player({...s,tree:roundStart}),afterPlayer=player(s);
+            if(JSON.stringify(beforePlayer.info)!==JSON.stringify(afterPlayer.info)||JSON.stringify(beforePlayer.items)!==JSON.stringify(afterPlayer.items)){
+              playerState={round:s.round,worldTime:data.worldTime(s),at:Date.now(),info:copy(afterPlayer.info),items:copy(afterPlayer.items)};
+            }
+          }
+          history.archive(s,playerState);
           s.lastChanges=changes(s.snapshots.at(-1).tree,s.tree).filter(c=>!history.generated(c.path));
           result={status:'Round ended successfully',round:s.round,warnings:data.cacheWarnings(s,cache)};break;
         }
