@@ -156,6 +156,7 @@ const GameUI = (() => {
   }
   let catalog=[],catalogError='';
   async function reloadCatalog(source=state?.settings?.worldListSource||''){
+    clearFallbackCovers();
     try{
       catalog=await GameCatalog.load({source});catalogError='';
       return catalog;
@@ -167,7 +168,47 @@ const GameUI = (() => {
     }
   }
   const tags=item=>`<div class="module-tags">${item.Tags.map(t=>`<span style="--tag-color:${esc(t.Color)}">${esc(t.TagName)}</span>`).join('')}</div>`;
-  const moduleCover=item=>item.Cover?`<div class="module-cover fit-${esc(item.CoverFit||'auto')}"><img src="${esc(item.Cover)}" alt="" loading="lazy" referrerpolicy="no-referrer"></div>`:'';
+  const fallbackCoverCache=new Map(),fallbackCoverPromises=new Map(),fallbackCoverQueue=[];let fallbackCoverActive=0,coverObserver=null;
+  function runFallbackCoverQueue(){
+    while(fallbackCoverActive<3&&fallbackCoverQueue.length){
+      const job=fallbackCoverQueue.shift();fallbackCoverActive++;
+      Promise.resolve().then(job.run).then(job.resolve,job.reject).finally(()=>{fallbackCoverActive--;runFallbackCoverQueue();});
+    }
+  }
+  const queuedCover=run=>new Promise((resolve,reject)=>{fallbackCoverQueue.push({run,resolve,reject});runFallbackCoverQueue();});
+  function clearFallbackCovers(){
+    coverObserver?.disconnect();coverObserver=null;
+    for(const value of fallbackCoverCache.values())if(value)URL.revokeObjectURL(value);
+    fallbackCoverCache.clear();fallbackCoverPromises.clear();fallbackCoverQueue.length=0;
+  }
+  function fallbackCoverUrl(item){
+    if(!item||item.Cover||item.CoverFit==='none')return Promise.resolve('');
+    const key=item.Link;if(fallbackCoverCache.has(key))return Promise.resolve(fallbackCoverCache.get(key));
+    if(fallbackCoverPromises.has(key))return fallbackCoverPromises.get(key);
+    const task=queuedCover(async()=>{
+      const blob=await GameCatalog.fallbackCover(item.Link);
+      const objectUrl=blob?URL.createObjectURL(blob):'';
+      fallbackCoverCache.set(key,objectUrl);return objectUrl;
+    }).catch(()=>{fallbackCoverCache.set(key,'');return '';}).finally(()=>fallbackCoverPromises.delete(key));
+    fallbackCoverPromises.set(key,task);return task;
+  }
+  function applyFallbackCover(el){
+    if(!el||el.dataset.coverLoading)return;const item=catalog[Number(el.dataset.coverIndex)];if(!item||item.Cover||item.CoverFit==='none')return;
+    el.dataset.coverLoading='1';
+    fallbackCoverUrl(item).then(src=>{
+      if(!src||!el.isConnected)return;
+      const img=document.createElement('img');img.alt='';img.loading='lazy';img.referrerPolicy='no-referrer';img.src=src;
+      el.replaceChildren(img);el.hidden=false;el.closest('.module-card')?.classList.add('has-cover');
+    });
+  }
+  function hydrateFallbackCovers(scope=modalRoot){
+    const nodes=[...scope.querySelectorAll('.module-cover[data-cover-index]')];if(!nodes.length)return;
+    if('IntersectionObserver'in globalThis){
+      coverObserver?.disconnect();coverObserver=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){coverObserver.unobserve(entry.target);applyFallbackCover(entry.target);}},{root:null,rootMargin:'320px'});
+      for(const node of nodes)coverObserver.observe(node);
+    }else for(const node of nodes)applyFallbackCover(node);
+  }
+  const moduleCover=(item,index)=>item.CoverFit==='none'?'':item.Cover?`<div class="module-cover fit-${esc(item.CoverFit||'auto')}"><img src="${esc(item.Cover)}" alt="" loading="lazy" referrerpolicy="no-referrer"></div>`:`<div class="module-cover fit-${esc(item.CoverFit||'auto')}" data-cover-index="${index}" hidden></div>`;
   function importMenu(){
     const choice=(action,icon,title,description)=>`<button class="import-choice" data-action="${action}"><span class="choice-icon">${icon}</span><span><strong>${title}</strong><small>${description}</small></span><span class="choice-arrow">→</span></button>`;
     showModal('开启新的故事',`<div class="import-choices">${catalog.length?choice('catalog','▤','从列表选择','浏览收录的世界，寻找下一段旅程'):''}${choice('import-url','↗','从链接导入','粘贴 ZIP 链接，载入远方的故事')}${choice('import-file','◇','从文件导入','打开设备中的 ZIP，或带存档数据的 PNG')}</div>`);
@@ -175,11 +216,11 @@ const GameUI = (() => {
     if(catalogError){const notice=document.createElement('p');notice.className='notice error';notice.textContent=catalogError;modalRoot.querySelector('.modal').append(notice);}
   }
   function catalogPage(){
-    showModal('选择一个世界',`<p class="catalog-lead">每一卷，都有尚未写下的故事。</p><div class="module-grid">${catalog.map((m,i)=>`<button class="module-card ${m.Cover?'has-cover':''}" data-action="module-detail" data-index="${i}">${moduleCover(m)}<span class="module-number">卷 ${String(i+1).padStart(2,'0')}</span><h2>${esc(m.Name)}</h2><p>${esc(m.Introduction)}</p>${tags(m)}<span class="module-enter">阅读卷首 →</span></button>`).join('')}</div>`);
-    modalRoot.querySelector('.modal').classList.add('catalog-page');
+    showModal('选择一个世界',`<p class="catalog-lead">每一卷，都有尚未写下的故事。</p><div class="module-grid">${catalog.map((m,i)=>`<button class="module-card ${m.Cover?'has-cover':''}" data-action="module-detail" data-index="${i}">${moduleCover(m,i)}<span class="module-number">卷 ${String(i+1).padStart(2,'0')}</span><h2>${esc(m.Name)}</h2><p>${esc(m.Introduction)}</p>${tags(m)}<span class="module-enter">阅读卷首 →</span></button>`).join('')}</div>`);
+    modalRoot.querySelector('.modal').classList.add('catalog-page');hydrateFallbackCovers();
   }
   function moduleDetail(index){const m=catalog[index];if(!m)return;
-    showModal(m.Name,`${moduleCover(m)}<p class="module-intro">${esc(m.Introduction)}</p>${tags(m)}<div class="module-text">${esc(m.Text)}</div><div class="modal-actions">${button('catalog','取消')}${button('module-confirm','确认选择',`class="primary" data-index="${index}"`)}</div>`);
+    showModal(m.Name,`${moduleCover(m,index)}<p class="module-intro">${esc(m.Introduction)}</p>${tags(m)}<div class="module-text">${esc(m.Text)}</div><div class="modal-actions">${button('catalog','取消')}${button('module-confirm','确认选择',`class="primary" data-index="${index}"`)}</div>`);hydrateFallbackCovers();
   }
   async function startDownload(link,name){GameCatalog.url(link);modalRoot.innerHTML='';await GameApp.importLink(link,name);filePath='';fileDraft=fileOriginal='';draft=state.active?.draft||'';mobile='center';render();}
   function downloadHTML(){const d=state.importing;if(!d)return '';const mb=n=>(n/1024/1024).toFixed(1)+' MB',percent=d.total?Math.min(100,d.received/d.total*100):null;
