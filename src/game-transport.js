@@ -12,7 +12,10 @@ const GameTransport=(()=>{
       const ctrl=new AbortController();
       const cancel=()=>ctrl.abort(hooks.signal?.reason);hooks.signal?.addEventListener('abort',cancel,{once:true});
       if(hooks.signal?.aborted)cancel();
-      const timer=setTimeout(()=>ctrl.abort(Error('模型请求超时，请重试本回合')),Math.max(1,settings.httpTimeoutSeconds||180)*1000);
+      const timeoutMs=Math.max(1,settings.httpTimeoutSeconds||180)*1000;
+      let timer;
+      const armTimeout=()=>{clearTimeout(timer);timer=setTimeout(()=>ctrl.abort(Error('模型请求超时，请重试本回合')),timeoutMs);};
+      armTimeout();
       try{
         let resp;
         for(let attempt=0;;){
@@ -26,6 +29,7 @@ const GameTransport=(()=>{
           if(hooks.onRequest)await hooks.onRequest(body);
           if(ctrl.signal.aborted)throw ctrl.signal.reason||Error('已中止请求');
           resp=await fetcher(url,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+(settings.apiKey||'')},body:JSON.stringify(body),signal:ctrl.signal});
+          if(settings.stream)armTimeout();
           if(resp.ok)break;
           const text=await resp.text();
           if(tier===0&&[400,422].includes(resp.status)&&/reasoning|thinking/i.test(text)){tier=1;continue;}
@@ -50,6 +54,7 @@ const GameTransport=(()=>{
           if(delta?.tool_calls)hooks.onToolDelta?.(acc.partial());if(data.usage)hooks.onUsage?.(data.usage);
         }
         try{for(;;){if(ctrl.signal.aborted)throw ctrl.signal.reason||Error('已中止请求');const {value,done}=await reader.read();
+          if(value?.byteLength)armTimeout();
           buffer+=decoder.decode(value||new Uint8Array(),{stream:!done});let i;while((i=buffer.indexOf('\n'))>=0){process(buffer.slice(0,i).replace(/\r$/,''));buffer=buffer.slice(i+1);}
           if(done){if(buffer.trim())process(buffer.replace(/\r$/,''));break;}
         }}finally{try{await reader.cancel();}catch(_){}}
