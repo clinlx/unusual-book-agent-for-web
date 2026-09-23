@@ -45,13 +45,13 @@ const GameStore=(()=>{
     }
     async function list(){const all=memory?[...mem.values()]:await req(db.transaction('saves').objectStore('saves').getAll());
       const summaries=await Promise.all(all.map(async s=>{
-        const {id,name,round,status,createdAt,updatedAt,playerPath}=s;
+        const {id,name,round,status,createdAt,updatedAt,playerPath,cover}=s;
         let lastRoundEndedAt=s.lastRoundEndedAt;
         if(lastRoundEndedAt===undefined){
           const events=memory?s.events:(await req(db.transaction('events').objectStore('events').index('saveId').getAll(id))).sort((a,b)=>a.seq-b.seq).map(r=>r.value);
           lastRoundEndedAt=lastRoundEnd(events);
         }
-        return {id,name,round,status,createdAt,updatedAt,playerPath,lastRoundEndedAt,worldTime:s.cache?.Game_World_Time||s.summaries?.at(-1)?.worldTime||''};
+        return {id,name,round,status,createdAt,updatedAt,playerPath,cover,lastRoundEndedAt,worldTime:s.cache?.Game_World_Time||s.summaries?.at(-1)?.worldTime||''};
       }));
       return summaries.sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));}
 
