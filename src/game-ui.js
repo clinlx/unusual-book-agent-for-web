@@ -196,7 +196,8 @@ const GameUI = (() => {
     if(!el||el.dataset.coverLoading)return;const item=catalog[Number(el.dataset.coverIndex)];if(!item||item.Cover||item.CoverFit==='none')return;
     el.dataset.coverLoading='1';
     fallbackCoverUrl(item).then(src=>{
-      if(!src||!el.isConnected)return;
+      if(!el.isConnected)return;
+      if(!src){el.remove();return;}
       const img=document.createElement('img');img.alt='';img.loading='lazy';img.referrerPolicy='no-referrer';img.src=src;
       el.replaceChildren(img);el.hidden=false;el.closest('.module-card')?.classList.add('has-cover');
     });
@@ -204,8 +205,8 @@ const GameUI = (() => {
   function hydrateFallbackCovers(scope=modalRoot){
     const nodes=[...scope.querySelectorAll('.module-cover[data-cover-index]')];if(!nodes.length)return;
     if('IntersectionObserver'in globalThis){
-      coverObserver?.disconnect();coverObserver=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){coverObserver.unobserve(entry.target);applyFallbackCover(entry.target);}},{root:null,rootMargin:'320px'});
-      for(const node of nodes)coverObserver.observe(node);
+      coverObserver?.disconnect();coverObserver=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){coverObserver.unobserve(entry.target);const node=entry.target.__fallbackCoverNode;if(node)applyFallbackCover(node);}},{root:null,rootMargin:'320px'});
+      for(const node of nodes){const target=node.closest('.module-card')||node.parentElement||node;target.__fallbackCoverNode=node;coverObserver.observe(target);}
     }else for(const node of nodes)applyFallbackCover(node);
   }
   const moduleCover=(item,index)=>item.CoverFit==='none'?'':item.Cover?`<div class="module-cover fit-${esc(item.CoverFit||'auto')}"><img src="${esc(item.Cover)}" alt="" loading="lazy" referrerpolicy="no-referrer"></div>`:`<div class="module-cover fit-${esc(item.CoverFit||'auto')}" data-cover-index="${index}" hidden></div>`;
