@@ -217,8 +217,12 @@ const GameCore = (() => {
           const roundStart=s.snapshots.at(-1)?.tree;
           let playerState;
           if(roundStart){
-            const beforePlayer=player({...s,tree:roundStart}),afterPlayer=player(s);
-            if(JSON.stringify(beforePlayer.info)!==JSON.stringify(afterPlayer.info)||JSON.stringify(beforePlayer.items)!==JSON.stringify(afterPlayer.items)){
+            const playerRel=s.playerPath.replace(/^\/workspace\//,'');
+            const rawFile=(tree,rel)=>vfs.resolve(tree,vfs.normalize('/workspace/'+rel))?.content;
+            const infoRel=playerRel+'/基础信息.json',bagRel=playerRel+'/背包.json';
+            const filesChanged=rawFile(roundStart,infoRel)!==rawFile(s.tree,infoRel)||rawFile(roundStart,bagRel)!==rawFile(s.tree,bagRel);
+            if(filesChanged){
+              const afterPlayer=player(s);
               playerState={round:s.round,worldTime:data.worldTime(s),at:Date.now(),info:copy(afterPlayer.info),items:copy(afterPlayer.items)};
             }
           }
