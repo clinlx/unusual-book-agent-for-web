@@ -66,7 +66,7 @@ const GameCatalog=(()=>{
       return {Name:item.Name,Introduction:String(item.Introduction??''),Text:String(item.Text??''),Link:link(item.Link),Cover:cover(item.Cover),CoverFit:coverFit(item.CoverFit),Tags:tags.map(t=>{if(!t||typeof t.TagName!=='string'||!/^#[\da-f]{6}$/i.test(t.Color))throw Error('标签需要名称和六位十六进制颜色');return {TagName:t.TagName,Color:t.Color};})};
     });
   }
-  async function load({fetch:request=globalThis.fetch,source:sourceValue=DEFAULT_SOURCE,signal}={}){
+  async function load({fetch:request=globalThis.fetch,source:sourceValue=DEFAULT_SOURCE,signal,pageUrl=globalThis.location?.href}={}){
     const address=source(sourceValue);
     let response;
     try{response=await request(address,{cache:'no-store',credentials:'omit',referrerPolicy:'no-referrer',headers:{Accept:'application/json'},signal});}
@@ -76,7 +76,17 @@ const GameCatalog=(()=>{
     }
     if(!response.ok)throw Error('世界列表加载失败（HTTP '+response.status+'）');
     let value;try{value=await response.json();}catch(_){throw Error('世界列表不是有效的 JSON。');}
-    try{return parse(value);}catch(e){throw Error('世界列表格式错误：'+e.message);}
+    let items;try{items=parse(value);}catch(e){throw Error('世界列表格式错误：'+e.message);}
+    let base;
+    try{
+      const requested=/^https?:/i.test(address)?address:new URL(address,pageUrl).href;
+      base=response.url||requested;
+    }catch(_){}
+    if(base)for(const item of items){
+      if(item.Link&&!/^https?:/i.test(item.Link))item.Link=new URL(item.Link,base).href;
+      if(item.Cover&&!/^https?:/i.test(item.Cover))item.Cover=new URL(item.Cover,base).href;
+    }
+    return items;
   }
   function fromQuery(search){
     const params=new URLSearchParams(search);
