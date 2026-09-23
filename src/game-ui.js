@@ -156,6 +156,7 @@ const GameUI = (() => {
   }
   let catalog=[],catalogError='';
   const tags=item=>`<div class="module-tags">${item.Tags.map(t=>`<span style="--tag-color:${esc(t.Color)}">${esc(t.TagName)}</span>`).join('')}</div>`;
+  const moduleCover=item=>item.Cover?`<div class="module-cover fit-${esc(item.CoverFit||'auto')}"><img src="${esc(item.Cover)}" alt="" loading="lazy" referrerpolicy="no-referrer"></div>`:'';
   function importMenu(){
     const choice=(action,icon,title,description)=>`<button class="import-choice" data-action="${action}"><span class="choice-icon">${icon}</span><span><strong>${title}</strong><small>${description}</small></span><span class="choice-arrow">→</span></button>`;
     showModal('开启新的故事',`<div class="import-choices">${catalog.length?choice('catalog','▤','从列表选择','浏览收录的世界，寻找下一段旅程'):''}${choice('import-url','↗','从链接导入','粘贴 ZIP 链接，载入远方的故事')}${choice('import-file','◇','从文件导入','打开设备中的 ZIP，或带存档数据的 PNG')}</div>`);
@@ -163,11 +164,11 @@ const GameUI = (() => {
     if(catalogError){const notice=document.createElement('p');notice.className='notice error';notice.textContent=catalogError;modalRoot.querySelector('.modal').append(notice);}
   }
   function catalogPage(){
-    showModal('选择一个世界',`<p class="catalog-lead">每一卷，都有尚未写下的故事。</p><div class="module-grid">${catalog.map((m,i)=>`<button class="module-card" data-action="module-detail" data-index="${i}"><span class="module-number">卷 ${String(i+1).padStart(2,'0')}</span><h2>${esc(m.Name)}</h2><p>${esc(m.Introduction)}</p>${tags(m)}<span class="module-enter">阅读卷首 →</span></button>`).join('')}</div>`);
+    showModal('选择一个世界',`<p class="catalog-lead">每一卷，都有尚未写下的故事。</p><div class="module-grid">${catalog.map((m,i)=>`<button class="module-card ${m.Cover?'has-cover':''}" data-action="module-detail" data-index="${i}">${moduleCover(m)}<span class="module-number">卷 ${String(i+1).padStart(2,'0')}</span><h2>${esc(m.Name)}</h2><p>${esc(m.Introduction)}</p>${tags(m)}<span class="module-enter">阅读卷首 →</span></button>`).join('')}</div>`);
     modalRoot.querySelector('.modal').classList.add('catalog-page');
   }
   function moduleDetail(index){const m=catalog[index];if(!m)return;
-    showModal(m.Name,`<p class="module-intro">${esc(m.Introduction)}</p>${tags(m)}<div class="module-text">${esc(m.Text)}</div><div class="modal-actions">${button('catalog','取消')}${button('module-confirm','确认选择',`class="primary" data-index="${index}"`)}</div>`);
+    showModal(m.Name,`${moduleCover(m)}<p class="module-intro">${esc(m.Introduction)}</p>${tags(m)}<div class="module-text">${esc(m.Text)}</div><div class="modal-actions">${button('catalog','取消')}${button('module-confirm','确认选择',`class="primary" data-index="${index}"`)}</div>`);
   }
   async function startDownload(link,name){GameCatalog.url(link);modalRoot.innerHTML='';await GameApp.importLink(link,name);filePath='';fileDraft=fileOriginal='';draft=state.active?.draft||'';mobile='center';render();}
   function downloadHTML(){const d=state.importing;if(!d)return '';const mb=n=>(n/1024/1024).toFixed(1)+' MB',percent=d.total?Math.min(100,d.received/d.total*100):null;
