@@ -15,6 +15,7 @@ const GameImport=(()=>{
     if(!/\.(zip|png)$/i.test(file.name))throw Error('请选择 ZIP 存档或带存档数据的 PNG');
     const buffer=await file.arrayBuffer();
     const coverBytes=zip.extractPngPrefix(buffer);
+    if(coverBytes&&!zip.zipArchiveBase(buffer))throw Error('该文件是普通 PNG 图片，不包含可导入的世界信息（ZIP 数据）。请检查文件格式。');
     const archiveFile={name:file.name.replace(/\.png$/i,'.zip'),lastModified:file.lastModified,arrayBuffer:async()=>buffer};
     const entries=await importer.prepare([archiveFile],{extractZip:true});
     const manifest=entries.find(e=>e.name===MANIFEST&&!e.isDir);
