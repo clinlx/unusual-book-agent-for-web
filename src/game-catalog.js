@@ -35,12 +35,25 @@ const GameCatalog=(()=>{
     if(page&&(page.protocol==='file:'||page.origin!==target.origin))return failure('CROSS_ORIGIN_OR_NETWORK','无法跨站下载：可能是文件服务器未允许跨域访问（CORS），也可能是网络、证书或连接问题；浏览器未提供具体原因。请先确认链接可直接下载；若可以，请联系提供者开启跨域访问，或下载 ZIP 后选择“从文件导入”。');
     return failure('NETWORK_ERROR','无法连接下载服务器。请检查网络和链接是否有效；也可能是证书或浏览器访问限制。可尝试下载 ZIP 后选择“从文件导入”。');
   }
+  const COVER_FITS=new Set(['auto','horizontal','vertical','stretch']);
+  function cover(value){
+    if(value==null||value==='')return '';
+    if(typeof value!=='string'||/[\\\u0000-\u0020]/.test(value)||value.startsWith('//'))throw Error('封面链接格式不正确：请使用 HTTP / HTTPS 地址或站内路径。');
+    const relative=!/^[a-z][a-z\d+.-]*:/i.test(value);
+    let u;try{u=new URL(value,'https://catalog.invalid/');}catch(_){throw Error('封面链接格式不正确，请检查图片地址。');}
+    if(!['http:','https:'].includes(u.protocol)||u.username||u.password)throw Error('封面链接仅支持不含账号密码的 HTTP / HTTPS 地址或站内路径。');
+    return relative?value:u.href;
+  }
+  function coverFit(value){
+    const fit=String(value??'').trim().toLowerCase();
+    return COVER_FITS.has(fit)?fit:'auto';
+  }
   function parse(items){
     if(!Array.isArray(items))throw Error('模组列表必须是数组');
     return items.map((item,i)=>{
       if(!item||typeof item.Name!=='string'||!item.Name.trim())throw Error('模组 '+(i+1)+' 缺少名称');
       const tags=item.Tags??[];if(!Array.isArray(tags))throw Error('模组标签必须是数组');
-      return {Name:item.Name,Introduction:String(item.Introduction??''),Text:String(item.Text??''),Link:link(item.Link),Tags:tags.map(t=>{if(!t||typeof t.TagName!=='string'||!/^#[\da-f]{6}$/i.test(t.Color))throw Error('标签需要名称和六位十六进制颜色');return {TagName:t.TagName,Color:t.Color};})};
+      return {Name:item.Name,Introduction:String(item.Introduction??''),Text:String(item.Text??''),Link:link(item.Link),Cover:cover(item.Cover),CoverFit:coverFit(item.CoverFit),Tags:tags.map(t=>{if(!t||typeof t.TagName!=='string'||!/^#[\da-f]{6}$/i.test(t.Color))throw Error('标签需要名称和六位十六进制颜色');return {TagName:t.TagName,Color:t.Color};})};
     });
   }
   async function load({fetch:request=globalThis.fetch}={}){
