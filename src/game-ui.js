@@ -155,6 +155,17 @@ const GameUI = (() => {
     if(preview&&filePath){const ta=document.getElementById('file-editor');if(ta){const pane=document.createElement('div');pane.id='file-preview';pane.tabIndex=0;pane.className='panel-scroll';pane.innerHTML=markdown(fileDraft);ta.replaceWith(pane);pane.focus();}}
   }
   let catalog=[],catalogError='';
+  async function reloadCatalog(source=state?.settings?.worldListSource||''){
+    try{
+      catalog=await GameCatalog.load({source});catalogError='';
+      return catalog;
+    }catch(error){
+      catalog=[];catalogError='模组列表暂时无法加载：'+(error.message||String(error))+' 仍可从链接或文件导入。';
+      return [];
+    }finally{
+      if(modalRoot?.querySelector('.import-modal'))importMenu();
+    }
+  }
   const tags=item=>`<div class="module-tags">${item.Tags.map(t=>`<span style="--tag-color:${esc(t.Color)}">${esc(t.TagName)}</span>`).join('')}</div>`;
   const moduleCover=item=>item.Cover?`<div class="module-cover fit-${esc(item.CoverFit||'auto')}"><img src="${esc(item.Cover)}" alt="" loading="lazy" referrerpolicy="no-referrer"></div>`:'';
   function importMenu(){
@@ -200,7 +211,7 @@ const GameUI = (() => {
     const section=(id,title,content)=>`<details class="settings-section" data-settings-section="${id}" ${opened[id]?'open':''}><summary><span>${esc(title)}</span><span class="settings-section-arrow" aria-hidden="true">⌄</span></summary><div class="settings-section-body">${content}</div></details>`;
     const api=`<div class="settings-grid">${field('baseUrl','API 地址','url')}${field('model','模型')}${field('apiKey','API Key','password')}${field('temperature','Temperature','number',0.8)}${field('maxContextK','上下文上限（K tokens）','number',128)}${field('maxOutputTokens','最大输出 tokens','number',16384)}${field('maxToolLoops','每轮最大模型调用次数','number',60)}${field('httpTimeoutSeconds','请求超时（秒）','number',180)}${field('maxRetries','重试次数','number',2)}<label>思考强度<select name="reasoningEffort">${['none','low','high','xhigh','max'].map(v=>`<option ${s.reasoningEffort===v?'selected':''}>${v}</option>`).join('')}</select></label><label class="check-label stream-setting"><input name="stream" type="checkbox" ${s.stream!==false?'checked':''}><span>流式输出<small>用于缓解长时间输出文本的超时问题；不一定能使故事输出本身变为流式。</small></span></label></div><div class="settings-section-actions">${button('test-connection','测试连接')}</div><p id="connection-result" role="status"></p>`;
     const game='<div class="settings-section-empty" aria-hidden="true"></div>';
-    const advanced=`<div class="settings-section-actions settings-section-actions-start">${button('prompts','编辑提示词')}</div>`;
+    const advanced=`<label class="world-list-setting"><span>世界列表源</span><div class="settings-inline-control"><input id="world-list-source" name="worldListSource" type="text" value="${esc(s.worldListSource||'')}" placeholder="${esc(GameCatalog.DEFAULT_SOURCE)}" autocomplete="off" spellcheck="false">${button('test-world-list','测试')}${button('reset-world-list','恢复默认')}</div><small>留空时使用 ${esc(GameCatalog.DEFAULT_SOURCE)}；可填写公开的 HTTP / HTTPS JSON 地址或站内路径。外部地址需要允许浏览器跨域读取。</small></label><p id="world-list-result" class="settings-field-result" role="status"></p><div class="settings-section-actions settings-section-actions-start">${button('prompts','编辑提示词')}</div>`;
     showModal('设置',`<aside class="settings-github" aria-label="GitHub"><div><strong>GitHub</strong><p>查看源代码，或联系作者反馈问题。</p></div><a class="github-link" href="https://github.com/clinlx/unusual-book-agent-for-web" target="_blank" rel="noopener noreferrer" aria-label="打开 GitHub 项目页面">GitHub ↗</a></aside><form id="settings-form"><div class="settings-sections">${section('api','API 设置',api)}${section('game','游戏设置',game)}${section('advanced','高级选项',advanced)}</div><div class="modal-actions"><button class="primary" type="submit">保存设置</button></div></form>`);
     for(const details of modalRoot.querySelectorAll('.settings-section'))details.addEventListener('toggle',()=>{
       const next={};
@@ -226,6 +237,20 @@ const GameUI = (() => {
       try{const response=await GameApp.testConnection(values);result.textContent='连接成功 · '+response.elapsedMs+' ms';}
       catch(error){result.textContent='连接失败：'+(error.message||String(error));}
       finally{el.disabled=false;}return;
+    }
+    if(name==='test-world-list'){
+      const input=document.getElementById('world-list-source'),result=document.getElementById('world-list-result');
+      const source=input?.value.trim()||'';el.disabled=true;result.textContent='正在测试世界列表源…';
+      const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),10000);
+      try{
+        const items=await GameCatalog.load({source,signal:ctrl.signal});
+        result.textContent='测试成功 · 格式有效 · '+items.length+' 个世界';
+      }catch(error){result.textContent='测试失败：'+(error.message||String(error));}
+      finally{clearTimeout(timer);el.disabled=false;}return;
+    }
+    if(name==='reset-world-list'){
+      const input=document.getElementById('world-list-source'),result=document.getElementById('world-list-result');
+      if(input)input.value='';if(result)result.textContent='已恢复默认：'+GameCatalog.DEFAULT_SOURCE+'（保存后生效）';return;
     }
     if(name==='prompts')return promptModal();
     if(name==='changes')return changesModal();
@@ -263,7 +288,6 @@ const GameUI = (() => {
     if(name==='reset-prompts'){if(confirm('清除所有提示词覆盖并恢复默认？')){for(const p of GameApp.promptList())await GameApp.resetPrompt(p.id);promptModal();}return;}
   }
   async function boot() {
-    GameCatalog.load().then(items=>{catalog=items;}).catch(()=>{catalogError='模组列表暂时无法加载，仍可从链接或文件导入。';}).finally(()=>{if(modalRoot?.querySelector('.import-modal'))importMenu();});
     try{vitalsCollapsed=localStorage.getItem('trpg-vitals-collapsed')==='true';}catch(_){}
     document.addEventListener('focusin',e=>{if(e.target.id==='action-input')refreshInput();});document.addEventListener('focusout',e=>{if(e.target.id==='action-input')setTimeout(refreshInput,0);});window.addEventListener('resize',refreshInput);
     document.addEventListener('scroll',e=>{if(e.target.id!=='history')return;const now=Date.now();scrollAmount=Math.max(0,scrollAmount-(now-lastScrollAt)*.5)+Math.abs(e.target.scrollTop-lastScroll);lastScroll=e.target.scrollTop;lastScrollAt=now;if(scrollAmount>=3000)revealNavigation();},true);
@@ -281,10 +305,10 @@ const GameUI = (() => {
     document.addEventListener('submit',e=>{e.preventDefault();attempt(async()=>{
       if(e.target.id==='link-import-form')return startDownload(new FormData(e.target).get('link'));
       if(e.target.id==='action-form'){if(state.running)return;const flags=GameData.actorState(GameApp.player().info);if(!flags.alive)return;if(!draft.trim()||!flags.enabled){if(confirm(flags.enabled?'本回合不采取主动行动，确定空过？':'失去意识，等待局势发展并推进一轮？'))await GameApp.skip();return;}clearTimeout(draftTimer);const text=draft,count=(state.active.events||[]).filter(x=>x.type==='player').length;draft='';try{await GameApp.send(text);}catch(error){if((state.active.events||[]).filter(x=>x.type==='player').length===count){draft=text;await GameApp.saveDraft(text);}render();throw error;}}
-      if(e.target.id==='settings-form'){const data=new FormData(e.target),values={};for(const [k,v] of data)values[k]=['temperature','maxContextK','maxOutputTokens','maxToolLoops','httpTimeoutSeconds','maxRetries'].includes(k)?Number(v):v;values.stream=data.has('stream');await GameApp.updateSettings(values);modalRoot.innerHTML='';toast('设置已保存');}
+      if(e.target.id==='settings-form'){const data=new FormData(e.target),values={};for(const [k,v] of data)values[k]=['temperature','maxContextK','maxOutputTokens','maxToolLoops','httpTimeoutSeconds','maxRetries'].includes(k)?Number(v):v;values.stream=data.has('stream');await GameApp.updateSettings(values);const sourceChanged=(state.settings?.worldListSource||'')!==(values.worldListSource||'');modalRoot.innerHTML='';if(sourceChanged)reloadCatalog(values.worldListSource);toast('设置已保存');}
       if(e.target.id==='file-operation'){const data=new FormData(e.target),op=data.get('op'),from=data.get('from'),to=data.get('to');if(op==='delete'&&!confirm('删除 '+from+' 及其内容？'))return;await GameApp.fileOperation(op,{path:from,from,to});if(filePath===from){filePath='';fileDraft=fileOriginal='';}modalRoot.innerHTML='';render();}
     });});
-    try {await GameApp.init();state=GameApp.getState();GameApp.subscribe(next=>{state=next||GameApp.getState();if(!renderTimer)renderTimer=setTimeout(()=>{renderTimer=null;render();},50);});render();} catch(error){root.innerHTML=`<main class="save-home"><h1>启动未完成</h1><p>${esc(error.message)}</p><button onclick="location.reload()">重新载入</button></main>`;return;} finally {document.getElementById('boot')?.remove();}
+    try {await GameApp.init();state=GameApp.getState();GameApp.subscribe(next=>{state=next||GameApp.getState();if(!renderTimer)renderTimer=setTimeout(()=>{renderTimer=null;render();},50);});render();reloadCatalog();} catch(error){root.innerHTML=`<main class="save-home"><h1>启动未完成</h1><p>${esc(error.message)}</p><button onclick="location.reload()">重新载入</button></main>`;return;} finally {document.getElementById('boot')?.remove();}
     await attempt(async()=>{const link=GameCatalog.fromQuery(location.search);if(link!==null)await startDownload(link);});
   }
   if(typeof document!=='undefined'){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();}
