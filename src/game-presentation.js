@@ -77,11 +77,11 @@ const GamePresentation=(()=>{
     const replayStates={};
     let prior={info:{},items:[]};
     for(const round of Object.keys(roundStates).map(Number).sort((a,b)=>a-b)){
-      const current=roundStates[round];
-      replayStates[round]={...stateHTML(current,prior),raw:current};
+      const current=roundStates[round],changed=stateHTML(current,prior),clean=stateHTML(current,current);
+      replayStates[round]={infoDiff:changed.info,itemsDiff:changed.items,infoClean:clean.info,itemsClean:clean.items,raw:current};
       prior=current;
     }
-    const finalHTML=stateHTML(finalState,prior);
+    const finalHTML=stateHTML(finalState,finalState),finalDiff=stateHTML(finalState,prior);
     const body=nodes.map(n=>n.html).join('');
     const tabs=[['items','背包'],['story','情景'],['status','状态']];
 
@@ -91,10 +91,10 @@ const GamePresentation=(()=>{
 
     const script=`(()=>{'use strict';
 const archive=document.getElementById('archive'),history=document.getElementById('archive-history'),articles=[...history.querySelectorAll('article')],next=document.getElementById('replay-next'),prev=document.getElementById('replay-prev'),progress=document.getElementById('replay-progress'),items=document.getElementById('items-content'),status=document.getElementById('status-content'),vitals=document.getElementById('archive-vitals');
-const nodes=${safeJSON(nodes.map(({round,type,secret})=>({round,type,secret})))},states=${safeJSON(replayStates)},finalState=${safeJSON(finalState)},finalHTML=${safeJSON(finalHTML)},ended=${save.status==='ended'?'true':'false'};let index=0,current={info:{},items:[]};
+const nodes=${safeJSON(nodes.map(({round,type,secret})=>({round,type,secret})))},states=${safeJSON(replayStates)},finalState=${safeJSON(finalState)},finalHTML=${safeJSON(finalHTML)},finalDiff=${safeJSON(finalDiff)},ended=${save.status==='ended'?'true':'false'};let index=0;
 const bars=info=>{const groups=['状态','衍生属性','属性'].map(k=>info&&info[k]).concat(info||{}),num=k=>{for(const g of groups){if(!g||typeof g!=='object')continue;for(const key of Object.keys(g))if(String(key).replace(/[_\\s-]/g,'').toLowerCase()===k.toLowerCase()){const n=Number(g[key]);if(Number.isFinite(n))return n;}}},one=(k,m,fallback,cls)=>{const v=num(k),mx=num(m)??fallback;if(v==null||mx==null||mx<=0)return'';const pct=Math.max(0,Math.min(100,v/mx*100));return '<div class="resource '+cls+'"><span class="resource-label">'+k+' · '+v+' / '+mx+'</span><span class="track"><i style="width:'+pct+'%"></i></span></div>'};return '<div class="resource-strips">'+one('HP','MAXHP',null,'hp')+one('MP','MAXMP',null,'mp')+one('SAN','MAXSAN',99,'san')+'</div>'};
 function setPanels(html,raw,animate){items.innerHTML=html.items;status.innerHTML=html.info;vitals.innerHTML=bars(raw.info||{});if(animate){for(const el of [items,status]){el.classList.remove('state-enter');void el.offsetWidth;el.classList.add('state-enter');}}}
-function stateAt(i){let found=null;for(let n=0;n<i;n++){const node=nodes[n],s=node&&states[node.round];if(node?.type==='round_end'&&s)found=s;}if(ended&&i>=nodes.length)return {info:finalHTML.info,items:finalHTML.items,raw:finalState};return found||{info:'<p>暂无资料</p>',items:'<p>暂无物品</p>',raw:{info:{},items:[]}};}
+function stateAt(i){let found=null,changed=false;for(let n=0;n<i;n++){const node=nodes[n],s=node&&states[node.round];if(node?.type==='round_end'&&s){found=s;changed=n===i-1;}}if(ended&&i>=nodes.length)return {info:finalDiff.info,items:finalDiff.items,raw:finalState};if(!found)return {info:'<p>暂无资料</p>',items:'<p>暂无物品</p>',raw:{info:{},items:[]}};return {info:changed?found.infoDiff:found.infoClean,items:changed?found.itemsDiff:found.itemsClean,raw:found.raw};}
 function render(animate=true){archive.classList.add('replay-mode');archive.classList.remove('overview-mode');articles.forEach((a,i)=>{a.classList.toggle('revealed',i<index);a.classList.remove('replay-enter')});if(animate&&index>0){const a=articles[index-1];if(a){a.classList.add('replay-enter');a.scrollIntoView({block:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});}}const s=stateAt(index);setPanels({info:s.info,items:s.items},s.raw,animate);progress.textContent=index+' / '+nodes.length;prev.disabled=index<=0;next.disabled=index>=nodes.length;next.textContent=index>=nodes.length?'已到结局':'下一节点 →';}
 function overview(){archive.classList.remove('replay-mode');archive.classList.add('overview-mode');articles.forEach(a=>a.classList.remove('replay-enter'));setPanels(finalHTML,finalState,false);}
 document.querySelectorAll('[data-mode]').forEach(btn=>btn.addEventListener('click',()=>{const replay=btn.dataset.mode==='replay';document.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b===btn)));if(replay)render(false);else overview();}));
