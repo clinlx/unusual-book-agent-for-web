@@ -38,3 +38,7 @@
 @keyframes manual-die-roll{0%{transform:rotate(0) rotateY(0) scale(1)}50%{transform:rotate(145deg) rotateY(180deg) scale(.9)}100%{transform:rotate(290deg) rotateY(360deg) scale(1)}}@keyframes manual-die-land{0%{transform:translateY(-8px) rotate(12deg)}65%{transform:translateY(3px) rotate(-4deg)}100%{transform:none}}
 @media(max-width:720px){.manual-dice-modal{width:auto}.manual-compare-board{grid-template-columns:1fr;gap:8px}.manual-operator{min-height:56px;flex-direction:row;gap:10px}.manual-operator small{writing-mode:horizontal-tb;margin:0}.manual-operator strong{width:52px;height:52px;font-size:28px}.manual-operator i{left:10%;right:10%;top:50%;bottom:auto;width:auto;height:1px}.manual-value-panel{padding:14px}.manual-dice-stage{gap:9px;padding:10px 0}.manual-die{min-width:54px}.die-shape{width:52px;height:52px}.manual-die.coin .die-shape{width:50px;height:50px}}
 @media(prefers-reduced-motion:reduce){.manual-dice-stage.rolling .manual-die[data-faces] .die-shape,.manual-die.landed .die-shape{animation:none}}
+
+/* Canvas dice models */
+.manual-die-canvas{display:block;width:150px;height:132px;max-width:100%;border:0;background:transparent;filter:drop-shadow(0 12px 8px #6c583020)}.manual-die{min-width:150px}.manual-die>small{margin-top:-6px}.manual-dice-stage{align-items:flex-end;min-height:170px;overflow:hidden}.manual-dice-stage.rolling .manual-die-canvas{filter:drop-shadow(0 14px 11px #5e4b282a)}
+@media(max-width:720px){.manual-die{min-width:116px}.manual-die-canvas{width:116px;height:102px}.manual-dice-stage{min-height:140px}}

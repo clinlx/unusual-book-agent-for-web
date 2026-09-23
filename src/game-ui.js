@@ -386,10 +386,8 @@ const GameUI = (() => {
     return [4,6,8,10,12,20,100].includes(faces)?'d'+faces:'slot';
   }
   function dieVisual(spec,value,pending=false){
-    if(spec.constant!==undefined)return `<div class="manual-die constant"><div class="die-shape"><strong>${esc(spec.constant)}</strong></div><small>${esc(safeDiceLabel(spec.label)||'常数')}</small></div>`;
-    const kind=dieKind(spec.faces),shown=value==null?(kind==='slot'?spec.faces:'?'):Math.abs(value);
-    const faceLabel=kind==='slot'?'d'+spec.faces:kind==='coin'?(spec.faces===1?'d1':'d2'):'';
-    return `<div class="manual-die ${kind}" data-faces="${spec.faces}" data-sign="${spec.sign}" data-final="${value==null?'':esc(Math.abs(value))}"><div class="die-shape"><strong>${esc(shown)}</strong>${faceLabel?`<i>${esc(faceLabel)}</i>`:''}</div><small>${esc(safeDiceLabel(spec.label)||'骰子')}</small></div>`;
+    const kind=spec.constant!==undefined?'constant':dieKind(spec.faces),shown=spec.constant!==undefined?spec.constant:value;
+    return `<div class="manual-die ${kind}" data-die-kind="${esc(kind)}" data-faces="${esc(spec.faces??'')}" data-sign="${esc(spec.sign??1)}" data-final="${shown==null?'':esc(Math.abs(shown))}"><canvas class="manual-die-canvas" width="170" height="150" aria-label="${esc((kind==='slot'?'数字轮盘 ':kind==='coin'?'硬币 ':'骰子 ')+(safeDiceLabel(spec.label)||''))}"></canvas><small>${esc(safeDiceLabel(spec.label)||spec.constant!==undefined?'常数':'骰子')}</small></div>`;
   }
   function modifierLines(obj,title){
     const entries=Object.entries(obj||{});
@@ -410,6 +408,61 @@ const GameUI = (() => {
       calculate_only:d.success==null,target_value:Number.isFinite(target)?target-right:undefined,compare_mode:d.compare_mode,dice_combine_mode:d.mode||'sum',
       left_modifiers:left?{'旧存档合计':left}:{},right_modifiers:right?{'旧存档合计':right}:{}};
   }
+  const V3={
+    add:(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]],sub:(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]],
+    cross:(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],
+    norm:a=>{const m=Math.hypot(...a)||1;return[a[0]/m,a[1]/m,a[2]/m];},
+    rot:(v,rx,ry,rz)=>{let[x,y,z]=v,c=Math.cos(rx),s=Math.sin(rx),y1=y*c-z*s,z1=y*s+z*c;y=y1;z=z1;c=Math.cos(ry);s=Math.sin(ry);let x1=x*c+z*s;z1=-x*s+z*c;x=x1;z=z1;c=Math.cos(rz);s=Math.sin(rz);return[x*c-y*s,x*s+y*c,z];}
+  };
+  function polyhedron(kind){
+    const phi=(1+Math.sqrt(5))/2,norm=verts=>{const m=Math.max(...verts.map(v=>Math.hypot(...v)));return verts.map(v=>v.map(x=>x/m));};
+    if(kind==='d4')return {v:norm([[1,1,1],[-1,-1,1],[-1,1,-1],[1,-1,-1]]),f:[[0,1,2],[0,3,1],[0,2,3],[1,3,2]]};
+    if(kind==='d6')return {v:[[ -1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]],f:[[0,1,2,3],[4,7,6,5],[0,4,5,1],[1,5,6,2],[2,6,7,3],[3,7,4,0]]};
+    if(kind==='d8')return {v:[[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]],f:[[0,2,4],[2,1,4],[1,3,4],[3,0,4],[2,0,5],[1,2,5],[3,1,5],[0,3,5]]};
+    if(kind==='d20'){
+      const v=norm([[-1,phi,0],[1,phi,0],[-1,-phi,0],[1,-phi,0],[0,-1,phi],[0,1,phi],[0,-1,-phi],[0,1,-phi],[phi,0,-1],[phi,0,1],[-phi,0,-1],[-phi,0,1]]);
+      const f=[[0,11,5],[0,5,1],[0,1,7],[0,7,10],[0,10,11],[1,5,9],[5,11,4],[11,10,2],[10,7,6],[7,1,8],[3,9,4],[3,4,2],[3,2,6],[3,6,8],[3,8,9],[4,9,5],[2,4,11],[6,2,10],[8,6,7],[9,8,1]];return{v,f};
+    }
+    if(kind==='d12'){
+      const ico=polyhedron('d20'),centers=ico.f.map(face=>V3.norm(face.map(i=>ico.v[i]).reduce((a,b)=>V3.add(a,b),[0,0,0])));
+      const faces=[];for(let vi=0;vi<ico.v.length;vi++){const adjacent=ico.f.map((f,i)=>f.includes(vi)?i:-1).filter(i=>i>=0);faces.push(adjacent);}return{v:centers,f:faces};
+    }
+    if(kind==='d10'){
+      const v=[],f=[],n=5;for(let i=0;i<n;i++){const a=i*Math.PI*2/n;v.push([Math.cos(a),Math.sin(a),.25]);}for(let i=0;i<n;i++){const a=(i+.5)*Math.PI*2/n;v.push([Math.cos(a),Math.sin(a),-.25]);}v.push([0,0,1.18],[0,0,-1.18]);
+      for(let i=0;i<n;i++){const j=(i+1)%n;f.push([10,i,j]);f.push([11,n+j,n+i]);f.push([i,n+i,n+j,j]);}return{v:norm(v),f};
+    }
+    return null;
+  }
+  function d100Mesh(){
+    const v=[],f=[],rings=8,segs=14;v.push([0,0,1]);
+    for(let r=1;r<rings;r++){const t=Math.PI*r/rings,z=Math.cos(t),q=Math.sin(t);for(let s=0;s<segs;s++){const a=Math.PI*2*s/segs;v.push([q*Math.cos(a),q*Math.sin(a),z]);}}
+    const bottom=v.push([0,0,-1])-1;
+    for(let s=0;s<segs;s++){const n=(s+1)%segs;f.push([0,1+s,1+n]);}
+    for(let r=1;r<rings-1;r++){const a0=1+(r-1)*segs,b0=1+r*segs;for(let s=0;s<segs;s++){const n=(s+1)%segs;f.push([a0+s,b0+s,b0+n],[a0+s,b0+n,a0+n]);}}
+    const last=1+(rings-2)*segs;for(let s=0;s<segs;s++){const n=(s+1)%segs;f.push([last+s,bottom,last+n]);}
+    return{v,f};
+  }
+  function drawPoly(canvas,kind,value,state={}){
+    const ctx=canvas.getContext('2d'),w=canvas.width,h=canvas.height;ctx.clearRect(0,0,w,h);
+    if(kind==='constant'){ctx.fillStyle='#efe6d3';ctx.strokeStyle='#8b7449';ctx.lineWidth=2;ctx.fillRect(w/2-36,h/2-36,72,72);ctx.strokeRect(w/2-36,h/2-36,72,72);ctx.fillStyle='#5d4827';ctx.font='700 28px Georgia';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(String(value??''),w/2,h/2);return;}
+    if(kind==='slot'){return drawSlot(canvas,value,state.slotOffset??0);}
+    if(kind==='coin'){return drawCoin(canvas,value,state);}
+    const mesh=kind==='d100'?d100Mesh():polyhedron(kind),scale=kind==='d100'?54:50,rx=state.rx??-.55,ry=state.ry??.7,rz=state.rz??.18,cx=w/2+(state.x||0),cy=h/2+(state.y||0);
+    if(!mesh)return drawSlot(canvas,value,state.slotOffset??0);
+    const pts=mesh.v.map(p=>V3.rot(p,rx,ry,rz).map((n,i)=>i<2?n*scale:n));
+    const faces=mesh.f.map(face=>{const p=face.map(i=>pts[i]),a=V3.sub(p[1],p[0]),b=V3.sub(p[2],p[0]),normal=V3.norm(V3.cross(a,b)),z=p.reduce((n,q)=>n+q[2],0)/p.length;return{p,normal,z};}).sort((a,b)=>a.z-b.z);
+    ctx.lineJoin='round';for(const face of faces){if(face.normal[2]>0.65)continue;const light=Math.max(.18,Math.min(.92,.42-face.normal[0]*.18-face.normal[1]*.25+face.normal[2]*.25));const c=Math.round(190+light*45);ctx.beginPath();face.p.forEach((p,i)=>i?ctx.lineTo(cx+p[0],cy+p[1]):ctx.moveTo(cx+p[0],cy+p[1]));ctx.closePath();ctx.fillStyle=`rgb(${c},${Math.round(c*.94)},${Math.round(c*.82)})`;ctx.strokeStyle='rgba(91,70,38,.55)';ctx.lineWidth=1.2;ctx.fill();ctx.stroke();}
+    ctx.fillStyle='#5a4529';ctx.font='700 '+(kind==='d100'?24:26)+'px Georgia';ctx.textAlign='center';ctx.textBaseline='middle';ctx.shadowColor='rgba(255,255,255,.85)';ctx.shadowBlur=3;ctx.fillText(value==null?'?':String(value),cx,cy);ctx.shadowBlur=0;
+  }
+  function drawCoin(canvas,value,state={}){
+    const ctx=canvas.getContext('2d'),w=canvas.width,h=canvas.height,spin=Math.abs(Math.cos(state.ry??.4)),rx=44*Math.max(.18,spin);ctx.clearRect(0,0,w,h);ctx.save();ctx.translate(w/2+(state.x||0),h/2+(state.y||0));ctx.scale(rx/44,1);ctx.beginPath();ctx.arc(0,0,42,0,Math.PI*2);ctx.fillStyle='#dfc98d';ctx.strokeStyle='#8a6b31';ctx.lineWidth=4;ctx.fill();ctx.stroke();ctx.beginPath();ctx.arc(0,0,31,0,Math.PI*2);ctx.strokeStyle='#aa8c4a';ctx.lineWidth=1.5;ctx.stroke();ctx.fillStyle='#5d4827';ctx.font='700 28px Georgia';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(value==null?'?':String(value),0,0);ctx.restore();
+  }
+  function drawSlot(canvas,value,offset=0){
+    const ctx=canvas.getContext('2d'),w=canvas.width,h=canvas.height;ctx.clearRect(0,0,w,h);ctx.save();ctx.translate(w/2,h/2);ctx.fillStyle='#4e4537';ctx.strokeStyle='#7b6848';ctx.lineWidth=3;ctx.beginPath();ctx.roundRect(-49,-47,98,94,9);ctx.fill();ctx.stroke();ctx.beginPath();ctx.rect(-39,-31,78,62);ctx.clip();ctx.fillStyle='#f6edd9';ctx.fillRect(-39,-31,78,62);const final=Number(value)||1,step=42,base=-offset%step;ctx.fillStyle='#4b402f';ctx.font='700 27px Georgia';ctx.textAlign='center';ctx.textBaseline='middle';for(let k=-3;k<=3;k++){const n=Math.max(1,final+k),y=base+k*step;ctx.fillText(String(n),0,y);}ctx.restore();ctx.fillStyle='#a08a60';ctx.fillRect(w/2-39,h/2-33,78,2);ctx.fillRect(w/2-39,h/2+31,78,2);
+  }
+  function hydrateDiceCanvases(scope=modalRoot){
+    for(const el of scope.querySelectorAll('.manual-die')){const canvas=el.querySelector('canvas'),kind=el.dataset.dieKind,value=el.dataset.final===''?null:Number(el.dataset.final);if(canvas)drawPoly(canvas,kind,value,{rx:-.55,ry:.7,rz:.18});}
+  }
   function diceDetailModal(e){
     if(!e||e.secret&&state.mode!=='debug')return;
     const args=diceDetailArgs(e),specs=diceSpecRows(args),resolved=!e.pending,d=e.data||{},rolls=[];
@@ -428,7 +481,7 @@ const GameUI = (() => {
     const targetMain=args.calculate_only?'—':finalTarget===null?'?':String(finalTarget);
     const targetSub=args.calculate_only?'不使用目标值':baseTarget===null?'目标值未知':right?`基础 ${baseTarget}　${signedModifier(right)}`:`基础 ${baseTarget}`;
     const leftSub=!resolved?'等待骰子落定':d.mode==='independent'?'各骰组独立结算':left?`原始 ${rawValue}　${signedModifier(left)}`:`原始 ${rawValue}`;
-    showModal(resolved?'检定结果':'进行检定',`<div class="manual-dice-modal" data-event-id="${esc(e.id)}"><div class="manual-dice-summary"><div><small>CHECK</small><strong>${esc(args.related_attr||e.relatedAttr||'检定')}</strong></div><span>${esc(args.dice_combine_mode||'sum').toUpperCase()}</span><em class="${esc(resultClass)}">${esc(resultText)}</em></div><div class="manual-compare-board"><section class="manual-value-panel source"><header><span>检定值</span><small>ROLL VALUE</small></header><div class="manual-value-art">${esc(leftValue)}</div><p>${esc(leftSub)}</p><div class="manual-dice-stage ${resolved?'is-resolved':''}" id="manual-dice-stage">${dice||'<p class="muted">没有可显示的骰子模型</p>'}</div>${modifierLines(args.left_modifiers,'检定修正')}</section><div class="manual-operator" aria-label="${esc(operatorCaption)}"><small>${esc(operatorCaption)}</small><strong>${esc(operator)}</strong><i aria-hidden="true"></i></div><section class="manual-value-panel target"><header><span>目标值</span><small>TARGET</small></header><div class="manual-value-art">${esc(targetMain)}</div><p>${esc(targetSub)}</p>${modifierLines(args.right_modifiers,'目标修正')}<div class="manual-target-note">${baseTarget!==null&&!args.calculate_only?`<span>基础目标</span><strong>${esc(baseTarget)}</strong>${right?`<span>修正后</span><strong>${esc(finalTarget)}</strong>`:''}`:'<span>本次不进行目标比较</span>'}</div></section></div>${resolved?'<div class="modal-actions"><button type="button" data-action="close-modal">关闭</button></div>':`<div class="modal-actions"><button type="button" data-action="manual-dice-later">稍后决定</button><button type="button" class="primary" data-action="manual-dice-roll">进行检定</button></div>`}</div>`);
+    showModal(resolved?'检定结果':'进行检定',`<div class="manual-dice-modal" data-event-id="${esc(e.id)}"><div class="manual-dice-summary"><div><small>CHECK</small><strong>${esc(args.related_attr||e.relatedAttr||'检定')}</strong></div><span>${esc(args.dice_combine_mode||'sum').toUpperCase()}</span><em class="${esc(resultClass)}">${esc(resultText)}</em></div><div class="manual-compare-board"><section class="manual-value-panel source"><header><span>检定值</span><small>ROLL VALUE</small></header><div class="manual-value-art">${esc(leftValue)}</div><p>${esc(leftSub)}</p><div class="manual-dice-stage ${resolved?'is-resolved':''}" id="manual-dice-stage">${dice||'<p class="muted">没有可显示的骰子模型</p>'}</div>${modifierLines(args.left_modifiers,'检定修正')}</section><div class="manual-operator" aria-label="${esc(operatorCaption)}"><small>${esc(operatorCaption)}</small><strong>${esc(operator)}</strong><i aria-hidden="true"></i></div><section class="manual-value-panel target"><header><span>目标值</span><small>TARGET</small></header><div class="manual-value-art">${esc(targetMain)}</div><p>${esc(targetSub)}</p>${modifierLines(args.right_modifiers,'目标修正')}<div class="manual-target-note">${baseTarget!==null&&!args.calculate_only?`<span>基础目标</span><strong>${esc(baseTarget)}</strong>${right?`<span>修正后</span><strong>${esc(finalTarget)}</strong>`:''}`:'<span>本次不进行目标比较</span>'}</div></section></div>${resolved?'<div class="modal-actions"><button type="button" data-action="close-modal">关闭</button></div>':`<div class="modal-actions"><button type="button" data-action="manual-dice-later">稍后决定</button><button type="button" class="primary" data-action="manual-dice-roll">进行检定</button></div>`}</div>`);hydrateDiceCanvases();
   }
   function secureDie(faces){
     if(!Number.isSafeInteger(faces)||faces<1||faces>1000000000)throw Error('骰面范围无效');
@@ -437,12 +490,24 @@ const GameUI = (() => {
   }
   async function animateManualDice(event){
     const stage=document.getElementById('manual-dice-stage'),button=modalRoot.querySelector('[data-action="manual-dice-roll"]');if(!stage||!button)return;
-    button.disabled=true;modalRoot.querySelector('[data-action="manual-dice-later"]')?.setAttribute('disabled','');
-    stage.classList.add('rolling');const dice=[...stage.querySelectorAll('.manual-die[data-faces]')],final=dice.map(el=>secureDie(Number(el.dataset.faces)));
-    let ticks=0;const timer=setInterval(()=>{for(const el of dice){const faces=Number(el.dataset.faces),strong=el.querySelector('strong');strong.textContent=String(secureDie(faces));}if(++ticks>=10)clearInterval(timer);},70);
-    await new Promise(resolve=>setTimeout(resolve,850));clearInterval(timer);
-    dice.forEach((el,i)=>{el.querySelector('strong').textContent=String(final[i]);el.classList.add('landed');});
-    await new Promise(resolve=>setTimeout(resolve,260));
+    button.disabled=true;modalRoot.querySelector('[data-action="manual-dice-later"]')?.setAttribute('disabled','');stage.classList.add('rolling');
+    const dice=[...stage.querySelectorAll('.manual-die[data-faces]')],final=dice.map(el=>secureDie(Number(el.dataset.faces)));
+    const states=dice.map((el,i)=>({el,canvas:el.querySelector('canvas'),kind:el.dataset.dieKind,value:final[i],rx:Math.random()*6.28,ry:Math.random()*6.28,rz:Math.random()*6.28,
+      vx:(Math.random()-.5)*1.3,vy:-2.2-Math.random()*1.6,x:(Math.random()-.5)*24,y:18,wx:(Math.random()-.5)*.18,wy:(Math.random()-.5)*.22,wz:(Math.random()-.5)*.16,slotOffset:0,slotV:70+Math.random()*45}));
+    const start=performance.now(),maxMs=2600,reduced=matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+    if(!reduced)await new Promise(resolve=>{
+      let last=start,raf=0;const frame=now=>{const dt=Math.min(34,now-last)/16.67;last=now;let moving=false;
+        for(const s of states){
+          if(s.kind==='slot'){s.slotOffset+=s.slotV*dt;s.slotV*=Math.pow(.94,dt);if(s.slotV>.45)moving=true;drawSlot(s.canvas,s.value,s.slotOffset);continue;}
+          s.vy+=.16*dt;s.x+=s.vx*dt;s.y+=s.vy*dt;if(s.y>24){s.y=24;s.vy*=-.42;s.vx*=.82;s.wx*=.86;s.wy*=.86;s.wz*=.86;}if(Math.abs(s.x)>38){s.x=Math.sign(s.x)*38;s.vx*=-.55;}
+          s.rx+=s.wx*dt;s.ry+=s.wy*dt;s.rz+=s.wz*dt;s.vx*=Math.pow(.985,dt);s.wx*=Math.pow(.985,dt);s.wy*=Math.pow(.985,dt);s.wz*=Math.pow(.985,dt);
+          if(Math.abs(s.vy)+Math.abs(s.vx)+Math.abs(s.wx)+Math.abs(s.wy)+Math.abs(s.wz)>.07)moving=true;drawPoly(s.canvas,s.kind,s.value,s);
+        }
+        if(moving&&now-start<maxMs)raf=requestAnimationFrame(frame);else{cancelAnimationFrame(raf);resolve();}
+      };raf=requestAnimationFrame(frame);
+    });
+    for(const s of states){s.el.dataset.final=String(s.value);drawPoly(s.canvas,s.kind,s.value,{rx:s.rx,ry:s.ry,rz:s.rz});s.el.classList.add('landed');}
+    await new Promise(resolve=>setTimeout(resolve,reduced?80:320));
     await GameApp.resolveManualDice(final);modalRoot.innerHTML='';
   }
   function changesModal() {
