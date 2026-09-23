@@ -395,9 +395,34 @@ const GameUI = (() => {
     const entries=Object.entries(obj||{});if(!entries.length)return '';
     return `<div class="manual-modifier-group"><strong>${esc(title)}</strong>${entries.map(([reason,value])=>`<span><b>${esc(signedModifier(Number(value)||0))}</b><small>${esc(reason)}</small></span>`).join('')}</div>`;
   }
+  function diceDetailArgs(e){
+    if(e?.diceArgs&&Object.keys(e.diceArgs).length)return e.diceArgs;
+    const d=e?.data||{},rows=Array.isArray(d.rows)?d.rows:[];
+    const dice_dict={};
+    for(const row of rows){
+      if(!row?.formula)continue;
+      let label=String(row.label||'骰子').trim()||'骰子',key=label,n=2;
+      while(Object.hasOwn(dice_dict,key))key=label+' '+n++;
+      dice_dict[key]=String(row.formula);
+    }
+    const left=Number(d.left)||0,right=Number(d.right)||0,target=Number(d.target);
+    return {
+      description:e?.description||'',
+      roller:e?.roller||'',
+      related_attr:e?.relatedAttr||'',
+      is_secret:!!e?.secret,
+      dice_dict,
+      calculate_only:d.success==null,
+      target_value:Number.isFinite(target)?target-right:undefined,
+      compare_mode:d.compare_mode,
+      dice_combine_mode:d.mode||'sum',
+      left_modifiers:left?{'旧存档合计':left}:{},
+      right_modifiers:right?{'旧存档合计':right}:{}
+    };
+  }
   function diceDetailModal(e){
     if(!e||e.secret&&state.mode!=='debug')return;
-    const args=e.diceArgs||{},specs=diceSpecRows(args),resolved=!e.pending,rolls=[];
+    const args=diceDetailArgs(e),specs=diceSpecRows(args),resolved=!e.pending,rolls=[];
     if(resolved)for(const row of e.data?.rows||[])for(const v of row.rolls||[])rolls.push(v);
     let ri=0;
     const dice=specs.map(spec=>dieVisual(spec,spec.constant!==undefined?spec.constant:(resolved?rolls[ri++]:null),!resolved)).join('');
