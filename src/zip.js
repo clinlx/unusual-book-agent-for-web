@@ -79,6 +79,31 @@ const ZIP = (() => {
     return UTF8_LOOSE.decode(rawName);
   }
 
+  const PNG_SIGNATURE = [0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a];
+
+  function extractPngPrefix(arrayBuffer) {
+    const bytes = new Uint8Array(arrayBuffer);
+    if (bytes.length < 20 || PNG_SIGNATURE.some((b, i) => bytes[i] !== b)) return null;
+    const dv = new DataView(arrayBuffer);
+    let ptr = 8, sawIHDR = false;
+    while (ptr + 12 <= bytes.length) {
+      const len = dv.getUint32(ptr, false);
+      const end = ptr + 12 + len;
+      if (end > bytes.length) return null;
+      const type = String.fromCharCode(bytes[ptr + 4], bytes[ptr + 5], bytes[ptr + 6], bytes[ptr + 7]);
+      if (!sawIHDR) {
+        if (type !== 'IHDR' || len !== 13) return null;
+        sawIHDR = true;
+      }
+      ptr = end;
+      if (type === 'IEND') {
+        if (len !== 0) return null;
+        return bytes.slice(0, ptr);
+      }
+    }
+    return null;
+  }
+
   async function parseZip(arrayBuffer) {
     const dv = new DataView(arrayBuffer);
     const bytes = new Uint8Array(arrayBuffer);
@@ -89,7 +114,13 @@ const ZIP = (() => {
     }
     if (eocd === -1) throw new Error('不是有效的 zip 文件');
     const count = dv.getUint16(eocd + 10, true);
-    let ptr = dv.getUint32(eocd + 16, true);
+    const centralSize = dv.getUint32(eocd + 12, true);
+    const centralOffset = dv.getUint32(eocd + 16, true);
+    // ZIP offsets are relative to the beginning of the ZIP payload. When a
+    // valid PNG is prepended, infer that payload base from the EOCD position.
+    const archiveBase = eocd - centralSize - centralOffset;
+    if (archiveBase < 0) throw new Error('ZIP 中央目录偏移无效');
+    let ptr = archiveBase + centralOffset;
     const files = [];
     for (let i = 0; i < count; i++) {
       if (dv.getUint32(ptr, true) !== 0x02014b50) throw new Error('中央目录损坏');
@@ -103,7 +134,7 @@ const ZIP = (() => {
       const nameLen = dv.getUint16(ptr + 28, true);
       const extraLen = dv.getUint16(ptr + 30, true);
       const commentLen = dv.getUint16(ptr + 32, true);
-      const localOff = dv.getUint32(ptr + 42, true);
+      const localOff = archiveBase + dv.getUint32(ptr + 42, true);
       const nameBytes = bytes.subarray(ptr + 46, ptr + 46 + nameLen);
       const extraBytes = bytes.subarray(ptr + 46 + nameLen, ptr + 46 + nameLen + extraLen);
       const name = decodeZipName(nameBytes, flags, extraBytes);
@@ -203,6 +234,6 @@ const ZIP = (() => {
     return new Blob(parts, { type: 'application/zip' });
   }
 
-  return { parseZip, inflateRaw, makeZip, crc32 };
+  return { parseZip, extractPngPrefix, inflateRaw, makeZip, crc32 };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = ZIP;
