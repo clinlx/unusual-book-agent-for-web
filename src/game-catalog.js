@@ -144,7 +144,7 @@ const GameCatalog=(()=>{
   async function download(link,{fetch:request=globalThis.fetch,signal,onProgress=()=>{},pageUrl=globalThis.location?.href,online}={}){
     const address=url(link,pageUrl),size=r=>{const n=Number(r.headers.get('content-length'));return Number.isFinite(n)&&n>0?n:null;};
     const explain=(e,reading=false)=>connectionError(e,{address,pageUrl,online:online??globalThis.navigator?.onLine,signal,reading});
-    const check=n=>{if(n>MAX_BYTES)throw failure('TOO_LARGE','ZIP 超过 100 MB，无法导入。请使用更小的模组文件。');};
+    const check=n=>{if(n>MAX_BYTES)throw failure('TOO_LARGE','世界资源超过 100 MB，无法导入。请使用更小的文件。');};
     let head;try{head=await request(address,{method:'HEAD',signal,credentials:'omit',referrerPolicy:'no-referrer'});}catch(e){if(signal?.aborted||e?.name==='AbortError')throw explain(e);}
     if(head?.ok)check(size(head));
     let response;try{response=await request(address,{method:'GET',signal,credentials:'omit',referrerPolicy:'no-referrer'});}catch(e){throw explain(e);}
