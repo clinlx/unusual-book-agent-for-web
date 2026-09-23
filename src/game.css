@@ -58,3 +58,17 @@
 .manual-dice-stage.wide-arena .manual-die{pointer-events:none;transition:none}
 .manual-dice-stage.settling-layout .manual-die{transition:transform .24s cubic-bezier(.2,.85,.25,1)}
 @media(max-width:720px){.manual-dice-stage.wide-arena{min-height:220px}}
+
+/* Real Three.js + Cannon dice tray */
+.manual-dice-stage{position:relative;display:block!important;min-height:300px;padding:0!important;overflow:hidden!important;border:1px solid rgba(107,86,48,.18);background:
+  radial-gradient(ellipse at 50% 70%,rgba(184,149,73,.09),transparent 58%),
+  linear-gradient(180deg,rgba(20,24,20,.07),rgba(20,24,20,.015))}
+.manual-dice-3d{position:absolute;inset:0;overflow:hidden;border-radius:4px;isolation:isolate}
+.manual-dice-3d canvas{display:block!important;width:100%!important;height:100%!important;position:absolute!important;inset:0!important}
+.dice3d-loading,.dice3d-fallback{position:absolute;inset:0;display:grid;place-items:center;color:#8b7758;font:11px var(--sans);letter-spacing:.06em}
+.dice3d-warning{position:absolute;left:50%;bottom:38px;transform:translateX(-50%);z-index:3;padding:5px 9px;border:1px solid #9a514855;border-radius:999px;background:#f1e8d6e8;color:#8b4a43;font:10px var(--sans);white-space:nowrap}
+.manual-dice-labels{position:absolute;z-index:2;left:8px;right:8px;bottom:7px;display:flex;justify-content:center;gap:7px;flex-wrap:wrap;pointer-events:none}
+.manual-dice-labels span{display:inline-flex;align-items:center;gap:5px;padding:3px 7px;border:1px solid rgba(195,154,67,.28);border-radius:999px;background:rgba(18,21,18,.72);backdrop-filter:blur(3px);color:#e3c16e}
+.manual-dice-labels b{font:700 10px Georgia,serif}.manual-dice-labels small{font:9px var(--sans);color:#cbb98e}
+.manual-dice-stage.rolling{min-height:360px}.manual-dice-stage.rolling .manual-dice-labels{opacity:.55}
+@media(max-width:720px){.manual-dice-stage{min-height:240px}.manual-dice-stage.rolling{min-height:290px}}

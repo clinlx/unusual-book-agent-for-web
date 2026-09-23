@@ -24,7 +24,8 @@ const obfuscated=JavaScriptObfuscator.obfuscate(order.map(f=>read(f)).join('\n;\
   selfDefending:false,debugProtection:false,sourceMap:false,seed:20260920
 }).getObfuscatedCode();
 
-const scripts='const BUNDLED_PROMPTS = '+safeJSON(prompts)+';\nconst BUNDLED_RULE_BOOKS = '+safeJSON(ruleBooks)+';\n'+obfuscated;
+const dice3d=read('node_modules/@3d-dice/dice-box-threejs/dist/dice-box-threejs.umd.js');
+const scripts=dice3d+'\n;const BUNDLED_PROMPTS = '+safeJSON(prompts)+';\nconst BUNDLED_RULE_BOOKS = '+safeJSON(ruleBooks)+';\n'+obfuscated;
 const html=read('src/template.html').replace('/*__STYLES__*/',()=>read('src/game.css')).replace('/*__SCRIPTS__*/',()=>scripts.replace(/<\/script/gi,'<\\/script'));
 fs.mkdirSync(path.join(root,'dist'),{recursive:true});
 fs.writeFileSync(path.join(root,'dist','index.html'),html);
