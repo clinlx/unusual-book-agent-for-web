@@ -3,7 +3,7 @@ const GameUI = (() => {
   const esc = value => String(value == null ? '' : value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const json = value => typeof value === 'string' ? value : JSON.stringify(value, null, 2) || '';
   const markdown = text => typeof MD !== 'undefined' ? MD.render(String(text || '')).replace(/<img\b[^>]*>/gi, '') : '<p>' + esc(text).replace(/\n/g, '<br>') + '</p>';
-  function visibleEvents(events, mode) { return (events || []).filter(e => mode === 'debug' || !e.secret&&['player','story','round_end','dice','note'].includes(e.type)); }
+  function visibleEvents(events, mode) { return (events || []).filter(e => mode === 'debug' || e.type==='dice'&&e.secret || !e.secret&&['player','story','round_end','dice','note'].includes(e.type)); }
   function requestProgress(s){
     const r=s.active?.activeRound||{},n=Math.max(0,Number(r.requestCount)||0),m=Number(r.requestLimit??s.settings?.maxToolLoops)||60;
     const base=n<=20?n*3:m>20?60+Math.min(1,(n-20)/(m-20))*10:60;
@@ -127,6 +127,7 @@ const GameUI = (() => {
     if (e.type === 'story') return `<article class="story"><header class="story-meta">${esc(typeof GamePresentation!=='undefined'?GamePresentation.metadata(e):'第 '+e.round+' 回合')}</header>${markdown(e.content)}</article>`;
     if (e.type === 'player') return `<article class="player-action"><header>${e.skip?'空过':'你'}${mode === 'debug' ? ' · player_action' : ''}<small class="event-meta">${esc(meta)}</small></header><div>${esc(content).replace(/\n/g,'<br>')}</div></article>`;
     if (e.type === 'note')return `<article class="story note"><header>注释 <small class="event-meta">${esc(meta)}</small></header>${markdown(content)}</article>`;
+    if (e.type === 'dice'&&e.secret&&mode!=='debug') return '<div class="secret-dice-notice" role="status"><span aria-hidden="true">⚄</span> [主持人进行了一次暗骰]</div>';
     if (e.type === 'dice') return diceHTML(e,mode,details,meta);
     if (e.type === 'tool') return `<article class="tool-event"><header><span class="tool-mark">ƒ</span> ${esc(e.name)} <small>${e.success === false ? '失败' : '工具调用'}</small></header>${details('参数',e.args)}${details('结果',e.result)}${e.fileChanges?.length?details('文件修改记录',e.fileChanges):''}</article>`;
     if (e.type === 'assistant') return `<article class="assistant-event"><header>模型回复</header>${e.reasoning ? details('模型返回的思考',e.reasoning) : ''}${markdown(e.content)}</article>`;
