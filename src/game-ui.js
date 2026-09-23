@@ -77,9 +77,9 @@ const GameUI = (() => {
   function diceOutcome(result){
     if(result?.special&&result.critical){
       const failure=String(result.critical).includes('失败');
-      return `<span class="dice-outcome ${failure?'fail':'critical'}">${esc(String(result.critical).replace(/^可能是/,''))} <b aria-hidden="true">${failure?'×':'✦'}</b></span>`;
+      return `<span class="dice-outcome ${failure?'critical-fail':'critical-success'}">${esc(String(result.critical).replace(/^可能是/,''))} <b aria-hidden="true">${failure?'☠':'✦'}</b></span>`;
     }
-    if(result?.success==null)return '<span class="dice-outcome neutral">仅计算</span>';
+    if(result?.success==null)return '<span class="dice-outcome calculated">仅计算 <b aria-hidden="true">∑</b></span>';
     return `<span class="dice-outcome ${result.success?'success':'fail'}">${result.success?'通过':'不通过'} <b aria-hidden="true">${result.success?'✓':'×'}</b></span>`;
   }
   function diceCompareTail(result){
