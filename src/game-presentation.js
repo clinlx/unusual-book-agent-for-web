@@ -103,7 +103,7 @@ prev.addEventListener('click',()=>{if(index>0){index--;render(false);}});
 render(false);
 })();`;
 
-    return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'"><title>'+esc(save.name)+' · 故事存档</title><style>'+styles+'</style></head><body>'+layout+'<script>'+script.replace(/<\\/script/gi,'<\\\\/script')+'</script></body></html>';
+    return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'"><title>'+esc(save.name)+' · 故事存档</title><style>'+styles+'</style></head><body>'+layout+'<script>'+script.replaceAll('</script','<\\/script')+'</script></body></html>';
   }
   return {vitals,secondary,diff,fields,createReader,metadata,realTime,historyHTML,eventContent,exportName};
 })();
