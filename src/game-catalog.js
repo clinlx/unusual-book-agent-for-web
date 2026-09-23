@@ -1,6 +1,7 @@
 'use strict';
 const GameCatalog=(()=>{
   const MAX_BYTES=100*1024*1024;
+  const DEFAULT_SOURCE='./modules.json';
   class DownloadError extends Error {constructor(code,message){super(message);this.name='DownloadError';this.code=code;}}
   const failure=(code,message)=>new DownloadError(code,message);
   function link(value){
@@ -15,6 +16,15 @@ const GameCatalog=(()=>{
     let page;try{page=new URL(pageUrl);}catch(_){}
     if(!page||!['http:','https:'].includes(page.protocol))throw failure('LOCAL_RELATIVE_URL','站内链接需要通过网站打开页面才能下载。当前页面没有 HTTP / HTTPS 站点地址，请从网站访问，或下载 ZIP 后选择“从文件导入”。');
     return new URL(checked,page).href;
+  }
+  function source(value){
+    const raw=String(value??'').trim();
+    if(!raw)return DEFAULT_SOURCE;
+    if(/[\\\u0000-\u0020]/.test(raw)||raw.startsWith('//'))throw Error('世界列表源格式不正确：请使用 HTTP / HTTPS 地址或站内路径。');
+    const relative=!/^[a-z][a-z\d+.-]*:/i.test(raw);
+    let u;try{u=new URL(raw,'https://catalog.invalid/');}catch(_){throw Error('世界列表源格式不正确，请检查地址。');}
+    if(!['http:','https:'].includes(u.protocol)||u.username||u.password)throw Error('世界列表源仅支持不含账号密码的 HTTP / HTTPS 地址或站内路径。');
+    return relative?raw:u.href;
   }
   function httpError(status){
     const known={401:['AUTH_REQUIRED','此链接需要登录（HTTP 401）。请使用无需登录的公开下载链接，或下载 ZIP 后选择“从文件导入”。'],403:['ACCESS_DENIED','服务器拒绝访问（HTTP 403），可能没有下载权限或启用了防盗链。请检查分享权限，或下载 ZIP 后选择“从文件导入”。'],404:['NOT_FOUND','文件不存在（HTTP 404）。链接可能有误或文件已被删除，请向提供者获取新的 ZIP 链接。'],410:['EXPIRED','下载链接已失效（HTTP 410）。请向提供者获取新的链接。'],408:['TIMEOUT','服务器等待请求超时（HTTP 408）。请检查网络后重试。'],429:['RATE_LIMITED','下载请求过于频繁（HTTP 429）。请稍后再试。']};
@@ -56,10 +66,17 @@ const GameCatalog=(()=>{
       return {Name:item.Name,Introduction:String(item.Introduction??''),Text:String(item.Text??''),Link:link(item.Link),Cover:cover(item.Cover),CoverFit:coverFit(item.CoverFit),Tags:tags.map(t=>{if(!t||typeof t.TagName!=='string'||!/^#[\da-f]{6}$/i.test(t.Color))throw Error('标签需要名称和六位十六进制颜色');return {TagName:t.TagName,Color:t.Color};})};
     });
   }
-  async function load({fetch:request=globalThis.fetch}={}){
-    const response=await request('./modules.json',{cache:'no-store'});
-    if(!response.ok)throw Error('模组列表加载失败（HTTP '+response.status+'）');
-    return parse(await response.json());
+  async function load({fetch:request=globalThis.fetch,source:sourceValue=DEFAULT_SOURCE,signal}={}){
+    const address=source(sourceValue);
+    let response;
+    try{response=await request(address,{cache:'no-store',credentials:'omit',referrerPolicy:'no-referrer',headers:{Accept:'application/json'},signal});}
+    catch(e){
+      if(signal?.aborted||e?.name==='AbortError')throw Error('世界列表加载已取消或超时。');
+      throw Error('世界列表源无法连接。请检查地址、网络连接以及外部服务器的 CORS 设置。');
+    }
+    if(!response.ok)throw Error('世界列表加载失败（HTTP '+response.status+'）');
+    let value;try{value=await response.json();}catch(_){throw Error('世界列表不是有效的 JSON。');}
+    try{return parse(value);}catch(e){throw Error('世界列表格式错误：'+e.message);}
   }
   function fromQuery(search){
     const params=new URLSearchParams(search);
@@ -86,6 +103,6 @@ const GameCatalog=(()=>{
     let name='module.zip';try{const last=decodeURIComponent(new URL(response.url||address).pathname.split('/').pop());if(/\.zip$/i.test(last))name=last;}catch(_){}
     return {name,arrayBuffer:()=>blob.arrayBuffer()};
   }
-  return {MAX_BYTES,url,parse,load,fromQuery,download};
+  return {MAX_BYTES,DEFAULT_SOURCE,url,source,parse,load,fromQuery,download};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=GameCatalog;
