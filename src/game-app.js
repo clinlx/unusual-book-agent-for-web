@@ -1,7 +1,7 @@
 'use strict';
 const GameApp=(()=>{
   const defaults={baseUrl:'https://api.deepseek.com/v1',apiKey:'',model:'deepseek-flash',stream:true,temperature:0.7,maxContextK:128,maxOutputTokens:16384,
-    reasoningEffort:'high',maxToolLoops:60,httpTimeoutSeconds:180,maxRetries:2,promptOverrides:{}};
+    reasoningEffort:'high',maxToolLoops:60,httpTimeoutSeconds:180,maxRetries:2,worldListSource:'',promptOverrides:{}};
   const S={saves:[],active:null,settings:{...defaults},mode:'play',running:false,importing:null,stream:{content:'',reasoning:'',tools:[],story:'',storyPublished:0},error:null,storageWarning:null,usage:null};
   const db=GameStore.create();const listeners=new Set();let controller=null,initialized=false,storage=null,lease=null;
   try{storage=globalThis.localStorage;lease=Lease.create({storage,tabId:GameCore.uid()});}catch(_){}
@@ -119,7 +119,8 @@ const GameApp=(()=>{
     const next={...S.settings};for(const k of Object.keys(defaults))if(k!=='promptOverrides'&&Object.hasOwn(values,k))next[k]=values[k];
     for(const [key,min,max]of [['maxContextK',4,4000],['maxOutputTokens',256,200000],['maxToolLoops',1,300],['httpTimeoutSeconds',10,3600],['maxRetries',0,10],['temperature',0,2]]){
       const n=Number(next[key]);if(!Number.isFinite(n)||n<min||n>max)throw Error(key+' 超出有效范围');next[key]=n;}
-    for(const k of ['baseUrl','apiKey','model'])next[k]=String(next[k]||'').trim();
+    for(const k of ['baseUrl','apiKey','model','worldListSource'])next[k]=String(next[k]||'').trim();
+    if(next.worldListSource)GameCatalog.source(next.worldListSource);
     if(!['none','low','high','xhigh','max'].includes(next.reasoningEffort))throw Error('思考强度无效');
     next.stream=!!next.stream;await db.putSettings(next);S.settings=next;emit();
   }
