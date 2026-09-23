@@ -2,7 +2,7 @@
 const GameApp=(()=>{
   const defaults={baseUrl:'https://api.deepseek.com/v1',apiKey:'',model:'deepseek-flash',stream:true,temperature:0.7,maxContextK:128,maxOutputTokens:16384,
     reasoningEffort:'high',maxToolLoops:60,httpTimeoutSeconds:180,maxRetries:2,promptOverrides:{}};
-  const S={saves:[],active:null,settings:{...defaults},mode:'play',running:false,importing:null,stream:{content:'',reasoning:'',tools:[]},error:null,storageWarning:null,usage:null};
+  const S={saves:[],active:null,settings:{...defaults},mode:'play',running:false,importing:null,stream:{content:'',reasoning:'',tools:[],story:'',storyPublished:0},error:null,storageWarning:null,usage:null};
   const db=GameStore.create();const listeners=new Set();let controller=null,initialized=false,storage=null,lease=null;
   try{storage=globalThis.localStorage;lease=Lease.create({storage,tabId:GameCore.uid()});}catch(_){}
   function emit(){for(const fn of listeners){try{fn(S);}catch(e){console.error(e);}}}
@@ -66,7 +66,7 @@ const GameApp=(()=>{
     if(lease?.available){const lock=lease.acquireForRun(s.id,s.id);if(!lock.ok)throw Error('该存档正在另一个页面运行');}
     S.running=true;S.error=null;controller=new AbortController();
     const settings=structuredClone(S.settings);const overrides=settings.promptOverrides;
-    let timer;const clearStream=()=>{S.stream={content:'',reasoning:'',tools:[]};};
+    let timer;const clearStream=(keepStory=false)=>{const story=keepStory?S.stream.story||'':'',storyPublished=keepStory?S.stream.storyPublished||0:0;S.stream={content:'',reasoning:'',tools:[],story,storyPublished};};
     try{
       
       const latest=await db.getSave(s.id);if(latest&&latest.updatedAt>s.updatedAt){S.active=s=latest;}
@@ -84,7 +84,13 @@ const GameApp=(()=>{
       let currentRequest;
       const raw=GameTransport.create(settings,defs,{signal:controller.signal,
         onRequest:async body=>{if(currentRequest?.status==='pending')currentRequest.status='retried';currentRequest={round:s.activeRound.number,roundId:s.activeRound.id,at:Date.now(),body:structuredClone(body),status:'pending',response:{content:'',reasoning:'',tools:[]}};(s.requestHistory||=[]).push(currentRequest);s.activeRound.requestCount++;S.lastRequest=structuredClone(body);S.lastRequestSaveId=s.id;await persist();emit();},onUsage:usage=>{S.usage=usage;},
-        onDelta:t=>{S.stream.content+=t;if(currentRequest)currentRequest.response.content+=t;emit();},onReasoningDelta:t=>{S.stream.reasoning+=t;if(currentRequest)currentRequest.response.reasoning+=t;emit();},onToolDelta:t=>{S.stream.tools=t;if(currentRequest)currentRequest.response.tools=structuredClone(t);emit();}});
+        onDelta:t=>{S.stream.content+=t;if(currentRequest)currentRequest.response.content+=t;emit();},onReasoningDelta:t=>{S.stream.reasoning+=t;if(currentRequest)currentRequest.response.reasoning+=t;emit();},onToolDelta:t=>{S.stream.tools=t;
+          const storyCalls=t.filter(tc=>tc?.function?.name==='append_story');
+          if(storyCalls.length){
+            const parts=storyCalls.map(tc=>SSE.partialJsonString(tc.function.arguments,'content')).filter(v=>v!==null);
+            if(parts.length){if(!S.stream.story)S.stream.storyPublished=s.activeRound?.published||0;S.stream.story=parts.join('\n\n');}
+          }
+          if(currentRequest)currentRequest.response.tools=structuredClone(t);emit();}});
       const transport=async messages=>{clearStream();emit();try{const response=await raw(messages);if(currentRequest){currentRequest.status='completed';currentRequest.response=structuredClone(response);}return response;}catch(e){if(currentRequest){currentRequest.status='interrupted';currentRequest.error=e.message;}throw e;}};
       const flows=Prompts.flows(snapshot.overrides);
       await GameCore.run(s,transport,{signal:controller.signal,system:snapshot.system,
@@ -94,7 +100,7 @@ const GameApp=(()=>{
         resource:p=>Prompts.file(p,S.settings.promptOverrides),resourceList:Prompts.referencePaths(),afterStory:flows.flow_after_story,firstRecall:flows.flow_recall,
         resumePrompt:kind==='resume'?flows.flow_resume:'',cachePrompt:flows.flow_cache,summariesPrompt:flows.flow_summaries,transformContext:Prompts.migrateText,
         reminder:save=>!save.activeRound.triggered?flows.flow_need_trigger:!save.activeRound.published?flows.flow_no_story:flows.flow_need_end,
-        onStep:async()=>{if(lease?.available&&lease.lostWhileRunning(s.id))throw Error('存档被另一个页面接管');await persist();clearStream();emit();}});
+        onStep:async()=>{if(lease?.available&&lease.lostWhileRunning(s.id))throw Error('存档被另一个页面接管');await persist();const keepStory=!!S.stream.story&&(s.activeRound?.published||0)<=S.stream.storyPublished;clearStream(keepStory);emit();}});
     }catch(e){S.error=e.message||'回合未完成';if(s.activeRound&&!s.activeRound.complete){s.status='interrupted';s.error=S.error;}
       
       try{if(!lease?.lostWhileRunning(s.id))await persist();}catch(storageError){S.storageWarning='存档保存失败：'+storageError.message+'。请导出存档保留当前内容。';}throw e;
