@@ -49,6 +49,60 @@ const GameUI = (() => {
     return !s.running && s.active?.status==='interrupted' && s.active.activeRound && !s.active.activeRound.complete
       ? '<div class="round-continuation"><p>本轮尚未结束</p><button type="button" data-action="resume" class="primary">继续本轮</button></div>' : '';
   }
+  const DICE_COMPARE={gt:'>',ge:'≥',lt:'<',le:'≤',eq:'=',ne:'≠'};
+  const diceFormulaShort=formula=>{
+    const text=String(formula||'').trim(),m=text.match(/^(-?)1d(\d+)$/i);
+    return m?(m[1]?'−':'')+'d'+m[2]:text;
+  };
+  const diceDescription=e=>{
+    if(e.relatedAttr)return String(e.relatedAttr);
+    if(e.description)return String(e.description);
+    const first=String(e.content||'').split('\n')[0],parts=first.split('·');
+    return parts.length>1?parts.slice(1).join('·').trim():'';
+  };
+  function diceRollChip(row,result,aggregate=false){
+    const formula=aggregate?'合计':diceFormulaShort(row?.formula||'掷骰');
+    const total=Number.isFinite(result?.total)?result.total:Number.isFinite(result?.raw)?result.raw:row?.total;
+    const raw=Number.isFinite(result?.raw)?result.raw:row?.total;
+    const left=Number(result?.left)||0;
+    const detail=aggregate?(result?.mode&&result.mode!=='sum'?result.mode:'多骰组合'):
+      String(row?.formula||'');
+    const modifier=!aggregate&&left?` · 骰面 ${raw} ${left>0?'+':'−'} ${Math.abs(left)}`:'';
+    return `<span class="dice-roll-chip" title="${esc(detail+modifier)}"><small>${esc(formula)}</small><strong>${esc(total)}</strong></span>`;
+  }
+  function diceOutcome(result){
+    if(result?.special&&result.critical){
+      const failure=String(result.critical).includes('失败');
+      return `<span class="dice-outcome ${failure?'fail':'critical'}">${esc(String(result.critical).replace(/^可能是/,''))} <b aria-hidden="true">${failure?'×':'✦'}</b></span>`;
+    }
+    if(result?.success==null)return '<span class="dice-outcome neutral">仅计算</span>';
+    return `<span class="dice-outcome ${result.success?'success':'fail'}">${result.success?'通过':'不通过'} <b aria-hidden="true">${result.success?'✓':'×'}</b></span>`;
+  }
+  function diceCheckLine(e,result,row,aggregate=false){
+    const name=String(e.relatedAttr||e.data?.related_attr||row?.label||diceDescription(e)||'检定').trim();
+    const special=result?.special&&result.critical;
+    const compare=DICE_COMPARE[result?.compare_mode],hasTarget=!special&&result?.success!=null&&Number.isFinite(result?.target)&&compare;
+    return `<div class="dice-check-line"><span class="dice-check-name">(${esc(name)})</span>${diceRollChip(row,result,aggregate)}${hasTarget?`<span class="dice-compare" title="比较方式">${esc(compare)}</span><span class="dice-target" title="目标值">${esc(result.target)}</span>`:''}${diceOutcome(result)}</div>`;
+  }
+  function diceFaces(rows){
+    const faces=[];
+    for(const row of rows||[]){
+      const m=String(row.formula||'').match(/^(-?)(\d+)d(\d+)$/i);
+      if(!m||!Array.isArray(row.rolls))continue;
+      const badge=(m[1]?'−':'')+'d'+m[3];
+      for(const value of row.rolls)faces.push(`<span class="dice-face" title="${esc(row.label||row.formula||'骰面')}"><strong>${esc(value)}</strong><small>[${esc(badge)}]</small></span>`);
+    }
+    return faces.length>1?`<div class="dice-face-line" aria-label="原始骰面">${faces.join('')}</div>`:'';
+  }
+  function diceHTML(e,mode,details,meta){
+    const d=e.data||{},rows=Array.isArray(d.rows)?d.rows:[];
+    let checks='';
+    if(d.mode==='independent'&&rows.length)checks=rows.map(r=>diceCheckLine(e,r,r,false)).join('');
+    else checks=diceCheckLine(e,d,rows.length===1?rows[0]:null,rows.length!==1);
+    const roller=e.roller||d.roller||'';
+    const debug=mode==='debug'?`${e.content?details('原始检定文本',e.content):''}${details('骰子数据',d||e)}`:'';
+    return `<article class="dice"><header title="${esc(meta)}"><span>⚄ ${e.secret?'暗骰':'检定'}</span>${roller?`<small>${esc(roller)}</small>`:''}${mode==='debug'&&meta?`<small class="event-meta">${esc(meta)}</small>`:''}</header><div class="dice-checks">${checks}</div>${diceFaces(rows)}${debug}</article>`;
+  }
   function eventHTML(e, mode) {
     const meta=typeof GamePresentation!=='undefined'?GamePresentation.metadata(e):'',content=typeof GamePresentation!=='undefined'&&typeof state!=='undefined'&&state?.active?GamePresentation.eventContent(state.active,e):e.content;
     if(e.type==='assistant'&&!String(e.content||'').trim()&&!String(e.reasoning||'').trim())return '';
@@ -57,7 +111,7 @@ const GameUI = (() => {
     if (e.type === 'story') return `<article class="story"><header class="story-meta">${esc(typeof GamePresentation!=='undefined'?GamePresentation.metadata(e):'第 '+e.round+' 回合')}</header>${markdown(e.content)}</article>`;
     if (e.type === 'player') return `<article class="player-action"><header>${e.skip?'空过':'你'}${mode === 'debug' ? ' · player_action' : ''}<small class="event-meta">${esc(meta)}</small></header><div>${esc(content).replace(/\n/g,'<br>')}</div></article>`;
     if (e.type === 'note')return `<article class="story note"><header>注释 <small class="event-meta">${esc(meta)}</small></header>${markdown(content)}</article>`;
-    if (e.type === 'dice') return `<article class="dice"><header>⚄ ${e.secret ? '暗骰' : '检定'}</header><small class="event-meta">${esc(meta)}</small>${content ? `<div>${esc(content)}</div>` : ''}${(e.data?.rows || []).map(r => `<div class="dice-row"><span>${esc(r.label || r.formula)}</span><strong>${esc(r.special?r.raw:r.total)}</strong><small>${esc(r.formula || '')}${r.special || r.success == null ? '' : r.success ? ' · 成功' : ' · 失败'}${r.critical ? ' · '+esc(r.critical) : ''}</small></div>`).join('')}${mode === 'debug' ? details('骰子数据',e.data || e) : ''}</article>`;
+    if (e.type === 'dice') return diceHTML(e,mode,details,meta);
     if (e.type === 'tool') return `<article class="tool-event"><header><span class="tool-mark">ƒ</span> ${esc(e.name)} <small>${e.success === false ? '失败' : '工具调用'}</small></header>${details('参数',e.args)}${details('结果',e.result)}${e.fileChanges?.length?details('文件修改记录',e.fileChanges):''}</article>`;
     if (e.type === 'assistant') return `<article class="assistant-event"><header>模型回复</header>${e.reasoning ? details('模型返回的思考',e.reasoning) : ''}${markdown(e.content)}</article>`;
     return `<article class="error-event"><header>${esc(e.type)}</header><pre>${esc(json(e.content || e))}</pre></article>`;
