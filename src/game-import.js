@@ -35,7 +35,7 @@ const GameImport=(()=>{
       if(!Array.isArray(st.messages)||!Array.isArray(st.events)||!Number.isSafeInteger(st.round)||st.round<0)throw Error('存档历史格式不正确');
       const unsafeKey=(k,v)=>{if(['__proto__','prototype','constructor'].includes(k))throw Error('存档包含不安全字段');return v;};
       JSON.parse(JSON.stringify(st),unsafeKey);
-      for(const key of ['name','round','cache','messages','events','summaries','status','snapshots','activeRound','contextFromRound','lastChanges','draft','error','requestHistory','historyArchiveVersion','importNotice'])
+      for(const key of ['name','round','cache','messages','events','summaries','status','snapshots','activeRound','contextFromRound','lastChanges','draft','error','requestHistory','historyArchiveVersion','importNotice','pendingManualDice'])
         if(st[key]!==undefined)s[key]=structuredClone(st[key]);
       if(s.activeRound&&!s.activeRound.complete)s.status='interrupted';
       s.playerPath=core.validateTree(s.tree);

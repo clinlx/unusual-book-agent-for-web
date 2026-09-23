@@ -72,3 +72,13 @@
 .manual-dice-labels b{font:700 10px Georgia,serif}.manual-dice-labels small{font:9px var(--sans);color:#cbb98e}
 .manual-dice-stage.rolling{min-height:var(--dice-tray-height,360px)}.manual-dice-stage.rolling .manual-dice-labels{opacity:.55}
 @media(max-width:720px){.manual-dice-stage{min-height:240px}.manual-dice-stage.rolling{min-height:290px}}
+
+/* Fallback dice in the 3D tray: d1 coin + unsupported numerical slot reels. */
+.manual-fallback-dice-layer{position:absolute;z-index:4;left:10px;right:10px;bottom:34px;display:flex;justify-content:center;align-items:flex-end;gap:10px;flex-wrap:wrap;pointer-events:none}
+.manual-fallback-dice-layer .manual-die{min-width:112px}.manual-fallback-dice-layer .manual-die-canvas{width:112px;height:99px}
+.manual-dice-stage.has-fallback:not(.fallback-only) .manual-dice-3d{bottom:92px}
+.manual-dice-stage.has-fallback:not(.fallback-only){min-height:max(var(--dice-tray-height,300px),390px)}
+.manual-dice-stage.fallback-only .manual-fallback-dice-layer{inset:18px 8px 34px;align-items:center}
+.manual-dice-stage.fallback-only .manual-die{min-width:150px}.manual-dice-stage.fallback-only .manual-die-canvas{width:150px;height:132px}
+.manual-dice-stage.rolling .manual-fallback-dice-layer{filter:drop-shadow(0 9px 12px rgba(10,12,10,.18))}
+@media(max-width:720px){.manual-dice-stage.has-fallback:not(.fallback-only){min-height:max(var(--dice-tray-height,240px),330px)}.manual-fallback-dice-layer .manual-die{min-width:96px}.manual-fallback-dice-layer .manual-die-canvas{width:96px;height:85px}}
