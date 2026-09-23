@@ -1,6 +1,8 @@
 'use strict';
 const GameCatalog=(()=>{
+  const zip=typeof module!=='undefined'&&module.exports?require('./zip.js'):ZIP;
   const MAX_BYTES=100*1024*1024;
+  const MAX_COVER_BYTES=8*1024*1024;
   const DEFAULT_SOURCE='./modules.json';
   class DownloadError extends Error {constructor(code,message){super(message);this.name='DownloadError';this.code=code;}}
   const failure=(code,message)=>new DownloadError(code,message);
@@ -45,7 +47,7 @@ const GameCatalog=(()=>{
     if(page&&(page.protocol==='file:'||page.origin!==target.origin))return failure('CROSS_ORIGIN_OR_NETWORK','无法跨站下载：可能是文件服务器未允许跨域访问（CORS），也可能是网络、证书或连接问题；浏览器未提供具体原因。请先确认链接可直接下载；若可以，请联系提供者开启跨域访问，或下载 ZIP 后选择“从文件导入”。');
     return failure('NETWORK_ERROR','无法连接下载服务器。请检查网络和链接是否有效；也可能是证书或浏览器访问限制。可尝试下载 ZIP 后选择“从文件导入”。');
   }
-  const COVER_FITS=new Set(['auto','horizontal','vertical','stretch']);
+  const COVER_FITS=new Set(['auto','horizontal','vertical','stretch','none']);
   function cover(value){
     if(value==null||value==='')return '';
     if(typeof value!=='string'||/[\\\u0000-\u0020]/.test(value)||value.startsWith('//'))throw Error('封面链接格式不正确：请使用 HTTP / HTTPS 地址或站内路径。');
@@ -63,7 +65,8 @@ const GameCatalog=(()=>{
     return items.map((item,i)=>{
       if(!item||typeof item.Name!=='string'||!item.Name.trim())throw Error('模组 '+(i+1)+' 缺少名称');
       const tags=item.Tags??[];if(!Array.isArray(tags))throw Error('模组标签必须是数组');
-      return {Name:item.Name,Introduction:String(item.Introduction??''),Text:String(item.Text??''),Link:link(item.Link),Cover:cover(item.Cover),CoverFit:coverFit(item.CoverFit),Tags:tags.map(t=>{if(!t||typeof t.TagName!=='string'||!/^#[\da-f]{6}$/i.test(t.Color))throw Error('标签需要名称和六位十六进制颜色');return {TagName:t.TagName,Color:t.Color};})};
+      const fit=coverFit(item.CoverFit);
+      return {Name:item.Name,Introduction:String(item.Introduction??''),Text:String(item.Text??''),Link:link(item.Link),Cover:fit==='none'?'':cover(item.Cover),CoverFit:fit,Tags:tags.map(t=>{if(!t||typeof t.TagName!=='string'||!/^#[\da-f]{6}$/i.test(t.Color))throw Error('标签需要名称和六位十六进制颜色');return {TagName:t.TagName,Color:t.Color};})};
     });
   }
   async function load({fetch:request=globalThis.fetch,source:sourceValue=DEFAULT_SOURCE,signal,pageUrl=globalThis.location?.href}={}){
@@ -88,6 +91,52 @@ const GameCatalog=(()=>{
     }
     return items;
   }
+  const PNG_SIG=[0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a];
+  const concat=(parts,total)=>{const out=new Uint8Array(total);let off=0;for(const part of parts){out.set(part,off);off+=part.length;}return out;};
+  const isPngStart=bytes=>bytes.length>=8&&PNG_SIG.every((b,i)=>bytes[i]===b);
+  async function fallbackCover(linkValue,{fetch:request=globalThis.fetch,signal,pageUrl=globalThis.location?.href,maxBytes=MAX_COVER_BYTES}={}){
+    const address=url(linkValue,pageUrl),limit=Math.max(65536,Math.min(MAX_COVER_BYTES,Number(maxBytes)||MAX_COVER_BYTES));
+    const opts={cache:'no-store',credentials:'omit',referrerPolicy:'no-referrer',signal};
+    let start=0,span=65536,parts=[],total=0;
+    while(start<limit){
+      const end=Math.min(limit-1,start+span-1);
+      let response;
+      try{response=await request(address,{...opts,headers:{Range:`bytes=${start}-${end}`,Accept:'image/png,*/*;q=0.8'}});}
+      catch(_){return null;}
+      if(!(response.ok||response.status===206))return null;
+      if(response.status===206){
+        const bytes=new Uint8Array(await response.arrayBuffer());
+        if(!bytes.length)return null;
+        parts.push(bytes);total+=bytes.length;
+        const merged=concat(parts,total);
+        if(start===0&&!isPngStart(merged))return null;
+        const pngEnd=zip.findPngEnd(merged);
+        if(Number.isInteger(pngEnd)&&pngEnd>0)return new Blob([merged.subarray(0,pngEnd)],{type:'image/png'});
+        if(pngEnd===-1||total>=limit||bytes.length<end-start+1)return null;
+        start+=bytes.length;span=Math.min(span*2,1024*1024);continue;
+      }
+      const reader=response.body?.getReader();
+      if(!reader){try{await response.body?.cancel();}catch(_){}return null;}
+      parts=[];total=0;
+      try{
+        while(total<limit){
+          const {done,value}=await reader.read();if(done)break;
+          if(!value?.length)continue;
+          const room=limit-total,part=value.length>room?value.subarray(0,room):value;
+          parts.push(part);total+=part.length;
+          const merged=concat(parts,total);
+          if(total>=8&&!isPngStart(merged)){await reader.cancel().catch(()=>{});return null;}
+          const pngEnd=zip.findPngEnd(merged);
+          if(Number.isInteger(pngEnd)&&pngEnd>0){await reader.cancel().catch(()=>{});return new Blob([merged.subarray(0,pngEnd)],{type:'image/png'});}
+          if(pngEnd===-1){await reader.cancel().catch(()=>{});return null;}
+          if(total>=limit){await reader.cancel().catch(()=>{});return null;}
+        }
+      }catch(_){return null;}finally{reader.releaseLock();}
+      return null;
+    }
+    return null;
+  }
+
   function fromQuery(search){
     const params=new URLSearchParams(search);
     return params.has('url')?link(params.get('url')):null;
@@ -107,12 +156,17 @@ const GameCatalog=(()=>{
       if(reader){while(true){const {done,value}=await reader.read();if(done)break;received+=value.byteLength;check(received);chunks.push(value);onProgress({received,total});}}
       else{const bytes=new Uint8Array(await response.arrayBuffer());received=bytes.length;check(received);chunks.push(bytes);onProgress({received,total});}
     }catch(e){await reader?.cancel().catch(()=>{});throw explain(e,true);}finally{reader?.releaseLock();}
-    const blob=new Blob(chunks,{type:'application/zip'}),signature=new Uint8Array(await blob.slice(0,4).arrayBuffer());
-    if(!blob.size)throw failure('EMPTY_FILE','下载到的文件为空。请向提供者确认 ZIP 文件是否上传完整。');
-    if(signature[0]!==80||signature[1]!==75||!((signature[2]===3&&signature[3]===4)||(signature[2]===5&&signature[3]===6)))throw failure('NOT_ZIP','链接返回的内容不是 ZIP 文件，可能是分享页面、登录页或错误页面。请使用 ZIP 文件的直接下载链接，或下载后选择“从文件导入”。');
-    let name='module.zip';try{const last=decodeURIComponent(new URL(response.url||address).pathname.split('/').pop());if(/\.zip$/i.test(last))name=last;}catch(_){}
-    return {name,arrayBuffer:()=>blob.arrayBuffer()};
+    const blob=new Blob(chunks),buffer=await blob.arrayBuffer(),signature=new Uint8Array(buffer,0,Math.min(8,buffer.byteLength));
+    if(!blob.size)throw failure('EMPTY_FILE','下载到的文件为空。请向提供者确认世界资源是否上传完整。');
+    const startsZip=signature[0]===80&&signature[1]===75&&((signature[2]===3&&signature[3]===4)||(signature[2]===5&&signature[3]===6));
+    const startsPng=isPngStart(signature);
+    if(!startsZip&&!startsPng)throw failure('NOT_WORLD','链接返回的内容既不是 ZIP，也不是可识别的 PNG 世界资源。可能是分享页面、登录页或错误页面。');
+    if(startsPng&&!zip.zipArchiveBase(buffer))throw failure('PNG_NO_WORLD','该资源是普通 PNG 图片，不包含可导入的世界信息（ZIP 数据）。请检查世界资源格式。');
+    if(startsZip&&!zip.zipArchiveBase(buffer))throw failure('INVALID_ZIP','ZIP 数据不完整或格式损坏，无法读取世界信息。');
+    let name=startsPng?'module.png':'module.zip';
+    try{const last=decodeURIComponent(new URL(response.url||address).pathname.split('/').pop());if(/\.(zip|png)$/i.test(last))name=last;}catch(_){}
+    return {name,arrayBuffer:async()=>buffer};
   }
-  return {MAX_BYTES,DEFAULT_SOURCE,url,source,parse,load,fromQuery,download};
+  return {MAX_BYTES,MAX_COVER_BYTES,DEFAULT_SOURCE,url,source,parse,load,fallbackCover,fromQuery,download};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=GameCatalog;
