@@ -376,9 +376,9 @@ const GameUI = (() => {
   }
   function diceSpecRows(args={}){
     const out=[];for(const [label,value] of Object.entries(args.dice_dict||{})){
-      const formula=String(value).trim(),m=formula.match(/^(-?)(\\d+)d(\\d+)$/i);
+      const formula=String(value).trim(),m=formula.match(/^(-?)(\d+)d(\d+)$/i);
       if(m){const n=Number(m[2]),faces=Number(m[3]);for(let i=0;i<n;i++)out.push({label,faces,sign:m[1]?-1:1,formula,index:i});}
-      else if(/^-?\\d+$/.test(formula))out.push({label,constant:Number(formula),formula,index:0});
+      else if(/^-?\d+$/.test(formula))out.push({label,constant:Number(formula),formula,index:0});
     }return out;
   }
   function dieKind(faces){
@@ -392,8 +392,8 @@ const GameUI = (() => {
     return `<div class="manual-die ${kind}" data-faces="${spec.faces}" data-sign="${spec.sign}" data-final="${value==null?'':esc(Math.abs(value))}"><div class="die-shape"><strong>${esc(shown)}</strong>${faceLabel?`<i>${esc(faceLabel)}</i>`:''}</div><small>${esc(safeDiceLabel(spec.label)||'骰子')}</small></div>`;
   }
   function modifierLines(obj,title){
-    const entries=Object.entries(obj||{});if(!entries.length)return '';
-    return `<div class="manual-modifier-group"><strong>${esc(title)}</strong>${entries.map(([reason,value])=>`<span><b>${esc(signedModifier(Number(value)||0))}</b><small>${esc(reason)}</small></span>`).join('')}</div>`;
+    const entries=Object.entries(obj||{});
+    return `<div class="manual-modifier-group"><strong>${esc(title)}</strong>${entries.length?entries.map(([reason,value])=>`<span><b>${esc(signedModifier(Number(value)||0))}</b><small>${esc(reason)}</small></span>`).join(''):'<small class="manual-no-modifier">无修正</small>'}</div>`;
   }
   function diceDetailArgs(e){
     if(e?.diceArgs&&Object.keys(e.diceArgs).length)return e.diceArgs;
@@ -406,31 +406,29 @@ const GameUI = (() => {
       dice_dict[key]=String(row.formula);
     }
     const left=Number(d.left)||0,right=Number(d.right)||0,target=Number(d.target);
-    return {
-      description:e?.description||'',
-      roller:e?.roller||'',
-      related_attr:e?.relatedAttr||'',
-      is_secret:!!e?.secret,
-      dice_dict,
-      calculate_only:d.success==null,
-      target_value:Number.isFinite(target)?target-right:undefined,
-      compare_mode:d.compare_mode,
-      dice_combine_mode:d.mode||'sum',
-      left_modifiers:left?{'旧存档合计':left}:{},
-      right_modifiers:right?{'旧存档合计':right}:{}
-    };
+    return {description:e?.description||'',roller:e?.roller||'',related_attr:e?.relatedAttr||'',is_secret:!!e?.secret,dice_dict,
+      calculate_only:d.success==null,target_value:Number.isFinite(target)?target-right:undefined,compare_mode:d.compare_mode,dice_combine_mode:d.mode||'sum',
+      left_modifiers:left?{'旧存档合计':left}:{},right_modifiers:right?{'旧存档合计':right}:{}};
   }
   function diceDetailModal(e){
     if(!e||e.secret&&state.mode!=='debug')return;
-    const args=diceDetailArgs(e),specs=diceSpecRows(args),resolved=!e.pending,rolls=[];
-    if(resolved)for(const row of e.data?.rows||[])for(const v of row.rolls||[])rolls.push(v);
+    const args=diceDetailArgs(e),specs=diceSpecRows(args),resolved=!e.pending,d=e.data||{},rolls=[];
+    if(resolved)for(const row of d.rows||[])for(const v of row.rolls||[])rolls.push(v);
     let ri=0;
     const dice=specs.map(spec=>dieVisual(spec,spec.constant!==undefined?spec.constant:(resolved?rolls[ri++]:null),!resolved)).join('');
     const left=Object.values(args.left_modifiers||{}).reduce((n,v)=>n+(Number(v)||0),0),right=Object.values(args.right_modifiers||{}).reduce((n,v)=>n+(Number(v)||0),0);
-    const target=Number.isFinite(Number(args.target_value))?Number(args.target_value):null,compare=DICE_COMPARE[args.compare_mode]||'';
-    const targetLine=args.calculate_only?'仅计算，不进行目标比较':target===null?'无目标值':`目标：${target}${right?` ${signedModifier(right)} → ${target+right}`:''}　${compare}`;
-    const resultText=resolved?(e.data?.success==null?'仅计算':e.data?.special&&e.data?.critical?String(e.data.critical).replace(/^可能是/,''):(e.data?.success?'通过':'不通过')):'等待检定';
-    showModal(resolved?'检定结果':'进行检定',`<div class="manual-dice-modal" data-event-id="${esc(e.id)}"><div class="manual-dice-summary"><strong>${esc(args.related_attr||e.relatedAttr||'检定')}</strong><span>${esc(args.dice_combine_mode||'sum').toUpperCase()}</span><em class="${resolved?'resolved':'pending'}">${esc(resultText)}</em></div><div class="manual-dice-stage ${resolved?'is-resolved':''}" id="manual-dice-stage">${dice||'<p class="muted">没有可显示的骰子模型</p>'}</div><div class="manual-dice-rules">${modifierLines(args.left_modifiers,'检定修正')}${modifierLines(args.right_modifiers,'目标修正')}<p><strong>${esc(targetLine)}</strong>${left?`<small>检定总修正 ${esc(signedModifier(left))}</small>`:''}</p></div>${resolved?'<div class="modal-actions"><button type="button" data-action="close-modal">关闭</button></div>':`<div class="modal-actions"><button type="button" data-action="manual-dice-later">稍后决定</button><button type="button" class="primary" data-action="manual-dice-roll">进行检定</button></div>`}</div>`);
+    const baseTarget=Number.isFinite(Number(args.target_value))?Number(args.target_value):null,finalTarget=baseTarget===null?null:baseTarget+right;
+    const compare=DICE_COMPARE[args.compare_mode]||'',special=resolved&&d.special&&d.critical;
+    const resultText=resolved?(d.success==null?'仅计算':special?String(d.critical).replace(/^可能是/,''):(d.success?'通过':'不通过')):'等待检定';
+    const resultClass=!resolved?'pending':d.success==null?'calculated':special?(String(d.critical).includes('失败')?'critical-fail':'critical-success'):(d.success?'success':'fail');
+    const leftValue=!resolved?'?':d.mode==='independent'?'EACH':Number.isFinite(Number(d.total))?String(d.total):Number.isFinite(Number(d.raw))?String(d.raw):'?';
+    const rawValue=resolved&&Number.isFinite(Number(d.raw))?String(d.raw):'?';
+    const operator=args.calculate_only?'∑':special?'✦':compare||'?';
+    const operatorCaption=args.calculate_only?'仅计算':special?'特殊判定':'比较';
+    const targetMain=args.calculate_only?'—':finalTarget===null?'?':String(finalTarget);
+    const targetSub=args.calculate_only?'不使用目标值':baseTarget===null?'目标值未知':right?`基础 ${baseTarget}　${signedModifier(right)}`:`基础 ${baseTarget}`;
+    const leftSub=!resolved?'等待骰子落定':d.mode==='independent'?'各骰组独立结算':left?`原始 ${rawValue}　${signedModifier(left)}`:`原始 ${rawValue}`;
+    showModal(resolved?'检定结果':'进行检定',`<div class="manual-dice-modal" data-event-id="${esc(e.id)}"><div class="manual-dice-summary"><div><small>CHECK</small><strong>${esc(args.related_attr||e.relatedAttr||'检定')}</strong></div><span>${esc(args.dice_combine_mode||'sum').toUpperCase()}</span><em class="${esc(resultClass)}">${esc(resultText)}</em></div><div class="manual-compare-board"><section class="manual-value-panel source"><header><span>检定值</span><small>ROLL VALUE</small></header><div class="manual-value-art">${esc(leftValue)}</div><p>${esc(leftSub)}</p><div class="manual-dice-stage ${resolved?'is-resolved':''}" id="manual-dice-stage">${dice||'<p class="muted">没有可显示的骰子模型</p>'}</div>${modifierLines(args.left_modifiers,'检定修正')}</section><div class="manual-operator" aria-label="${esc(operatorCaption)}"><small>${esc(operatorCaption)}</small><strong>${esc(operator)}</strong><i aria-hidden="true"></i></div><section class="manual-value-panel target"><header><span>目标值</span><small>TARGET</small></header><div class="manual-value-art">${esc(targetMain)}</div><p>${esc(targetSub)}</p>${modifierLines(args.right_modifiers,'目标修正')}<div class="manual-target-note">${baseTarget!==null&&!args.calculate_only?`<span>基础目标</span><strong>${esc(baseTarget)}</strong>${right?`<span>修正后</span><strong>${esc(finalTarget)}</strong>`:''}`:'<span>本次不进行目标比较</span>'}</div></section></div>${resolved?'<div class="modal-actions"><button type="button" data-action="close-modal">关闭</button></div>':`<div class="modal-actions"><button type="button" data-action="manual-dice-later">稍后决定</button><button type="button" class="primary" data-action="manual-dice-roll">进行检定</button></div>`}</div>`);
   }
   function secureDie(faces){
     if(!Number.isSafeInteger(faces)||faces<1||faces>1000000000)throw Error('骰面范围无效');
