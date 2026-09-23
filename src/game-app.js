@@ -139,5 +139,6 @@ const GameApp=(()=>{
   }
   return {getState:()=>S,subscribe,init,importSave,importLink,openSave,closeSave,renameSave,deleteSave,exportSave,send,skip,start,resume,abort,rollback,setMode,
     readFile,writeFile,fileOperation,player,currentContext,updateSettings,promptList,getPrompt,savePrompt,resetPrompt,saveDraft,
-    testConnection:values=>GameTransport.testConnection({...S.settings,...values})};
+    testConnection:values=>GameTransport.testConnection({...S.settings,...values}),
+    listModels:values=>GameTransport.listModels({...S.settings,...values})};
 })();

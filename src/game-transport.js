@@ -64,6 +64,31 @@ const GameTransport=(()=>{
       finally{clearTimeout(timer);hooks.signal?.removeEventListener('abort',cancel);}
     };
   }
+  function apiRoot(settings){
+    const base=String(settings.baseUrl||'').trim().replace(/\/+$/,'');
+    if(!/^https?:\/\//.test(base))throw Error('请在设置中填写有效的模型 API 地址');
+    return base.endsWith('/chat/completions')?base.slice(0,-'/chat/completions'.length):base;
+  }
+  async function listModels(settings,hooks={}){
+    if(!String(settings.apiKey||'').trim())throw Error('请填写 API Key');
+    const fetcher=hooks.fetch||globalThis.fetch.bind(globalThis),root=apiRoot(settings);
+    const ctrl=new AbortController(),cancel=()=>ctrl.abort(hooks.signal?.reason);
+    hooks.signal?.addEventListener('abort',cancel,{once:true});if(hooks.signal?.aborted)cancel();
+    const timer=setTimeout(()=>ctrl.abort(Error('获取模型列表超时')),30000);
+    try{
+      const resp=await fetcher(root+'/models',{method:'GET',headers:{Authorization:'Bearer '+settings.apiKey},signal:ctrl.signal});
+      const text=await resp.text();
+      if(!resp.ok)throw Error('API '+resp.status+'：'+text.slice(0,500));
+      let data;try{data=JSON.parse(text);}catch(_){throw Error('模型列表响应不是有效 JSON');}
+      if(data?.error)throw Error(data.error.message||'模型列表返回错误');
+      if(!Array.isArray(data?.data))throw Error('模型列表响应缺少 data 数组');
+      const models=[...new Set(data.data.map(item=>typeof item==='string'?item:item?.id).filter(id=>typeof id==='string'&&id.trim()).map(id=>id.trim()))].sort((a,b)=>a.localeCompare(b));
+      return {models,count:models.length};
+    }catch(e){
+      if(ctrl.signal.aborted)throw ctrl.signal.reason||Object.assign(Error('获取模型列表已中止'),{name:'AbortError'});
+      throw e;
+    }finally{clearTimeout(timer);hooks.signal?.removeEventListener('abort',cancel);}
+  }
   async function testConnection(settings,hooks={}){
     if(!String(settings.apiKey||'').trim())throw Error('请填写 API Key');
     if(!String(settings.model||'').trim())throw Error('请填写模型名称');
@@ -71,6 +96,6 @@ const GameTransport=(()=>{
     await create({...settings,stream:false,maxOutputTokens:64,reasoningEffort:'none',maxRetries:0,httpTimeoutSeconds:30},[],hooks)([{role:'user',content:'Reply with OK.'}]);
     return {elapsedMs:Date.now()-start};
   }
-  return {create,testConnection};
+  return {create,testConnection,listModels};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=GameTransport;

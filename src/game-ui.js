@@ -328,8 +328,9 @@ const GameUI = (() => {
     const s=state.settings||{},opened=settingsSectionState();
     const field=(name,label,type='text',fallback='')=>`<label>${label}<input name="${name}" type="${type}" value="${esc(s[name]??fallback)}" ${type==='number'?'step="any"':''}></label>`;
     const section=(id,title,content)=>`<details class="settings-section" data-settings-section="${id}" ${opened[id]?'open':''}><summary><span>${esc(title)}</span><span class="settings-section-arrow" aria-hidden="true">⌄</span></summary><div class="settings-section-body">${content}</div></details>`;
+    const model=`<label class="model-setting"><span>模型</span><div class="model-control"><input id="model-input" name="model" type="text" value="${esc(s.model??'')}" autocomplete="off" spellcheck="false">${button('fetch-models','获取')}</div><small id="model-list-result" class="settings-field-result" role="status"></small></label>`;
     const apiKey=`<label class="api-key-setting"><span>API Key</span><div class="api-key-control"><input name="apiKey" type="password" value="${esc(s.apiKey??'')}" autocomplete="off">${button('test-connection','测试连接')}</div><small id="connection-result" class="settings-field-result" role="status"></small></label>`;
-    const api=`<div class="settings-grid">${field('baseUrl','API 地址','url')}${field('model','模型')}${apiKey}${field('temperature','Temperature','number',0.8)}${field('maxContextK','上下文上限（K tokens）','number',128)}${field('maxOutputTokens','最大输出 tokens','number',16384)}${field('maxToolLoops','每轮最大模型调用次数','number',60)}${field('httpTimeoutSeconds','请求超时（秒）','number',180)}${field('maxRetries','重试次数','number',2)}<label>思考强度<select name="reasoningEffort">${['none','low','high','xhigh','max'].map(v=>`<option ${s.reasoningEffort===v?'selected':''}>${v}</option>`).join('')}</select></label><label class="check-label stream-setting"><input name="stream" type="checkbox" ${s.stream!==false?'checked':''}><span>流式输出<small>用于缓解长时间输出文本的超时问题；不一定能使故事输出本身变为流式。</small></span></label></div>`;
+    const api=`<div class="settings-grid">${field('baseUrl','API 地址','url')}${model}${apiKey}${field('temperature','Temperature','number',0.8)}${field('maxContextK','上下文上限（K tokens）','number',128)}${field('maxOutputTokens','最大输出 tokens','number',16384)}${field('maxToolLoops','每轮最大模型调用次数','number',60)}${field('httpTimeoutSeconds','请求超时（秒）','number',180)}${field('maxRetries','重试次数','number',2)}<label>思考强度<select name="reasoningEffort">${['none','low','high','xhigh','max'].map(v=>`<option ${s.reasoningEffort===v?'selected':''}>${v}</option>`).join('')}</select></label><label class="check-label stream-setting"><input name="stream" type="checkbox" ${s.stream!==false?'checked':''}><span>流式输出<small>用于缓解长时间输出文本的超时问题；不一定能使故事输出本身变为流式。</small></span></label></div>`;
     const game='<div class="settings-section-empty" aria-hidden="true"></div>';
     const advanced=`<label class="world-list-setting"><span>世界列表源</span><div class="settings-inline-control"><input id="world-list-source" name="worldListSource" type="text" value="${esc(s.worldListSource||'')}" placeholder="${esc(GameCatalog.DEFAULT_SOURCE)}" autocomplete="off" spellcheck="false">${button('test-world-list','测试')}${button('reset-world-list','恢复默认')}</div><small>留空时使用 ${esc(GameCatalog.DEFAULT_SOURCE)}；可填写公开的 HTTP / HTTPS JSON 地址或站内路径。外部地址需要允许浏览器跨域读取。</small></label><p id="world-list-result" class="settings-field-result" role="status"></p><div class="settings-section-actions settings-section-actions-start">${button('prompts','编辑提示词')}</div>`;
     showModal('设置',`<aside class="settings-github" aria-label="GitHub"><div><strong>GitHub</strong><p>查看源代码，或联系作者反馈问题。</p></div><a class="github-link" href="https://github.com/clinlx/unusual-book-agent-for-web" target="_blank" rel="noopener noreferrer" aria-label="打开 GitHub 项目页面">GitHub ↗</a></aside><form id="settings-form"><div class="settings-sections">${section('api','API 设置',api)}${section('game','游戏设置',game)}${section('advanced','高级选项',advanced)}</div><div class="modal-actions"><button class="primary" type="submit">保存设置</button></div></form>`);
@@ -352,6 +353,21 @@ const GameUI = (() => {
     if(name==='close-modal'){modalRoot.innerHTML='';return;}
     if(name==='api-key-settings'){settingsModal();const input=modalRoot.querySelector('input[name="apiKey"]');input?.focus();return;}
     if(name==='settings')return settingsModal();
+    if(name==='fetch-models'){
+      const form=document.getElementById('settings-form'),input=document.getElementById('model-input'),result=document.getElementById('model-list-result');
+      const values=Object.fromEntries(new FormData(form));el.disabled=true;result.textContent='正在获取模型列表…';
+      const clearList=()=>{input?.removeAttribute('list');document.getElementById('model-options')?.remove();};
+      try{
+        const response=await GameApp.listModels(values);clearList();
+        if(response.models.length){
+          const list=document.createElement('datalist');list.id='model-options';
+          for(const id of response.models){const option=document.createElement('option');option.value=id;list.appendChild(option);}
+          input.after(list);input.setAttribute('list',list.id);
+        }
+        result.textContent='获取成功 · '+response.count+' 个模型';
+      }catch(error){clearList();result.textContent='获取失败：'+(error.message||String(error));}
+      finally{el.disabled=false;}return;
+    }
     if(name==='test-connection'){
       const form=document.getElementById('settings-form'),result=document.getElementById('connection-result');
       const values=Object.fromEntries(new FormData(form));el.disabled=true;result.textContent='正在测试连接…';
