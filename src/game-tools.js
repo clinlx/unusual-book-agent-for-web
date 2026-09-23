@@ -7,7 +7,7 @@ const GameTools=(()=>{
     end_the_round:{properties:{NEXT_TURN_CACHE:{anyOf:[str,{type:'object',properties:{Story_Phase:{type:'string',enum:['游戏前准备','游戏循环','游戏结束']},game_over:bool},required:['Story_Phase']}]}},required:['NEXT_TURN_CACHE']},
     roll_dice:{properties:{description:str,roller:str,related_attr:str,is_secret:bool,dice_dict:{type:'object',additionalProperties:str},calculate_only:bool,target_value:num,
       compare_mode:{type:'string',enum:['gt','lt','ge','le','ne','eq']},critical_success_range:str,critical_failure_range:str,
-      dice_combine_mode:{type:'string',enum:['sum','max','min','independent']},left_modifiers:{type:'object',additionalProperties:num},right_modifiers:{type:'object',additionalProperties:num}},required:['description','roller','dice_dict']},
+      dice_combine_mode:{type:'string',enum:['sum','max','min','independent']},left_modifiers:{type:'object',additionalProperties:num},right_modifiers:{type:'object',additionalProperties:num}},required:['description','roller','dice_dict','is_secret']},
     generate_random_number:{properties:{min_val:integer,max_val:integer},required:['min_val','max_val']},
     random_select:{properties:{items:{type:'array',items:{}},weights:{type:'array',items:num}},required:['items']},
     calculate_difficulty_class:{properties:{subject_value:num,target_value:num},required:['subject_value','target_value']},
