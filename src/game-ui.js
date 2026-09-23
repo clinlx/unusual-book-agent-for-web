@@ -3,7 +3,7 @@ const GameUI = (() => {
   const esc = value => String(value == null ? '' : value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const json = value => typeof value === 'string' ? value : JSON.stringify(value, null, 2) || '';
   const markdown = text => typeof MD !== 'undefined' ? MD.render(String(text || '')).replace(/<img\b[^>]*>/gi, '') : '<p>' + esc(text).replace(/\n/g, '<br>') + '</p>';
-  function visibleEvents(events, mode) { return (events || []).filter(e => mode === 'debug' || e.type==='dice'&&e.secret || !e.secret&&['player','story','round_end','dice','note'].includes(e.type)); }
+  function visibleEvents(events, mode) { return (events || []).filter(e => mode === 'debug' || e.type==='dice'?e.playerInvolved===true:!e.secret&&['player','story','round_end','note'].includes(e.type)); }
   function requestProgress(s){
     const r=s.active?.activeRound||{},n=Math.max(0,Number(r.requestCount)||0),m=Number(r.requestLimit??s.settings?.maxToolLoops)||60;
     const base=n<=20?n*3:m>20?60+Math.min(1,(n-20)/(m-20))*10:60;
