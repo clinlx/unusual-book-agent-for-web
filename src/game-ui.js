@@ -54,21 +54,19 @@ const GameUI = (() => {
     const text=String(formula||'').trim(),m=text.match(/^(-?)1d(\d+)$/i);
     return m?(m[1]?'−':'')+'d'+m[2]:text;
   };
-  const diceDescription=e=>{
-    if(e.relatedAttr)return String(e.relatedAttr);
-    if(e.description)return String(e.description);
-    const first=String(e.content||'').split('\n')[0],parts=first.split('·');
-    return parts.length>1?parts.slice(1).join('·').trim():'';
-  };
+  const signedModifier=value=>value?(value>0?'+':'−')+Math.abs(value):'';
   function diceRollChip(row,result,aggregate=false){
     const formula=aggregate?'合计':diceFormulaShort(row?.formula||'掷骰');
-    const total=Number.isFinite(result?.total)?result.total:Number.isFinite(result?.raw)?result.raw:row?.total;
-    const raw=Number.isFinite(result?.raw)?result.raw:row?.total;
+    const raw=Number.isFinite(result?.raw)?result.raw:Number.isFinite(row?.total)?row.total:result?.total;
+    const total=Number.isFinite(result?.total)?result.total:raw;
     const left=Number(result?.left)||0;
-    const detail=aggregate?(result?.mode&&result.mode!=='sum'?result.mode:'多骰组合'):
-      String(row?.formula||'');
-    const modifier=!aggregate&&left?` · 骰面 ${raw} ${left>0?'+':'−'} ${Math.abs(left)}`:'';
-    return `<span class="dice-roll-chip" title="${esc(detail+modifier)}"><small>${esc(formula)}</small><strong>${esc(total)}</strong></span>`;
+    return `<span class="dice-roll-chip"><small>${esc(formula)}</small><strong>${esc(raw)}</strong>${left?`<em class="dice-modifier">${esc(signedModifier(left))} → ${esc(total)}</em>`:''}</span>`;
+  }
+  function diceTarget(result){
+    const target=Number(result?.target),right=Number(result?.right)||0;
+    if(!Number.isFinite(target))return '';
+    const base=target-right;
+    return `<span class="dice-target" title="目标值"><strong>${esc(base)}</strong>${right?`<em class="dice-modifier">${esc(signedModifier(right))} → ${esc(target)}</em>`:''}</span>`;
   }
   function diceOutcome(result){
     if(result?.special&&result.critical){
@@ -79,10 +77,10 @@ const GameUI = (() => {
     return `<span class="dice-outcome ${result.success?'success':'fail'}">${result.success?'通过':'不通过'} <b aria-hidden="true">${result.success?'✓':'×'}</b></span>`;
   }
   function diceCheckLine(e,result,row,aggregate=false){
-    const name=String(e.relatedAttr||e.data?.related_attr||row?.label||diceDescription(e)||'检定').trim();
+    const name=String(e.relatedAttr||e.data?.related_attr||'检定').trim()||'检定';
     const special=result?.special&&result.critical;
     const compare=DICE_COMPARE[result?.compare_mode],hasTarget=!special&&result?.success!=null&&Number.isFinite(result?.target)&&compare;
-    return `<div class="dice-check-line"><span class="dice-check-name">(${esc(name)})</span>${diceRollChip(row,result,aggregate)}${hasTarget?`<span class="dice-compare" title="比较方式">${esc(compare)}</span><span class="dice-target" title="目标值">${esc(result.target)}</span>`:''}${diceOutcome(result)}</div>`;
+    return `<div class="dice-check-line"><span class="dice-check-name">(${esc(name)})</span>${diceRollChip(row,result,aggregate)}${hasTarget?`<span class="dice-compare" title="比较方式">${esc(compare)}</span>${diceTarget(result)}`:''}${diceOutcome(result)}</div>`;
   }
   function diceFaces(rows){
     const faces=[];
@@ -90,7 +88,7 @@ const GameUI = (() => {
       const m=String(row.formula||'').match(/^(-?)(\d+)d(\d+)$/i);
       if(!m||!Array.isArray(row.rolls))continue;
       const badge=(m[1]?'−':'')+'d'+m[3];
-      for(const value of row.rolls)faces.push(`<span class="dice-face" title="${esc(row.label||row.formula||'骰面')}"><strong>${esc(value)}</strong><small>[${esc(badge)}]</small></span>`);
+      for(const value of row.rolls)faces.push(`<span class="dice-face"><strong>${esc(value)}</strong><small>[${esc(badge)}]</small></span>`);
     }
     return faces.length>1?`<div class="dice-face-line" aria-label="原始骰面">${faces.join('')}</div>`:'';
   }
