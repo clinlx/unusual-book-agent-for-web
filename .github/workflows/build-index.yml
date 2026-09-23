@@ -1,0 +1,42 @@
+name: Build index.html
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build standalone HTML
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build index.html
+        run: npm run build
+
+      - name: Verify artifact
+        run: test -s dist/index.html
+
+      - name: Upload index.html
+        uses: actions/upload-artifact@v4
+        with:
+          name: index-html
+          path: dist/index.html
+          if-no-files-found: error
+          retention-days: 30
