@@ -456,6 +456,24 @@ const GameUI = (() => {
     ctx.fillStyle=g;ctx.shadowColor='rgba(238,191,86,.4)';ctx.shadowBlur=4;ctx.shadowOffsetY=0;ctx.fillText(text,x,y);
     ctx.globalAlpha=.55;ctx.fillStyle='#fff7c8';ctx.font='600 '+Math.max(8,size*.34)+'px Georgia';ctx.fillText('✦',x-size*.42,y-size*.32);ctx.restore();
   }
+  const resultVectorCache=new Map();
+  function resultVectors(faces){
+    if(resultVectorCache.has(faces))return resultVectorCache.get(faces);
+    const out=[],gold=Math.PI*(3-Math.sqrt(5));
+    for(let i=0;i<faces;i++){const y=1-(i+.5)*2/faces,r=Math.sqrt(Math.max(0,1-y*y)),a=i*gold;out.push([Math.cos(a)*r,Math.sin(a)*r,y]);}
+    resultVectorCache.set(faces,out);return out;
+  }
+  function physicalFaceValue(faces,rx,ry,rz){
+    if(faces<=1)return 1;
+    const vectors=resultVectors(faces);let best=0,bestZ=-Infinity;
+    for(let i=0;i<vectors.length;i++){const z=V3.rot(vectors[i],rx,ry,rz)[2];if(z>bestZ){bestZ=z;best=i;}}
+    return best+1;
+  }
+  function settledMotion(s){
+    if(s.kind==='slot')return s.slotV<.16;
+    if(s.kind==='coin')return Math.abs(s.vx)+Math.abs(s.vy)+Math.abs(s.wy)<.025;
+    return Math.abs(s.vx)+Math.abs(s.vy)+Math.abs(s.wx)+Math.abs(s.wy)+Math.abs(s.wz)<.045&&Math.abs(s.y-24)<.8;
+  }
   function drawPoly(canvas,kind,value,state={}){
     const ctx=canvas.getContext('2d'),w=canvas.width,h=canvas.height;ctx.clearRect(0,0,w,h);
     const cx=w/2+(state.x||0),cy=h/2+(state.y||0);
@@ -531,25 +549,77 @@ const GameUI = (() => {
   }
   async function animateManualDice(event){
     const stage=document.getElementById('manual-dice-stage'),button=modalRoot.querySelector('[data-action="manual-dice-roll"]');if(!stage||!button)return;
-    button.disabled=true;modalRoot.querySelector('[data-action="manual-dice-later"]')?.setAttribute('disabled','');stage.classList.add('rolling');
-    const dice=[...stage.querySelectorAll('.manual-die[data-faces]')],final=dice.map(el=>secureDie(Number(el.dataset.faces)));
-    const states=dice.map((el,i)=>({el,canvas:el.querySelector('canvas'),kind:el.dataset.dieKind,value:final[i],rx:Math.random()*6.28,ry:Math.random()*6.28,rz:Math.random()*6.28,
-      vx:(Math.random()-.5)*1.3,vy:-2.2-Math.random()*1.6,x:(Math.random()-.5)*24,y:18,wx:(Math.random()-.5)*.18,wy:(Math.random()-.5)*.22,wz:(Math.random()-.5)*.16,slotOffset:0,slotV:70+Math.random()*45}));
-    const start=performance.now(),maxMs=2600,reduced=matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
-    if(!reduced)await new Promise(resolve=>{
-      let last=start,raf=0;const frame=now=>{const dt=Math.min(34,now-last)/16.67;last=now;let moving=false;
-        for(const s of states){
-          if(s.kind==='slot'){s.slotOffset+=s.slotV*dt;s.slotV*=Math.pow(.94,dt);if(s.slotV>.45)moving=true;drawSlot(s.canvas,s.value,s.slotOffset);continue;}
-          s.vy+=.16*dt;s.x+=s.vx*dt;s.y+=s.vy*dt;if(s.y>24){s.y=24;s.vy*=-.42;s.vx*=.82;s.wx*=.86;s.wy*=.86;s.wz*=.86;}if(Math.abs(s.x)>38){s.x=Math.sign(s.x)*38;s.vx*=-.55;}
-          s.rx+=s.wx*dt;s.ry+=s.wy*dt;s.rz+=s.wz*dt;s.vx*=Math.pow(.985,dt);s.wx*=Math.pow(.985,dt);s.wy*=Math.pow(.985,dt);s.wz*=Math.pow(.985,dt);
-          if(Math.abs(s.vy)+Math.abs(s.vx)+Math.abs(s.wx)+Math.abs(s.wy)+Math.abs(s.wz)>.07)moving=true;drawPoly(s.canvas,s.kind,s.value,s);
-        }
-        if(moving&&now-start<maxMs)raf=requestAnimationFrame(frame);else{cancelAnimationFrame(raf);resolve();}
-      };raf=requestAnimationFrame(frame);
+    button.disabled=true;modalRoot.querySelector('[data-action="manual-dice-later"]')?.setAttribute('disabled','');stage.classList.add('rolling','wide-arena');
+    const dice=[...stage.querySelectorAll('.manual-die[data-faces]')],rect=stage.getBoundingClientRect(),reduced=matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+    const arenaW=Math.max(260,rect.width),arenaH=Math.max(170,rect.height),slotSlow=0.975;
+    const states=dice.map((el,i)=>{
+      const canvas=el.querySelector('canvas'),kind=el.dataset.dieKind,faces=Number(el.dataset.faces),r=canvas.getBoundingClientRect();
+      el.dataset.rollLabel=el.querySelector('small')?.textContent||'';
+      el.style.position='absolute';el.style.margin='0';el.style.zIndex=String(10+i);el.style.left='0';el.style.top='0';
+      const startX=Math.max(4,Math.min(arenaW-r.width-4,(i+.5)*arenaW/Math.max(1,dice.length)-r.width/2));
+      const startY=Math.max(2,arenaH-r.height-4);
+      return {el,canvas,kind,faces,value:null,rx:Math.random()*Math.PI*2,ry:Math.random()*Math.PI*2,rz:Math.random()*Math.PI*2,
+        vx:(Math.random()-.5)*4.2,vy:-4.4-Math.random()*3.0,x:startX,y:startY,wx:(Math.random()-.5)*.34,wy:(Math.random()-.5)*.38,wz:(Math.random()-.5)*.3,
+        slotOffset:Math.random()*120,slotV:95+Math.random()*55,stableFor:0,w:r.width,h:r.height};
     });
-    for(const s of states){s.el.dataset.final=String(s.value);drawPoly(s.canvas,s.kind,s.value,{rx:s.rx,ry:s.ry,rz:s.rz});s.el.classList.add('landed');}
-    await new Promise(resolve=>setTimeout(resolve,reduced?80:320));
-    await GameApp.resolveManualDice(final);modalRoot.innerHTML='';
+    const cleanupLayout=()=>{
+      stage.classList.remove('rolling','wide-arena');
+      for(const s of states){s.el.style.position='';s.el.style.margin='';s.el.style.zIndex='';s.el.style.left='';s.el.style.top='';s.el.style.transform='';s.el.classList.add('landed');}
+    };
+    if(reduced){
+      for(const s of states){
+        s.value=s.kind==='slot'?secureDie(s.faces):s.kind==='coin'?secureDie(s.faces):physicalFaceValue(s.faces,s.rx,s.ry,s.rz);
+        s.el.dataset.final=String(s.value);drawPoly(s.canvas,s.kind,s.value,{rx:s.rx,ry:s.ry,rz:s.rz});
+      }
+      cleanupLayout();await new Promise(resolve=>setTimeout(resolve,120));
+      await GameApp.resolveManualDice(states.map(s=>s.value));modalRoot.innerHTML='';return;
+    }
+    const start=performance.now(),hardTimeout=10000,minShow=1700,stableWindow=620;
+    await new Promise(resolve=>{
+      let last=start,raf=0;
+      const frame=now=>{
+        const frameMs=Math.min(40,now-last),dt=frameMs/16.67;last=now;let allStable=true;
+        for(const s of states){
+          if(s.kind==='slot'){
+            s.slotOffset+=s.slotV*dt;s.slotV*=Math.pow(slotSlow,dt);
+            if(now-start<2600)s.slotV=Math.max(s.slotV,3.5);
+            s.value=secureDie(s.faces);drawSlot(s.canvas,s.value,s.slotOffset);
+            s.el.style.transform=`translate3d(${s.x}px,${Math.max(0,s.y)}px,0)`;
+          }else{
+            s.vy+=.24*dt;s.x+=s.vx*dt;s.y+=s.vy*dt;
+            const maxX=Math.max(0,arenaW-s.w),maxY=Math.max(0,arenaH-s.h);
+            if(s.y>maxY){s.y=maxY;s.vy*=-.46;s.vx*=.88;s.wx*=.89;s.wy*=.89;s.wz*=.89;}
+            if(s.y<0){s.y=0;s.vy=Math.abs(s.vy)*.5;}
+            if(s.x<0||s.x>maxX){s.x=Math.max(0,Math.min(maxX,s.x));s.vx*=-.68;s.wy*=-.94;}
+            s.rx+=s.wx*dt;s.ry+=s.wy*dt;s.rz+=s.wz*dt;
+            const grounded=Math.abs(s.y-maxY)<1.2;
+            const drag=grounded?.965:.992;s.vx*=Math.pow(drag,dt);s.wx*=Math.pow(grounded?.956:.99,dt);s.wy*=Math.pow(grounded?.956:.99,dt);s.wz*=Math.pow(grounded?.956:.99,dt);
+            const preview=s.kind==='coin'?physicalFaceValue(s.faces,0,s.ry,0):physicalFaceValue(s.faces,s.rx,s.ry,s.rz);
+            drawPoly(s.canvas,s.kind,preview,s);s.el.style.transform=`translate3d(${s.x}px,${s.y}px,0)`;
+          }
+          const stable=settledMotion(s);s.stableFor=stable?s.stableFor+frameMs:0;if(s.stableFor<stableWindow)allStable=false;
+        }
+        const elapsed=now-start;
+        if((allStable&&elapsed>=minShow)||elapsed>=hardTimeout){cancelAnimationFrame(raf);resolve();}else raf=requestAnimationFrame(frame);
+      };
+      raf=requestAnimationFrame(frame);
+    });
+    for(const s of states){
+      if(s.kind==='slot'){
+        // Slot result is readable/predictable: decelerate onto a cryptographically chosen stop.
+        s.value=secureDie(s.faces);
+        const settleStart=performance.now(),from=s.slotOffset,target=s.slotOffset+(5+Math.floor(Math.random()*4))*42;
+        await new Promise(resolve=>{const tick=now=>{const t=Math.min(1,(now-settleStart)/1250),ease=1-Math.pow(1-t,4);s.slotOffset=from+(target-from)*ease;drawSlot(s.canvas,s.value,s.slotOffset);if(t<1)requestAnimationFrame(tick);else resolve();};requestAnimationFrame(tick);});
+      }else if(s.kind==='coin')s.value=physicalFaceValue(s.faces,0,s.ry,0);
+      else s.value=physicalFaceValue(s.faces,s.rx,s.ry,s.rz);
+      s.el.dataset.final=String(s.value);drawPoly(s.canvas,s.kind,s.value,{rx:s.rx,ry:s.ry,rz:s.rz});
+    }
+    // Once every object is stable, return them to their fixed presentation slots together.
+    stage.classList.add('settling-layout');
+    await new Promise(resolve=>setTimeout(resolve,260));
+    cleanupLayout();hydrateDiceCanvases(stage);
+    await new Promise(resolve=>setTimeout(resolve,520));
+    await GameApp.resolveManualDice(states.map(s=>s.value));modalRoot.innerHTML='';
   }
   function changesModal() {
     const changes=state.active.lastChanges||[];
