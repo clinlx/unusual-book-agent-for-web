@@ -55,12 +55,18 @@ const GameUI = (() => {
     return m?(m[1]?'−':'')+'d'+m[2]:text;
   };
   const signedModifier=value=>value?(value>0?'+':'−')+Math.abs(value):'';
-  function diceRollChip(row,result,aggregate=false){
+  const safeDiceLabel=value=>{
+    const text=String(value||'').trim();
+    if(!text||text.length>16||/[\r\n。！？!?：:；;]/.test(text))return '';
+    return text;
+  };
+  function diceRollChip(row,result,{aggregate=false,showModifier=true}={}){
+    const label=safeDiceLabel(row?.label);
     const formula=aggregate?'合计':diceFormulaShort(row?.formula||'掷骰');
     const raw=Number.isFinite(result?.raw)?result.raw:Number.isFinite(row?.total)?row.total:result?.total;
     const total=Number.isFinite(result?.total)?result.total:raw;
-    const left=Number(result?.left)||0;
-    return `<span class="dice-roll-chip"><small>${esc(formula)}</small><strong>${esc(raw)}</strong>${left?`<em class="dice-modifier">${esc(signedModifier(left))} → ${esc(total)}</em>`:''}</span>`;
+    const left=showModifier?(Number(result?.left)||0):0;
+    return `<span class="dice-roll-chip">${label?`<span class="dice-roll-label">${esc(label)}</span>`:''}<small>${esc(formula)}</small><span class="dice-equals">=</span><strong>${esc(raw)}</strong>${left?`<em class="dice-modifier">${esc(signedModifier(left))} → ${esc(total)}</em>`:''}</span>`;
   }
   function diceTarget(result){
     const target=Number(result?.target),right=Number(result?.right)||0;
@@ -76,27 +82,39 @@ const GameUI = (() => {
     if(result?.success==null)return '<span class="dice-outcome neutral">仅计算</span>';
     return `<span class="dice-outcome ${result.success?'success':'fail'}">${result.success?'通过':'不通过'} <b aria-hidden="true">${result.success?'✓':'×'}</b></span>`;
   }
-  function diceCheckLine(e,result,row,aggregate=false){
-    const name=String(e.relatedAttr||e.data?.related_attr||'检定').trim()||'检定';
+  function diceCompareTail(result){
     const special=result?.special&&result.critical;
     const compare=DICE_COMPARE[result?.compare_mode],hasTarget=!special&&result?.success!=null&&Number.isFinite(result?.target)&&compare;
-    return `<div class="dice-check-line"><span class="dice-check-name">(${esc(name)})</span>${diceRollChip(row,result,aggregate)}${hasTarget?`<span class="dice-compare" title="比较方式">${esc(compare)}</span>${diceTarget(result)}`:''}${diceOutcome(result)}</div>`;
+    return `${hasTarget?`<span class="dice-compare" title="比较方式">${esc(compare)}</span>${diceTarget(result)}`:''}${diceOutcome(result)}`;
+  }
+  function diceModeBadge(mode){
+    return mode==='max'?'<span class="dice-mode max">取大 MAX</span>':
+      mode==='min'?'<span class="dice-mode min">取小 MIN</span>':
+      mode==='independent'?'<span class="dice-mode independent">并行 EACH</span>':
+      mode==='sum'?'<span class="dice-mode sum">合计 SUM</span>':'';
   }
   function diceFaces(rows){
     const faces=[];
     for(const row of rows||[]){
       const m=String(row.formula||'').match(/^(-?)(\d+)d(\d+)$/i);
-      if(!m||!Array.isArray(row.rolls))continue;
-      const badge=(m[1]?'−':'')+'d'+m[3];
-      for(const value of row.rolls)faces.push(`<span class="dice-face"><strong>${esc(value)}</strong><small>[${esc(badge)}]</small></span>`);
+      if(!m||!Array.isArray(row.rolls)||row.rolls.length<2)continue;
+      const badge=(m[1]?'−':'')+'d'+m[3],label=safeDiceLabel(row.label);
+      for(const value of row.rolls)faces.push(`<span class="dice-face">${label?`<i>${esc(label)}</i>`:''}<strong>${esc(value)}</strong><small>[${esc(badge)}]</small></span>`);
     }
-    return faces.length>1?`<div class="dice-face-line" aria-label="原始骰面">${faces.join('')}</div>`:'';
+    return faces.length?`<div class="dice-face-line" aria-label="原始骰面">${faces.join('')}</div>`:'';
   }
   function diceHTML(e,mode,details,meta){
-    const d=e.data||{},rows=Array.isArray(d.rows)?d.rows:[];
+    const d=e.data||{},rows=Array.isArray(d.rows)?d.rows:[],name=String(e.relatedAttr||e.data?.related_attr||'检定').trim()||'检定';
     let checks='';
-    if(d.mode==='independent'&&rows.length)checks=rows.map(r=>diceCheckLine(e,r,r,false)).join('');
-    else checks=diceCheckLine(e,d,rows.length===1?rows[0]:null,rows.length!==1);
+    if(d.mode==='independent'&&rows.length){
+      checks=`<div class="dice-check-head"><span class="dice-check-name">(${esc(name)})</span>${diceModeBadge('independent')}</div>`+
+        rows.map(r=>`<div class="dice-check-line dice-independent-row">${diceRollChip(r,r,{showModifier:true})}${diceCompareTail(r)}</div>`).join('');
+    }else if(rows.length>1){
+      const components=`<div class="dice-components">${rows.map(r=>diceRollChip(r,r,{showModifier:false})).join('')}</div>`;
+      checks=`<div class="dice-check-line"><span class="dice-check-name">(${esc(name)})</span>${diceModeBadge(d.mode)}${diceRollChip(null,d,{aggregate:true,showModifier:true})}${diceCompareTail(d)}</div>${components}`;
+    }else{
+      checks=`<div class="dice-check-line"><span class="dice-check-name">(${esc(name)})</span>${diceRollChip(rows[0],d,{showModifier:true})}${diceCompareTail(d)}</div>`;
+    }
     const roller=e.roller||d.roller||'';
     const debug=mode==='debug'?`${e.content?details('原始检定文本',e.content):''}${details('骰子数据',d||e)}`:'';
     return `<article class="dice"><header title="${esc(meta)}"><span>⚄ ${e.secret?'暗骰':'检定'}</span>${roller?`<small>${esc(roller)}</small>`:''}${mode==='debug'&&meta?`<small class="event-meta">${esc(meta)}</small>`:''}</header><div class="dice-checks">${checks}</div>${diceFaces(rows)}${debug}</article>`;
