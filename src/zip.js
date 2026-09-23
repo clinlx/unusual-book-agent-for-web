@@ -81,25 +81,50 @@ const ZIP = (() => {
 
   const PNG_SIGNATURE = [0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a];
 
-  function extractPngPrefix(arrayBuffer) {
-    const bytes = new Uint8Array(arrayBuffer);
-    if (bytes.length < 20 || PNG_SIGNATURE.some((b, i) => bytes[i] !== b)) return null;
-    const dv = new DataView(arrayBuffer);
+  function findPngEnd(input) {
+    const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+    if (bytes.length < 8 || PNG_SIGNATURE.some((b, i) => bytes[i] !== b)) return -1;
+    if (bytes.length < 20) return null;
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     let ptr = 8, sawIHDR = false;
     while (ptr + 12 <= bytes.length) {
       const len = dv.getUint32(ptr, false);
+      if (len > 0x7fffffff) return -1;
       const end = ptr + 12 + len;
       if (end > bytes.length) return null;
       const type = String.fromCharCode(bytes[ptr + 4], bytes[ptr + 5], bytes[ptr + 6], bytes[ptr + 7]);
       if (!sawIHDR) {
-        if (type !== 'IHDR' || len !== 13) return null;
+        if (type !== 'IHDR' || len !== 13) return -1;
         sawIHDR = true;
       }
       ptr = end;
-      if (type === 'IEND') {
-        if (len !== 0) return null;
-        return bytes.slice(0, ptr);
-      }
+      if (type === 'IEND') return len === 0 ? ptr : -1;
+    }
+    return null;
+  }
+
+  function extractPngPrefix(arrayBuffer) {
+    const bytes = new Uint8Array(arrayBuffer), end = findPngEnd(bytes);
+    return Number.isInteger(end) && end > 0 ? bytes.slice(0, end) : null;
+  }
+
+  function zipArchiveBase(arrayBuffer) {
+    const bytes = new Uint8Array(arrayBuffer);
+    if (bytes.length < 22) return null;
+    const dv = new DataView(arrayBuffer);
+    const floor = Math.max(0, bytes.length - 22 - 0xffff);
+    for (let eocd = bytes.length - 22; eocd >= floor; eocd--) {
+      if (dv.getUint32(eocd, true) !== 0x06054b50) continue;
+      const commentLen = dv.getUint16(eocd + 20, true);
+      if (eocd + 22 + commentLen !== bytes.length) continue;
+      const count = dv.getUint16(eocd + 10, true);
+      const centralSize = dv.getUint32(eocd + 12, true);
+      const centralOffset = dv.getUint32(eocd + 16, true);
+      const base = eocd - centralSize - centralOffset;
+      if (base < 0) continue;
+      const central = base + centralOffset;
+      if (count && (central + 4 > bytes.length || dv.getUint32(central, true) !== 0x02014b50)) continue;
+      return { base, eocd, count, centralSize, centralOffset };
     }
     return null;
   }
@@ -107,19 +132,9 @@ const ZIP = (() => {
   async function parseZip(arrayBuffer) {
     const dv = new DataView(arrayBuffer);
     const bytes = new Uint8Array(arrayBuffer);
-    
-    let eocd = -1;
-    for (let i = bytes.length - 22; i >= 0; i--) {
-      if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
-    }
-    if (eocd === -1) throw new Error('不是有效的 zip 文件');
-    const count = dv.getUint16(eocd + 10, true);
-    const centralSize = dv.getUint32(eocd + 12, true);
-    const centralOffset = dv.getUint32(eocd + 16, true);
-    // ZIP offsets are relative to the beginning of the ZIP payload. When a
-    // valid PNG is prepended, infer that payload base from the EOCD position.
-    const archiveBase = eocd - centralSize - centralOffset;
-    if (archiveBase < 0) throw new Error('ZIP 中央目录偏移无效');
+    const info = zipArchiveBase(arrayBuffer);
+    if (!info) throw new Error('不是有效的 zip 文件');
+    const {base:archiveBase,count,centralOffset} = info;
     let ptr = archiveBase + centralOffset;
     const files = [];
     for (let i = 0; i < count; i++) {
@@ -234,6 +249,6 @@ const ZIP = (() => {
     return new Blob(parts, { type: 'application/zip' });
   }
 
-  return { parseZip, extractPngPrefix, inflateRaw, makeZip, crc32 };
+  return { parseZip, findPngEnd, extractPngPrefix, zipArchiveBase, inflateRaw, makeZip, crc32 };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = ZIP;
