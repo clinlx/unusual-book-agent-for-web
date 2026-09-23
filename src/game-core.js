@@ -135,7 +135,7 @@ const GameCore = (() => {
     }).filter(i=>i!==null);
     return {info,items,name:data.get(info,'姓名')||s.playerPath.split('/').pop()};
   }
-  const visibleEvents=(s,mode)=>mode==='debug'?s.events:s.events.filter(e=>e.type==='dice'&&e.secret||!e.secret&&['player','story','round_end','dice','note'].includes(e.type));
+  const visibleEvents=(s,mode)=>mode==='debug'?s.events:s.events.filter(e=>e.type==='dice'?e.playerInvolved===true:!e.secret&&['player','story','round_end','note'].includes(e.type));
   function requireText(v,label){if(typeof v!=='string'||!v.trim())throw Error(label+' 不得为空');return v;}
   function finite(v,label){if(typeof v!=='number'||!Number.isFinite(v))throw Error(label+' 必须是有限数值');return v;}
   function modifiers(x){if(x==null)return 0;if(!object(x))throw Error('修正值必须是对象');return Object.values(x).reduce((n,v)=>n+finite(v,'修正值'),0);}
@@ -272,7 +272,7 @@ const GameCore = (() => {
           if(to==='/workspace'||to.startsWith(from+'/'))throw Error('无效目标路径');vfs[name](s.tree,from,to);result={from,to};break;
         }
         case 'roll_dice':{
-          const d=dice(a,options.random);emit(s,'dice',{...d,roller:a.roller,description:a.description||'',relatedAttr:a.related_attr||'',secret:a.is_secret===true||a.related_attr==='心理学'});result=d;break;
+          const d=dice(a,options.random);emit(s,'dice',{...d,roller:a.roller,description:a.description||'',relatedAttr:a.related_attr||'',playerInvolved:a.involves_player===true,secret:a.is_secret===true||a.related_attr==='心理学'});result=d;break;
         }
         case 'generate_random_number':result={value:randInt(a.min_val,a.max_val,options.random)};break;
         case 'random_select':{
