@@ -135,7 +135,7 @@ const GameCore = (() => {
     }).filter(i=>i!==null);
     return {info,items,name:data.get(info,'姓名')||s.playerPath.split('/').pop()};
   }
-  const visibleEvents=(s,mode)=>mode==='debug'?s.events:s.events.filter(e=>!e.secret&&['player','story','round_end','dice','note'].includes(e.type));
+  const visibleEvents=(s,mode)=>mode==='debug'?s.events:s.events.filter(e=>e.type==='dice'&&e.secret||!e.secret&&['player','story','round_end','dice','note'].includes(e.type));
   function requireText(v,label){if(typeof v!=='string'||!v.trim())throw Error(label+' 不得为空');return v;}
   function finite(v,label){if(typeof v!=='number'||!Number.isFinite(v))throw Error(label+' 必须是有限数值');return v;}
   function modifiers(x){if(x==null)return 0;if(!object(x))throw Error('修正值必须是对象');return Object.values(x).reduce((n,v)=>n+finite(v,'修正值'),0);}
