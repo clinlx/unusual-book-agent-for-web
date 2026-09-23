@@ -135,12 +135,27 @@ const GameCore = (() => {
     }).filter(i=>i!==null);
     return {info,items,name:data.get(info,'姓名')||s.playerPath.split('/').pop()};
   }
-  const visibleEvents=(s,mode)=>mode==='debug'?s.events:s.events.filter(e=>e.type==='dice'&&e.secret||!e.secret&&['player','story','round_end','dice','note'].includes(e.type));
+  const actorKey=v=>String(v||'').trim().toLowerCase().replace(/[\\s·._-]+/g,'');
+  function dicePlayerRelated(s,a={}){
+    const roller=actorKey(a.roller),p=player(s,'info'),name=actorKey(p.name),id=actorKey(s.playerPath.split('/').pop());
+    if(!roller)return false;
+    if(['玩家','玩家角色','主角','你','player','pc'].includes(roller))return true;
+    if(roller===name||roller===id)return true;
+    if(name.length>=2&&roller.includes(name))return true;
+    return false;
+  }
+  const diceSecret=a=>a?.is_secret===true||String(a?.related_attr||'').trim()==='心理学';
+  function diceEventPlayerRelated(s,e){
+    if(typeof e?.playerRelated==='boolean')return e.playerRelated;
+    return dicePlayerRelated(s,e?.diceArgs||e||{});
+  }
+  const visibleEvents=(s,mode)=>mode==='debug'?s.events:s.events.filter(e=>e.type==='dice'?diceEventPlayerRelated(s,e):!e.secret&&['player','story','round_end','note'].includes(e.type));
   function requireText(v,label){if(typeof v!=='string'||!v.trim())throw Error(label+' 不得为空');return v;}
   function finite(v,label){if(typeof v!=='number'||!Number.isFinite(v))throw Error(label+' 必须是有限数值');return v;}
   function modifiers(x){if(x==null)return 0;if(!object(x))throw Error('修正值必须是对象');return Object.values(x).reduce((n,v)=>n+finite(v,'修正值'),0);}
   function randInt(min,max,random=Math.random){if(!Number.isSafeInteger(min)||!Number.isSafeInteger(max)||max<min||max-min>1e9)throw Error('随机范围无效');return min+Math.floor(random()*(max-min+1));}
-  function dice(a,random=Math.random){
+  function dice(a,random=Math.random,fixedRolls=null){
+    let fixedIndex=0;
     if(!object(a.dice_dict)||!Object.keys(a.dice_dict).length)throw Error('dice_dict 不得为空');
     const compare={gt:(x,y)=>x>y,ge:(x,y)=>x>=y,lt:(x,y)=>x<y,le:(x,y)=>x<=y,eq:(x,y)=>x===y,ne:(x,y)=>x!==y};
     if(!a.calculate_only&&(!compare[a.compare_mode]||!Number.isFinite(a.target_value)))throw Error('检定需要 target_value 与 compare_mode');
@@ -158,7 +173,15 @@ const GameCore = (() => {
       if(!/^-?\d+$/.test(formula)||!Number.isSafeInteger(Number(formula)))throw Error('骰子格式应为 NdM、-NdM 或整数');
       return {label,formula,constant:Number(formula)};
     });
-    const rows=specs.map(r=>{const rolls=r.n?Array.from({length:r.n},()=>randInt(1,r.faces,random)*r.sign):[r.constant];return {label:r.label,formula:r.formula,rolls,total:rolls.reduce((x,y)=>x+y,0)};});
+    const rows=specs.map(r=>{const rolls=r.n?Array.from({length:r.n},()=>{
+      if(Array.isArray(fixedRolls)){
+        if(fixedIndex>=fixedRolls.length)throw Error('手动掷骰结果数量不足');
+        const value=Number(fixedRolls[fixedIndex++]);if(!Number.isSafeInteger(value)||value<1||value>r.faces)throw Error('手动掷骰结果超出骰面范围');
+        return value*r.sign;
+      }
+      return randInt(1,r.faces,random)*r.sign;
+    }):[r.constant];return {label:r.label,formula:r.formula,rolls,total:rolls.reduce((x,y)=>x+y,0)};});
+    if(Array.isArray(fixedRolls)&&fixedIndex!==fixedRolls.length)throw Error('手动掷骰结果数量不匹配');
     function judge(raw){const total=raw+left,target=(a.target_value||0)+right;const hints=[];
       if(ranges.critical_success_range&&raw>=ranges.critical_success_range[0]&&raw<=ranges.critical_success_range[1])hints.push('可能是大成功');
       if(ranges.critical_failure_range&&raw>=ranges.critical_failure_range[0]&&raw<=ranges.critical_failure_range[1])hints.push('可能是大失败');
@@ -285,7 +308,12 @@ const GameCore = (() => {
           if(to==='/workspace'||to.startsWith(from+'/'))throw Error('无效目标路径');vfs[name](s.tree,from,to);result={from,to};break;
         }
         case 'roll_dice':{
-          const d=dice(a,options.random);emit(s,'dice',{...d,roller:a.roller,description:a.description||'',relatedAttr:a.related_attr||'',secret:a.is_secret===true||a.related_attr==='心理学'});result=d;break;
+          const d=dice(a,options.random,options.fixedDiceRolls),payload={...d,roller:a.roller,description:a.description||'',relatedAttr:a.related_attr||'',
+            secret:diceSecret(a),playerRelated:dicePlayerRelated(s,a),diceArgs:copy(a),manual:!!options.manualDiceResolved,pending:false,callId};
+          const pendingEvent=options.manualEventId&&s.events.find(e=>e.id===options.manualEventId);
+          if(pendingEvent)Object.assign(pendingEvent,payload,{at:Date.now(),worldTime:data.worldTime(s)});
+          else emit(s,'dice',payload);
+          result=d;break;
         }
         case 'generate_random_number':result={value:randInt(a.min_val,a.max_val,options.random)};break;
         case 'random_select':{
@@ -312,6 +340,14 @@ const GameCore = (() => {
       fileChanges:out.ok?changes(before.tree,s.tree):[]});
     if(!round.complete&&s.snapshots.length)s.lastChanges=changes(s.snapshots.at(-1).tree,s.tree);
     s.updatedAt=Date.now();return out;
+  }
+  function resolveManualDice(s,rolls){
+    const pending=s.pendingManualDice;if(!pending)throw Error('没有待进行的手动检定');
+    if(!s.activeRound||pending.round!==s.activeRound.number)throw Error('待检定状态与当前回合不一致');
+    const out=execute(s,'roll_dice',copy(pending.args),pending.callId,{fixedDiceRolls:rolls,manualDiceResolved:true,manualEventId:pending.eventId});
+    if(!out.ok)throw Error(out.error||'手动检定结算失败');
+    s.messages.push({role:'tool',tool_call_id:pending.callId,content:JSON.stringify(out),round:s.activeRound.number});
+    delete s.pendingManualDice;s.status='interrupted';s.error=null;s.updatedAt=Date.now();return out;
   }
   function estimate(messages){let n=0;for(const m of messages){const text=typeof m==='string'?m:JSON.stringify(m);let cjk=0;for(const c of text)if(/[\u3000-\u9fff]/.test(c))cjk++;n+=cjk+Math.ceil((text.length-cjk)/4)+5;}return n;}
   function context(s,system,cap=128000,opts={}) {
@@ -344,19 +380,32 @@ const GameCore = (() => {
       let storyInBatch=false;
       for(const tc of message.tool_calls||[]){
         if(s.messages.some(m=>m.role==='tool'&&m.round===s.activeRound.number&&m.tool_call_id===tc.id))continue;
+        if(s.pendingManualDice){
+          if(s.pendingManualDice.callId===tc.id)return true;
+          return true;
+        }
         abort();let a,out;
-        try{a=JSON.parse(tc.function.arguments||'{}');out=execute(s,tc.function.name,a,tc.id,opts);}
+        try{
+          a=JSON.parse(tc.function.arguments||'{}');
+          if(tc.function.name==='roll_dice'&&opts.manualDice===true&&dicePlayerRelated(s,a)&&!diceSecret(a)){
+            const e=emit(s,'dice',{roller:a.roller,description:a.description||'',relatedAttr:a.related_attr||'',secret:false,playerRelated:true,
+              diceArgs:copy(a),manual:true,pending:true,callId:tc.id});
+            s.pendingManualDice={callId:tc.id,eventId:e.id,round:s.activeRound.number,args:copy(a),createdAt:Date.now()};
+            s.status='interrupted';s.error=null;await step();return true;
+          }
+          out=execute(s,tc.function.name,a,tc.id,opts);
+        }
         catch(e){out={ok:false,error:'工具参数解析失败：'+e.message};emit(s,'tool',{name:tc.function.name,args:tc.function.arguments,result:out.error,success:false,callId:tc.id});}
         if(out.ok&&tc.function.name==='append_story')storyInBatch=true;
         s.messages.push({role:'tool',tool_call_id:tc.id,content:JSON.stringify(out),round:s.activeRound.number});await step();
       }
-      
       if(storyInBatch&&!s.activeRound.complete&&opts.afterStory){s.messages.push({role:'user',content:opts.afterStory,round:s.activeRound.number});await step();}
+      return false;
     }
     try{
       
       const pending=s.messages.filter(m=>m.role==='assistant'&&m.tool_calls&&m.round===s.activeRound.number);
-      for(const m of pending)await completeBatch(m);
+      for(const m of pending)if(await completeBatch(m))return;
       if(s.activeRound.complete){s.status=s.cache.game_over===true?'ended':'waiting';await step();return;}
       if(opts.resumePrompt){s.messages.push({role:'user',content:opts.resumePrompt,round:s.activeRound.number});await step();}
       for(let loop=0;loop<(opts.maxToolLoops||60);loop++){
@@ -368,7 +417,7 @@ const GameCore = (() => {
         if(resp.reasoning)m.reasoning_content=resp.reasoning;
         if(resp.tool_calls?.length)m.tool_calls=resp.tool_calls.map(tc=>({...tc,id:tc.id||uid()}));
         s.messages.push(m);emit(s,'assistant',{content:m.content,reasoning:m.reasoning_content||''});await step();
-        if(m.tool_calls){await completeBatch(m);if(s.activeRound.complete){
+        if(m.tool_calls){if(await completeBatch(m))return;if(s.activeRound.complete){
           if(s.activeRound.starting&&opts.firstRecall){s.messages.push({role:'user',content:opts.firstRecall,round:s.activeRound.number});await step();}return;
         }}
         else{
@@ -379,6 +428,6 @@ const GameCore = (() => {
       throw Error('本回合已达到工具循环上限，可继续本回合或回退');
     }catch(e){s.status=s.activeRound.complete?(s.cache.game_over?'ended':'waiting'):'interrupted';s.error=e.message;emit(s,'error',{content:e.message});await step();throw e;}
   }
-  return {uid,path,createSave,validateTree,beginRound,execute,run,context,estimate,player,filterVisible,visibleEvents,rollback,pruneRollback,ROLLBACK_LIMIT,changes,flatten,dice};
+  return {uid,path,createSave,validateTree,beginRound,execute,run,context,estimate,player,filterVisible,visibleEvents,rollback,pruneRollback,ROLLBACK_LIMIT,changes,flatten,dice,dicePlayerRelated,diceSecret,resolveManualDice};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=GameCore;

@@ -3,7 +3,10 @@ const GameUI = (() => {
   const esc = value => String(value == null ? '' : value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const json = value => typeof value === 'string' ? value : JSON.stringify(value, null, 2) || '';
   const markdown = text => typeof MD !== 'undefined' ? MD.render(String(text || '')).replace(/<img\b[^>]*>/gi, '') : '<p>' + esc(text).replace(/\n/g, '<br>') + '</p>';
-  function visibleEvents(events, mode) { return (events || []).filter(e => mode === 'debug' || e.type==='dice'&&e.secret || !e.secret&&['player','story','round_end','dice','note'].includes(e.type)); }
+  function visibleEvents(events, mode) {
+    if(typeof GameCore!=='undefined'&&state?.active&&events===state.active.events)return GameCore.visibleEvents(state.active,mode);
+    return (events||[]).filter(e=>mode==='debug'||e.type==='dice'?e.playerRelated!==false:!e.secret&&['player','story','round_end','note'].includes(e.type));
+  }
   function requestProgress(s){
     const r=s.active?.activeRound||{},n=Math.max(0,Number(r.requestCount)||0),m=Number(r.requestLimit??s.settings?.maxToolLoops)||60;
     const base=n<=20?n*3:m>20?60+Math.min(1,(n-20)/(m-20))*10:60;
@@ -103,7 +106,33 @@ const GameUI = (() => {
     }
     return faces.length?`<div class="dice-face-line" aria-label="原始骰面">${faces.join('')}</div>`:'';
   }
+  function pendingDiceRows(args={}){
+    return Object.entries(args.dice_dict||{}).map(([label,formula])=>({label,formula:String(formula),rolls:[],total:null}));
+  }
+  function pendingRollChip(row,args,{aggregate=false}={}){
+    const label=safeDiceLabel(row?.label),formula=aggregate?'结算':diceFormulaShort(row?.formula||'掷骰');
+    const left=Number(Object.values(args.left_modifiers||{}).reduce((n,v)=>n+(Number(v)||0),0))||0;
+    return `<span class="dice-roll-chip pending">${label?`<span class="dice-roll-label">${esc(label)}</span>`:''}<small>${esc(formula)}</small><span class="dice-equals">=</span><strong>?</strong>${left?`<em class="dice-modifier">${esc(signedModifier(left))} → ?</em>`:''}</span>`;
+  }
+  function pendingTarget(args){
+    if(args.calculate_only||!Number.isFinite(Number(args.target_value)))return '';
+    const base=Number(args.target_value),right=Number(Object.values(args.right_modifiers||{}).reduce((n,v)=>n+(Number(v)||0),0))||0;
+    return `<span class="dice-target"><strong>${esc(base)}</strong>${right?`<em class="dice-modifier">${esc(signedModifier(right))} → ${esc(base+right)}</em>`:''}</span>`;
+  }
+  function pendingDiceHTML(e){
+    const a=e.diceArgs||{},rows=pendingDiceRows(a),name=String(a.related_attr||e.relatedAttr||'检定').trim()||'检定',mode=a.dice_combine_mode||'sum';
+    let checks='';
+    if(mode==='independent'&&rows.length){
+      checks=`<div class="dice-check-head"><span class="dice-check-name">(${esc(name)})</span>${diceModeBadge('independent')}</div>`+
+        rows.map(r=>`<div class="dice-check-line dice-independent-row">${pendingRollChip(r,a)}${a.calculate_only?'':`<span class="dice-compare">${esc(DICE_COMPARE[a.compare_mode]||'?')}</span>${pendingTarget(a)}`}<span class="dice-outcome pending">待定 <b>…</b></span></div>`).join('');
+    }else{
+      checks=`<div class="dice-check-line"><span class="dice-check-name">(${esc(name)})</span>${rows.length>1?diceModeBadge(mode):''}${rows.length>1?pendingRollChip(null,a,{aggregate:true}):pendingRollChip(rows[0],a)}${a.calculate_only?'':`<span class="dice-compare">${esc(DICE_COMPARE[a.compare_mode]||'?')}</span>${pendingTarget(a)}`}<span class="dice-outcome pending">待定 <b>…</b></span></div>`;
+      if(rows.length>1)checks+=`<div class="dice-components">${rows.map(r=>pendingRollChip(r,{},{})).join('')}</div>`;
+    }
+    return `<article class="dice dice-clickable dice-pending" data-action="dice-detail" data-event-id="${esc(e.id)}" role="button" tabindex="0"><header><span>⚄ 检定</span><small>等待玩家掷骰</small></header><div class="dice-checks">${checks}</div></article>`;
+  }
   function diceHTML(e,mode,details,meta){
+    if(e.pending)return pendingDiceHTML(e);
     const d=e.data||{},rows=Array.isArray(d.rows)?d.rows:[],name=String(e.relatedAttr||e.data?.related_attr||'检定').trim()||'检定';
     let checks='';
     if(d.mode==='independent'&&rows.length){
@@ -115,9 +144,8 @@ const GameUI = (() => {
     }else{
       checks=`<div class="dice-check-line"><span class="dice-check-name">(${esc(name)})</span>${diceRollChip(rows[0],d,{showModifier:true})}${diceCompareTail(d)}</div>`;
     }
-    const roller=e.roller||d.roller||'';
-    const debug=mode==='debug'?`${e.content?details('原始检定文本',e.content):''}${details('骰子数据',d||e)}`:'';
-    return `<article class="dice"><header title="${esc(meta)}"><span>⚄ ${e.secret?'暗骰':'检定'}</span>${roller?`<small>${esc(roller)}</small>`:''}${mode==='debug'&&meta?`<small class="event-meta">${esc(meta)}</small>`:''}</header><div class="dice-checks">${checks}</div>${diceFaces(rows)}${debug}</article>`;
+    const roller=e.roller||d.roller||'',debug=mode==='debug'?`${e.content?details('原始检定文本',e.content):''}${details('骰子数据',d||e)}`:'';
+    return `<article class="dice dice-clickable" data-action="dice-detail" data-event-id="${esc(e.id)}" role="button" tabindex="0"><header title="${esc(meta)}"><span>⚄ ${e.secret?'暗骰':'检定'}</span>${roller?`<small>${esc(roller)}</small>`:''}${mode==='debug'&&meta?`<small class="event-meta">${esc(meta)}</small>`:''}</header><div class="dice-checks">${checks}</div>${diceFaces(rows)}${debug}</article>`;
   }
   function eventHTML(e, mode) {
     const meta=typeof GamePresentation!=='undefined'?GamePresentation.metadata(e):'',content=typeof GamePresentation!=='undefined'&&typeof state!=='undefined'&&state?.active?GamePresentation.eventContent(state.active,e):e.content;
@@ -224,6 +252,7 @@ const GameUI = (() => {
     if(a&&s.mode!=='debug')updateVitals(GameApp.player().info);
     refreshInput();
     if(preview&&filePath){const ta=document.getElementById('file-editor');if(ta){const pane=document.createElement('div');pane.id='file-preview';pane.tabIndex=0;pane.className='panel-scroll';pane.innerHTML=markdown(fileDraft);ta.replaceWith(pane);pane.focus();}}
+    if(a?.pendingManualDice&&!modalRoot.firstChild){const e=a.events?.find(x=>x.id===a.pendingManualDice.eventId);if(e)setTimeout(()=>{if(!modalRoot.firstChild&&state.active?.pendingManualDice?.eventId===e.id)diceDetailModal(e);},0);}
   }
   let catalog=[],catalogError='';
   async function reloadCatalog(source=state?.settings?.worldListSource||''){
@@ -331,7 +360,7 @@ const GameUI = (() => {
     const model=`<label class="model-setting"><span>模型</span><div class="model-control"><input id="model-input" name="model" type="text" value="${esc(s.model??'')}" autocomplete="off" spellcheck="false">${button('fetch-models','获取')}</div><small id="model-list-result" class="settings-field-result" role="status"></small></label>`;
     const apiKey=`<label class="api-key-setting"><span>API Key</span><div class="api-key-control"><input name="apiKey" type="password" value="${esc(s.apiKey??'')}" autocomplete="off">${button('test-connection','测试连接')}</div><small id="connection-result" class="settings-field-result" role="status"></small></label>`;
     const api=`<div class="settings-grid">${field('baseUrl','API 地址','url')}${model}${apiKey}${field('temperature','Temperature','number',0.8)}${field('maxContextK','上下文上限（K tokens）','number',128)}${field('maxOutputTokens','最大输出 tokens','number',16384)}${field('maxToolLoops','每轮最大模型调用次数','number',60)}${field('httpTimeoutSeconds','请求超时（秒）','number',180)}${field('maxRetries','重试次数','number',2)}<label>思考强度<select name="reasoningEffort">${['none','low','high','xhigh','max'].map(v=>`<option ${s.reasoningEffort===v?'selected':''}>${v}</option>`).join('')}</select></label><label class="check-label stream-setting"><input name="stream" type="checkbox" ${s.stream!==false?'checked':''}><span>流式输出<small>用于缓解长时间输出文本的超时问题；不一定能使故事输出本身变为流式。</small></span></label></div>`;
-    const game='<div class="settings-section-empty" aria-hidden="true"></div>';
+    const game=`<label class="check-label manual-dice-setting"><input name="manualDice" type="checkbox" ${s.manualDice===true?'checked':''}><span>手动掷骰<small>开启后，玩家可见的公开检定会暂停流程，等待你亲自掷骰。暗骰和非玩家检定仍自动结算。</small></span></label>`;
     const advanced=`<label class="world-list-setting"><span>世界列表源</span><div class="settings-inline-control"><input id="world-list-source" name="worldListSource" type="text" value="${esc(s.worldListSource||'')}" placeholder="${esc(GameCatalog.DEFAULT_SOURCE)}" autocomplete="off" spellcheck="false">${button('test-world-list','测试')}${button('reset-world-list','恢复默认')}</div><small>留空时使用 ${esc(GameCatalog.DEFAULT_SOURCE)}；可填写公开的 HTTP / HTTPS JSON 地址或站内路径。外部地址需要允许浏览器跨域读取。</small></label><p id="world-list-result" class="settings-field-result" role="status"></p><div class="settings-section-actions settings-section-actions-start">${button('prompts','编辑提示词')}</div>`;
     showModal('设置',`<aside class="settings-github" aria-label="GitHub"><div><strong>GitHub</strong><p>查看源代码，或联系作者反馈问题。</p></div><a class="github-link" href="https://github.com/clinlx/unusual-book-agent-for-web" target="_blank" rel="noopener noreferrer" aria-label="打开 GitHub 项目页面">GitHub ↗</a></aside><form id="settings-form"><div class="settings-sections">${section('api','API 设置',api)}${section('game','游戏设置',game)}${section('advanced','高级选项',advanced)}</div><div class="modal-actions"><button class="primary" type="submit">保存设置</button></div></form>`);
     for(const details of modalRoot.querySelectorAll('.settings-section'))details.addEventListener('toggle',()=>{
@@ -345,12 +374,63 @@ const GameUI = (() => {
     const value=GameApp.getPrompt(target);
     showModal('提示词文件',`<p class="muted">按加载方式分组。覆盖保存于此浏览器，对所有存档生效；参考文件挂载于隐藏的 /.reference，与 /workspace 同级。</p><select id="prompt-select" aria-label="提示词文件">${['system','flow','reference'].map(group=>`<optgroup label="${esc(list.find(p=>p.group===group)?.groupTitle||group)}">${list.filter(p=>p.group===group).map(p=>`<option value="${esc(p.id)}" ${p.id===target?'selected':''}>${esc(p.title)}</option>`).join('')}</optgroup>`).join('')}</select><textarea id="prompt-editor" class="code-editor" spellcheck="false">${esc(typeof value==='string'?value:value.content)}</textarea><div class="modal-actions">${button('reset-prompts','全部恢复默认')}${button('reset-prompt','恢复此文件默认')}${button('save-prompt','保存覆盖','class="primary"')}</div>`);
   }
+  function diceSpecRows(args={}){
+    const out=[];for(const [label,value] of Object.entries(args.dice_dict||{})){
+      const formula=String(value).trim(),m=formula.match(/^(-?)(\\d+)d(\\d+)$/i);
+      if(m){const n=Number(m[2]),faces=Number(m[3]);for(let i=0;i<n;i++)out.push({label,faces,sign:m[1]?-1:1,formula,index:i});}
+      else if(/^-?\\d+$/.test(formula))out.push({label,constant:Number(formula),formula,index:0});
+    }return out;
+  }
+  function dieKind(faces){
+    if(faces===1||faces===2)return 'coin';
+    return [4,6,8,10,12,20,100].includes(faces)?'d'+faces:'slot';
+  }
+  function dieVisual(spec,value,pending=false){
+    if(spec.constant!==undefined)return `<div class="manual-die constant"><div class="die-shape"><strong>${esc(spec.constant)}</strong></div><small>${esc(safeDiceLabel(spec.label)||'常数')}</small></div>`;
+    const kind=dieKind(spec.faces),shown=value==null?(kind==='slot'?spec.faces:'?'):Math.abs(value);
+    const faceLabel=kind==='slot'?'d'+spec.faces:kind==='coin'?(spec.faces===1?'d1':'d2'):'';
+    return `<div class="manual-die ${kind}" data-faces="${spec.faces}" data-sign="${spec.sign}" data-final="${value==null?'':esc(Math.abs(value))}"><div class="die-shape"><strong>${esc(shown)}</strong>${faceLabel?`<i>${esc(faceLabel)}</i>`:''}</div><small>${esc(safeDiceLabel(spec.label)||'骰子')}</small></div>`;
+  }
+  function modifierLines(obj,title){
+    const entries=Object.entries(obj||{});if(!entries.length)return '';
+    return `<div class="manual-modifier-group"><strong>${esc(title)}</strong>${entries.map(([reason,value])=>`<span><b>${esc(signedModifier(Number(value)||0))}</b><small>${esc(reason)}</small></span>`).join('')}</div>`;
+  }
+  function diceDetailModal(e){
+    if(!e||e.secret&&state.mode!=='debug')return;
+    const args=e.diceArgs||{},specs=diceSpecRows(args),resolved=!e.pending,rolls=[];
+    if(resolved)for(const row of e.data?.rows||[])for(const v of row.rolls||[])rolls.push(v);
+    let ri=0;
+    const dice=specs.map(spec=>dieVisual(spec,spec.constant!==undefined?spec.constant:(resolved?rolls[ri++]:null),!resolved)).join('');
+    const left=Object.values(args.left_modifiers||{}).reduce((n,v)=>n+(Number(v)||0),0),right=Object.values(args.right_modifiers||{}).reduce((n,v)=>n+(Number(v)||0),0);
+    const target=Number.isFinite(Number(args.target_value))?Number(args.target_value):null,compare=DICE_COMPARE[args.compare_mode]||'';
+    const targetLine=args.calculate_only?'仅计算，不进行目标比较':target===null?'无目标值':`目标：${target}${right?` ${signedModifier(right)} → ${target+right}`:''}　${compare}`;
+    const resultText=resolved?(e.data?.success==null?'仅计算':e.data?.special&&e.data?.critical?String(e.data.critical).replace(/^可能是/,''):(e.data?.success?'通过':'不通过')):'等待检定';
+    showModal(resolved?'检定结果':'进行检定',`<div class="manual-dice-modal" data-event-id="${esc(e.id)}"><div class="manual-dice-summary"><strong>${esc(args.related_attr||e.relatedAttr||'检定')}</strong><span>${esc(args.dice_combine_mode||'sum').toUpperCase()}</span><em class="${resolved?'resolved':'pending'}">${esc(resultText)}</em></div><div class="manual-dice-stage ${resolved?'is-resolved':''}" id="manual-dice-stage">${dice||'<p class="muted">没有可显示的骰子模型</p>'}</div><div class="manual-dice-rules">${modifierLines(args.left_modifiers,'检定修正')}${modifierLines(args.right_modifiers,'目标修正')}<p><strong>${esc(targetLine)}</strong>${left?`<small>检定总修正 ${esc(signedModifier(left))}</small>`:''}</p></div>${resolved?'<div class="modal-actions"><button type="button" data-action="close-modal">关闭</button></div>':`<div class="modal-actions"><button type="button" data-action="manual-dice-later">稍后决定</button><button type="button" class="primary" data-action="manual-dice-roll">进行检定</button></div>`}</div>`);
+  }
+  function secureDie(faces){
+    if(!Number.isSafeInteger(faces)||faces<1||faces>1000000000)throw Error('骰面范围无效');
+    if(faces===1)return 1;const range=0x100000000,limit=Math.floor(range/faces)*faces,buf=new Uint32Array(1);
+    let value;do{crypto.getRandomValues(buf);value=buf[0];}while(value>=limit);return value%faces+1;
+  }
+  async function animateManualDice(event){
+    const stage=document.getElementById('manual-dice-stage'),button=modalRoot.querySelector('[data-action="manual-dice-roll"]');if(!stage||!button)return;
+    button.disabled=true;modalRoot.querySelector('[data-action="manual-dice-later"]')?.setAttribute('disabled','');
+    stage.classList.add('rolling');const dice=[...stage.querySelectorAll('.manual-die[data-faces]')],final=dice.map(el=>secureDie(Number(el.dataset.faces)));
+    let ticks=0;const timer=setInterval(()=>{for(const el of dice){const faces=Number(el.dataset.faces),strong=el.querySelector('strong');strong.textContent=String(secureDie(faces));}if(++ticks>=10)clearInterval(timer);},70);
+    await new Promise(resolve=>setTimeout(resolve,850));clearInterval(timer);
+    dice.forEach((el,i)=>{el.querySelector('strong').textContent=String(final[i]);el.classList.add('landed');});
+    await new Promise(resolve=>setTimeout(resolve,260));
+    await GameApp.resolveManualDice(final);modalRoot.innerHTML='';
+  }
   function changesModal() {
     const changes=state.active.lastChanges||[];
     showModal('最近一回合的文件改动',`<p class="muted">${state.running?'本轮进行中，以下为已发生的改动。':'文件改动已生效。这里保留最近一轮的记录。'}</p>${changes.map(c=>`<details class="change" open><summary><span class="change-kind ${esc(c.type)}">${{add:'新增',delete:'删除',modify:'修改'}[c.type]||esc(c.type)}</span> ${esc(c.path)}</summary>${c.binary?'<p>二进制内容已变更</p>':`<div class="diff-columns"><div><header>修改前</header><pre>${esc(c.before??'（不存在）')}</pre></div><div><header>修改后</header><pre>${esc(c.after??'（不存在）')}</pre></div></div>`}</details>`).join('')||'<div class="empty-pane"><span>≡</span><p>本轮没有文件改动</p></div>'}`);
   }
   async function action(name,el) {
     if(name==='close-modal'){modalRoot.innerHTML='';return;}
+    if(name==='dice-detail'){const e=state.active?.events?.find(x=>x.id===el.dataset.eventId);if(e)return diceDetailModal(e);}
+    if(name==='manual-dice-later'){modalRoot.innerHTML='';return;}
+    if(name==='manual-dice-roll'){const e=state.active?.events?.find(x=>x.id===el.closest('.manual-dice-modal')?.dataset.eventId);if(!e?.pending)return;return animateManualDice(e);}
     if(name==='api-key-settings'){settingsModal();const input=modalRoot.querySelector('input[name="apiKey"]');input?.focus();return;}
     if(name==='settings')return settingsModal();
     if(name==='fetch-models'){
@@ -405,7 +485,7 @@ const GameUI = (() => {
     if(name==='rename-save'){const text=prompt('存档名称',el.dataset.name);if(text?.trim())await GameApp.renameSave(el.dataset.id,text.trim());return;}
     if(name==='delete-save'){if(confirm('永久删除这份浏览器存档？'))await GameApp.deleteSave(el.dataset.id);return;}
     if(name==='start'){if(!apiKeyWarning())return;return GameApp.start();}
-    if(name==='resume'){if(!apiKeyWarning())return;return GameApp.resume();}
+    if(name==='resume'){if(state.active?.pendingManualDice){const e=state.active.events?.find(x=>x.id===state.active.pendingManualDice.eventId);if(e)return diceDetailModal(e);}if(!apiKeyWarning())return;return GameApp.resume();}
     if(name==='abort')return GameApp.abort();
     if(name==='rollback'){if(confirm('回退至 '+GamePresentation.metadata(state.active.snapshots.at(-1))+'？文件、剧情和上下文将一起恢复。')){clearTimeout(draftTimer);await GameApp.rollback();draft=state.active.draft||'';previousVitals={};render();const input=document.getElementById('action-input');if(input)input.value=draft;refreshInput();}return;}
     if(name==='export'){clearTimeout(draftTimer);await GameApp.saveDraft(draft);return download(await GameApp.exportSave(),state.active.name+'.zip');}
@@ -438,11 +518,11 @@ const GameUI = (() => {
     document.addEventListener('input',e=>{if(e.target.id==='action-input'){draft=e.target.value;refreshInput();const send=e.target.form.querySelector('button[type="submit"]');if(send&&!send.disabled)send.textContent=draft.trim()?'提交行动 ↗':'空过';clearTimeout(draftTimer);const id=state.active?.id;draftTimer=setTimeout(()=>{if(state.active?.id===id)attempt(()=>GameApp.saveDraft(draft));},250);}if(e.target.id==='file-editor'){fileDraft=e.target.value;document.getElementById('file-dirty').textContent=fileDraft===fileOriginal?'已保存':'有未保存改动';}});
     document.addEventListener('change',e=>{if(e.target.id==='prompt-select')promptModal(e.target.value);});
     document.addEventListener('mouseout',e=>{if(e.target.closest?.('#history-navigation.active')&&!e.relatedTarget?.closest?.('#history-navigation'))revealNavigation();});
-    document.addEventListener('keydown',e=>{if(e.key==='Escape')modalRoot.innerHTML='';if(e.target.id==='action-input'&&e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();e.target.form.requestSubmit();}if(e.key==='Tab'&&modalRoot.firstChild){const nodes=[...modalRoot.querySelectorAll('button,input,select,textarea,[tabindex]')].filter(x=>!x.disabled);const first=nodes[0],last=nodes[nodes.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}});
+    document.addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.matches?.('.dice-clickable')){e.preventDefault();e.target.click();return;}if(e.key==='Escape'&&!modalRoot.querySelector('.manual-dice-stage.rolling'))modalRoot.innerHTML='';if(e.target.id==='action-input'&&e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();e.target.form.requestSubmit();}if(e.key==='Tab'&&modalRoot.firstChild){const nodes=[...modalRoot.querySelectorAll('button,input,select,textarea,[tabindex]')].filter(x=>!x.disabled);const first=nodes[0],last=nodes[nodes.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}});
     document.addEventListener('submit',e=>{e.preventDefault();attempt(async()=>{
       if(e.target.id==='link-import-form')return startDownload(new FormData(e.target).get('link'));
       if(e.target.id==='action-form'){if(state.running)return;if(!apiKeyWarning())return;const flags=GameData.actorState(GameApp.player().info);if(!flags.alive)return;if(!draft.trim()||!flags.enabled){if(confirm(flags.enabled?'本回合不采取主动行动，确定空过？':'失去意识，等待局势发展并推进一轮？')){forceHistoryBottom=true;await GameApp.skip();}return;}clearTimeout(draftTimer);const text=draft,count=(state.active.events||[]).filter(x=>x.type==='player').length,input=e.target.querySelector('#action-input');draft='';if(input){input.value='';refreshInput();}forceHistoryBottom=true;try{await GameApp.send(text);}catch(error){if((state.active.events||[]).filter(x=>x.type==='player').length===count){forceHistoryBottom=false;draft=text;await GameApp.saveDraft(text);}render();const restored=document.getElementById('action-input');if(restored&&restored.value!==draft){restored.value=draft;refreshInput();}throw error;}}
-      if(e.target.id==='settings-form'){const data=new FormData(e.target),values={};for(const [k,v] of data)values[k]=['temperature','maxContextK','maxOutputTokens','maxToolLoops','httpTimeoutSeconds','maxRetries'].includes(k)?Number(v):v;values.stream=data.has('stream');const previousSource=state.settings?.worldListSource||'';await GameApp.updateSettings(values);const sourceChanged=previousSource!==(state.settings?.worldListSource||'');modalRoot.innerHTML='';if(sourceChanged)reloadCatalog();toast('设置已保存');}
+      if(e.target.id==='settings-form'){const data=new FormData(e.target),values={};for(const [k,v] of data)values[k]=['temperature','maxContextK','maxOutputTokens','maxToolLoops','httpTimeoutSeconds','maxRetries'].includes(k)?Number(v):v;values.stream=data.has('stream');values.manualDice=data.has('manualDice');const previousSource=state.settings?.worldListSource||'';await GameApp.updateSettings(values);const sourceChanged=previousSource!==(state.settings?.worldListSource||'');modalRoot.innerHTML='';if(sourceChanged)reloadCatalog();toast('设置已保存');}
       if(e.target.id==='file-operation'){const data=new FormData(e.target),op=data.get('op'),from=data.get('from'),to=data.get('to');if(op==='delete'&&!confirm('删除 '+from+' 及其内容？'))return;await GameApp.fileOperation(op,{path:from,from,to});if(filePath===from){filePath='';fileDraft=fileOriginal='';}modalRoot.innerHTML='';render();}
     });});
     try {await GameApp.init();state=GameApp.getState();GameApp.subscribe(next=>{state=next||GameApp.getState();if(!renderTimer)renderTimer=setTimeout(()=>{renderTimer=null;render();},50);});render();reloadCatalog();} catch(error){root.innerHTML=`<main class="save-home"><h1>启动未完成</h1><p>${esc(error.message)}</p><button onclick="location.reload()">重新载入</button></main>`;return;} finally {document.getElementById('boot')?.remove();}

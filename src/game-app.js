@@ -1,7 +1,7 @@
 'use strict';
 const GameApp=(()=>{
   const defaults={baseUrl:'https://api.deepseek.com/v1',apiKey:'',model:'deepseek-flash',stream:true,temperature:0.7,maxContextK:128,maxOutputTokens:16384,
-    reasoningEffort:'high',maxToolLoops:60,httpTimeoutSeconds:180,maxRetries:2,worldListSource:'',promptOverrides:{}};
+    reasoningEffort:'high',maxToolLoops:60,httpTimeoutSeconds:180,maxRetries:2,worldListSource:'',manualDice:false,promptOverrides:{}};
   const S={saves:[],active:null,settings:{...defaults},mode:'play',running:false,importing:null,stream:{content:'',reasoning:'',tools:[],story:'',storyPublished:0},error:null,storageWarning:null,usage:null};
   const db=GameStore.create();const listeners=new Set();let controller=null,initialized=false,storage=null,lease=null;
   try{storage=globalThis.localStorage;lease=Lease.create({storage,tabId:GameCore.uid()});}catch(_){}
@@ -25,9 +25,7 @@ const GameApp=(()=>{
   function restoreLastRequest(s){const last=s.requestHistory?.at(-1);S.lastRequest=last?.body?structuredClone(last.body):null;S.lastRequestSaveId=last?s.id:null;}
   const pendingBatch=s=>s.activeRound&&s.messages.some(m=>m.round===s.activeRound.number&&m.tool_calls?.some(tc=>!s.messages.some(r=>r.round===m.round&&r.role==='tool'&&r.tool_call_id===tc.id)));
   async function settleCompletedBatch(s){
-    if(!s.activeRound?.complete||!pendingBatch(s))return;
-    
-    
+    if(s.pendingManualDice||!s.activeRound?.complete||!pendingBatch(s))return;
     await GameCore.run(s,async()=>{throw Error('已结束的回合不能继续请求模型');});
     await db.putSave(s);
   }
@@ -93,7 +91,7 @@ const GameApp=(()=>{
           if(currentRequest)currentRequest.response.tools=structuredClone(t);emit();}});
       const transport=async messages=>{clearStream();emit();try{const response=await raw(messages);if(currentRequest){currentRequest.status='completed';currentRequest.response=structuredClone(response);}return response;}catch(e){if(currentRequest){currentRequest.status='interrupted';currentRequest.error=e.message;}throw e;}};
       const flows=Prompts.flows(snapshot.overrides);
-      await GameCore.run(s,transport,{signal:controller.signal,system:snapshot.system,
+      await GameCore.run(s,transport,{signal:controller.signal,system:snapshot.system,manualDice:settings.manualDice===true,
         cap:Math.max(1024,settings.maxContextK*1000-settings.maxOutputTokens-GameCore.estimate(defs)),maxToolLoops:settings.maxToolLoops,
         
         
@@ -122,7 +120,10 @@ const GameApp=(()=>{
     for(const k of ['baseUrl','apiKey','model','worldListSource'])next[k]=String(next[k]||'').trim();
     if(next.worldListSource)GameCatalog.source(next.worldListSource);
     if(!['none','low','high','xhigh','max'].includes(next.reasoningEffort))throw Error('思考强度无效');
-    next.stream=!!next.stream;await db.putSettings(next);S.settings=next;emit();
+    next.stream=!!next.stream;next.manualDice=!!next.manualDice;await db.putSettings(next);S.settings=next;emit();
+  }
+  async function resolveManualDice(rolls){
+    idle();const s=active();peerCheck(s);GameCore.resolveManualDice(s,rolls);await persist();emit();await executeRound('resume','');return s;
   }
   const promptList=()=>Prompts.list().filter(p=>p.id!=='flow/tools.json').map(p=>({...p,overridden:Object.hasOwn(S.settings.promptOverrides,p.id)}));
   const getPrompt=id=>Prompts.get(id,S.settings.promptOverrides);
@@ -138,7 +139,7 @@ const GameApp=(()=>{
     window.addEventListener('storage',e=>{if(e.key?.startsWith('awl:lease:'))emit();});
   }
   return {getState:()=>S,subscribe,init,importSave,importLink,openSave,closeSave,renameSave,deleteSave,exportSave,send,skip,start,resume,abort,rollback,setMode,
-    readFile,writeFile,fileOperation,player,currentContext,updateSettings,promptList,getPrompt,savePrompt,resetPrompt,saveDraft,
+    readFile,writeFile,fileOperation,player,currentContext,updateSettings,promptList,getPrompt,savePrompt,resetPrompt,saveDraft,resolveManualDice,
     testConnection:values=>GameTransport.testConnection({...S.settings,...values}),
     listModels:values=>GameTransport.listModels({...S.settings,...values})};
 })();
