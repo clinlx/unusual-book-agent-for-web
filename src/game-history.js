@@ -7,7 +7,7 @@ const GameHistory=(()=>{
   const generated=p=>p.startsWith(ROOT+'/')||['/workspace/ROUND_CACHE.xml','/workspace/SummaryHistory.json','/workspace/OutputCopy.log'].includes(p);
   const segment=x=>String(x||'Unknown').trim().replace(/[<>:"/\\|?*\u0000-\u001f\s]/g,'_').replace(/_+/g,'_').replace(/[. ]+$/g,'').slice(0,120)||'Unknown';
   const archiveEvents=events=>events.filter(e=>['player','story','dice','note','round_end'].includes(e.type));
-  function writeRound(s,round,cache,overwrite=true){
+  function writeRound(s,round,cache,overwrite=true,playerState){
     const events=archiveEvents(s.events).filter(e=>e.round===round),summary=s.summaries.findLast(e=>e.round===round);
     if(!events.length&&!summary)return;
     const time=summary?.worldTime||events.findLast(e=>e.worldTime)?.worldTime||'';
@@ -18,9 +18,10 @@ const GameHistory=(()=>{
     write('回合情节.json',JSON.stringify(events,null,2));
     write('回合总结.txt',summary?.content||'');
     if(cache!==undefined)write('ROUND_CACHE.xml',JSON.stringify(cache,null,2));
+    if(playerState!==undefined)write('玩家结束状态.json',JSON.stringify(playerState,null,2));
   }
-  function archive(s){
-    writeRound(s,s.round,s.cache);
+  function archive(s,playerState){
+    writeRound(s,s.round,s.cache,true,playerState);
     V.writeFile(s.tree,'/workspace/ROUND_CACHE.xml',JSON.stringify(s.cache,null,2));
     V.writeFile(s.tree,'/workspace/SummaryHistory.json',JSON.stringify(s.summaries,null,2));
     V.writeFile(s.tree,'/workspace/OutputCopy.log',s.events.filter(e=>e.round===s.round&&e.type==='story').map(e=>e.content).join('\n\n'));
