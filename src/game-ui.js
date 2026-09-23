@@ -544,19 +544,66 @@ const GameUI = (() => {
       foreground:'#e6bd62',background:'#171a18',outline:'#8b682e',texture:'none',material:'metal'};
   }
   let activeDiceBox=null,diceBoxToken=0;
+  function diceViewProfile(count){
+    if(count<=1)return {scale:84,strength:1.35,camera:1,cameraLift:0,tray:320,world:1};
+    if(count<=3)return {scale:76,strength:1.2,camera:1.13,cameraLift:.05,tray:350,world:1.12};
+    if(count<=6)return {scale:67,strength:1.05,camera:1.32,cameraLift:.1,tray:410,world:1.3};
+    if(count<=10)return {scale:59,strength:.95,camera:1.48,cameraLift:.16,tray:460,world:1.48};
+    return {scale:Math.max(46,59-(count-10)*1.3),strength:.85,camera:Math.min(1.85,1.48+(count-10)*.035),cameraLift:.2,tray:500,world:Math.min(1.8,1.48+(count-10)*.03)};
+  }
+  function tweenDiceCamera(box,fromZ,toZ,fromY,toY,duration=620){
+    return new Promise(resolve=>{
+      const start=performance.now(),tick=now=>{const t=Math.min(1,(now-start)/duration),ease=1-Math.pow(1-t,3);
+        box.camera.position.z=fromZ+(toZ-fromZ)*ease;box.camera.position.y=fromY+(toY-fromY)*ease;box.camera.lookAt(0,0,0);box.renderer.render(box.scene,box.camera);
+        if(t<1)requestAnimationFrame(tick);else resolve();
+      };requestAnimationFrame(tick);
+    });
+  }
   async function mountDice3D(specs,forced=null,{quiet=false}={}){
     const host=document.getElementById('manual-dice-3d'),Ctor=diceBoxCtor(),notation=dice3dNotation(specs,forced);
     if(!host||!Ctor||!notation)return null;
+    const physicalCount=specs.filter(s=>s.constant===undefined&&[2,4,6,8,10,12,20,100].includes(s.faces)).length;
+    const profile=diceViewProfile(Math.max(1,physicalCount));
+    host.parentElement?.style.setProperty('--dice-tray-height',profile.tray+'px');
     const token=++diceBoxToken;host.innerHTML='';
     const box=new Ctor('#manual-dice-3d',{sounds:false,shadows:true,theme_surface:'green-felt',
       theme_customColorset:dice3dTheme(),theme_material:'metal',theme_texture:'',color_spotlight:0xd7ad58,
-      light_intensity:.72,gravity_multiplier:420,baseScale:82,strength:quiet?.45:1.35,iterationLimit:1800});
+      light_intensity:.72,gravity_multiplier:420,baseScale:profile.scale,strength:quiet?Math.max(.45,profile.strength*.45):profile.strength,iterationLimit:2200});
     activeDiceBox=box;await box.initialize();if(token!==diceBoxToken)return null;
     host.classList.add('ready');
+
+    // Expand logical world dimensions independently from the DOM viewport so crowded rolls have room.
+    const dims=box.display;
+    if(dims&&profile.world>1){
+      dims.containerWidth*=profile.world;dims.containerHeight*=profile.world;
+      box.makeWorldBox();
+    }
+
+    // Pull camera back as dice count rises; lift slightly for crowded throws without widening FOV.
+    const baseFar=box.cameraHeight?.far||box.camera.position.z;
+    const throwZ=baseFar*profile.camera,throwY=(box.display?.containerHeight||0)*profile.cameraLift;
+    box.camera.position.z=throwZ;box.camera.position.y=throwY;box.camera.lookAt(0,0,0);box.renderer.render(box.scene,box.camera);
+
+    // Spread dense rolls by modestly increasing the generated throw vector variance where supported.
+    if(physicalCount>=4&&typeof box.vectorRand==='function'){
+      const original=box.vectorRand.bind(box),spread=Math.min(.72,.12+physicalCount*.055);
+      box.vectorRand=vector=>{const v=original(vector);v.x*=1+spread*(Math.random()-.5);v.y*=1+spread*(Math.random()-.5);return v;};
+    }
+
+    // d100 behaves nearly spherical; raise friction / lower restitution slightly so groups settle naturally.
+    if(specs.some(s=>s.faces===100)&&box.world?.contactmaterials?.length){
+      for(const cm of box.world.contactmaterials){cm.friction=Math.max(cm.friction||0,.68);cm.restitution=Math.min(cm.restitution??.5,.42);}
+    }
+
     const roll=box.roll(notation);
-    const timeout=new Promise((_,reject)=>setTimeout(()=>reject(Error('3D 骰子结算超时')),12000));
+    const timeout=new Promise((_,reject)=>setTimeout(()=>reject(Error('3D 骰子结算超时')),14000));
     const result=await Promise.race([roll,timeout]);
     if(token!==diceBoxToken)return null;
+
+    // After all dice settle, gently bring the camera back for a readable result composition.
+    const resultFactor=physicalCount<=1?1:physicalCount<=3?1.05:physicalCount<=6?1.12:physicalCount<=10?1.22:1.3;
+    const resultZ=baseFar*resultFactor,resultY=throwY*.45;
+    if(!quiet)await tweenDiceCamera(box,throwZ,resultZ,throwY,resultY,physicalCount>=7?720:580);
     return {box,result,values:(result?.sets||[]).flatMap(set=>(set.rolls||[]).map(r=>Number(r.value)))};
   }
   function fallbackSlotValues(specs){
