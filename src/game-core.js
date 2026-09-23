@@ -272,7 +272,7 @@ const GameCore = (() => {
           if(to==='/workspace'||to.startsWith(from+'/'))throw Error('无效目标路径');vfs[name](s.tree,from,to);result={from,to};break;
         }
         case 'roll_dice':{
-          const d=dice(a,options.random);emit(s,'dice',{...d,roller:a.roller,secret:a.is_secret===true||a.related_attr==='心理学'});result=d;break;
+          const d=dice(a,options.random);emit(s,'dice',{...d,roller:a.roller,description:a.description||'',relatedAttr:a.related_attr||'',secret:a.is_secret===true||a.related_attr==='心理学'});result=d;break;
         }
         case 'generate_random_number':result={value:randInt(a.min_val,a.max_val,options.random)};break;
         case 'random_select':{
