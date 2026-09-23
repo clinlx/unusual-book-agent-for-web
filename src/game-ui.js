@@ -598,11 +598,11 @@ const GameUI = (() => {
   }
   let activeDiceBox=null,diceBoxToken=0;
   function diceViewProfile(count){
-    if(count<=1)return {scale:84,strength:1.35,camera:1,cameraLift:0,tray:320,world:1};
-    if(count<=3)return {scale:76,strength:1.2,camera:1.13,cameraLift:.05,tray:350,world:1.12};
-    if(count<=6)return {scale:67,strength:1.05,camera:1.32,cameraLift:.1,tray:410,world:1.3};
-    if(count<=10)return {scale:59,strength:.95,camera:1.48,cameraLift:.16,tray:460,world:1.48};
-    return {scale:Math.max(46,59-(count-10)*1.3),strength:.85,camera:Math.min(1.85,1.48+(count-10)*.035),cameraLift:.2,tray:500,world:Math.min(1.8,1.48+(count-10)*.03)};
+    if(count<=1)return {scale:78,strength:1.5,camera:1.06,cameraLift:.02,tray:215,world:1.08};
+    if(count<=3)return {scale:70,strength:1.34,camera:1.2,cameraLift:.06,tray:230,world:1.2};
+    if(count<=6)return {scale:62,strength:1.16,camera:1.38,cameraLift:.11,tray:255,world:1.38};
+    if(count<=10)return {scale:55,strength:1.02,camera:1.54,cameraLift:.16,tray:280,world:1.56};
+    return {scale:Math.max(44,55-(count-10)*1.1),strength:.92,camera:Math.min(1.9,1.54+(count-10)*.03),cameraLift:.2,tray:305,world:Math.min(1.9,1.56+(count-10)*.028)};
   }
   function tweenDiceCamera(box,fromZ,toZ,fromY,toY,duration=620){
     return new Promise(resolve=>{
@@ -612,35 +612,68 @@ const GameUI = (() => {
       };requestAnimationFrame(tick);
     });
   }
+  function secureFloat(){
+    const a=new Uint32Array(1);crypto.getRandomValues(a);return a[0]/0x100000000;
+  }
   function syncDiceMeshes(box){
     for(const mesh of box.diceList||[]){if(mesh.body){mesh.position.copy(mesh.body.position);mesh.quaternion.copy(mesh.body.quaternion);}}
     box.renderer.render(box.scene,box.camera);
   }
-  function watchDiceSettled(box,token,{stableMs=700,timeoutMs=14000}={}){
+  function forceDiceSettlement(box,reason='timeout'){
+    const dice=box.diceList||[];box.running=false;box.rolling=false;
+    for(const mesh of dice){
+      if(mesh.body){mesh.position.copy(mesh.body.position);mesh.quaternion.copy(mesh.body.quaternion);mesh.body.type=4;}
+      if(!mesh.result?.length)mesh.storeRolledValue?.(reason);
+    }
+    box.renderer.render(box.scene,box.camera);
+    return dice.length?box.getDiceResults():null;
+  }
+  function watchDiceSettled(box,token,{stableMs=620,timeoutMs=8000}={}){
     return new Promise((resolve,reject)=>{
       const start=performance.now();let stableSince=0,raf=0;
       const stop=()=>{if(raf)cancelAnimationFrame(raf);};
       const tick=now=>{
         if(token!==diceBoxToken){stop();return reject(Object.assign(Error('3D 骰盘已关闭'),{name:'AbortError'}));}
         const dice=box.diceList||[];let moving=!dice.length;
-        if(dice.length)moving=dice.some(mesh=>{const b=mesh.body;if(!b)return false;const sleeping=b.sleepState===2,lin=b.velocity?.length?.()??Infinity,ang=b.angularVelocity?.length?.()??Infinity;return !sleeping&&(lin>12||ang>.12);});
+        if(dice.length)moving=dice.some(mesh=>{const b=mesh.body;if(!b)return false;const sleeping=b.sleepState===2,lin=b.velocity?.length?.()??Infinity,ang=b.angularVelocity?.length?.()??Infinity;return !sleeping&&(lin>10||ang>.1);});
         if(!moving){if(!stableSince)stableSince=now;}else stableSince=0;
         const simulatedReady=dice.length&&dice.every(mesh=>mesh.result?.length);
         if(simulatedReady&&stableSince&&now-stableSince>=stableMs){
-          box.running=false;box.rolling=false;for(const mesh of dice)if(mesh.body)mesh.body.type=4;syncDiceMeshes(box);stop();return resolve(box.getDiceResults());
+          const result=forceDiceSettlement(box,'stable');stop();return resolve(result);
         }
-        if(now-start>=timeoutMs){stop();return reject(Error('3D 骰子在超时时间内未稳定'));}
+        if(now-start>=timeoutMs){
+          const result=forceDiceSettlement(box,'timeout');stop();return resolve(result);
+        }
         raf=requestAnimationFrame(tick);
       };raf=requestAnimationFrame(tick);
     });
+  }
+  function displayGrid(box,count){
+    const cols=Math.max(1,Math.ceil(Math.sqrt(count))),rows=Math.ceil(count/cols),gap=Math.max(72,box.baseScale*1.65),out=[];
+    for(let i=0;i<count;i++){const row=Math.floor(i/cols),col=i%cols,items=Math.min(cols,count-row*cols),x=(col-(items-1)/2)*gap,y=(row-(rows-1)/2)*gap*.72;out.push({x,y});}
+    return out;
+  }
+  async function snapDiceDisplay(box,duration=460){
+    const dice=box.diceList||[];if(!dice.length)return;
+    syncDiceMeshes(box);const grid=displayGrid(box,dice.length),moves=dice.map((mesh,i)=>{
+      const fromP=mesh.position.clone(),fromQ=mesh.quaternion.clone(),targetP=mesh.position.clone(),targetRot=mesh.rotation.clone();
+      targetP.x=grid[i].x;targetP.y=grid[i].y;targetRot.z=0;
+      const targetQ=mesh.quaternion.clone();targetQ.setFromEuler(targetRot);
+      if(mesh.body)mesh.body.type=4;return {mesh,fromP,fromQ,targetP,targetQ};
+    });
+    const start=performance.now();
+    await new Promise(resolve=>{const tick=now=>{const t=Math.min(1,(now-start)/duration),ease=1-Math.pow(1-t,3);
+      for(const m of moves){m.mesh.position.lerpVectors(m.fromP,m.targetP,ease);m.mesh.quaternion.slerpQuaternions(m.fromQ,m.targetQ,ease);}
+      box.renderer.render(box.scene,box.camera);if(t<1)requestAnimationFrame(tick);else resolve();
+    };requestAnimationFrame(tick);});
   }
   function placeStaticDice(box,plan){
     box.notationVectors=box.startClickThrow(plan.notation);if(!box.notationVectors||box.notationVectors.error)throw Error('无法建立静态骰子模型');
     box.clearDice();for(const vector of box.notationVectors.vectors||[])box.spawnDice(vector);box.simulateThrow();
     const desired=plan.forcedPhysical;
     for(let i=0;i<desired.length;i++){const mesh=box.diceList[i];if(!mesh)continue;if(Number(mesh.getLastValue?.().value)!==Number(desired[i]))box.swapDiceFace(mesh,desired[i]);}
-    const dice=box.diceList||[],span=(box.display?.containerWidth||300)*.55,spacing=dice.length>1?Math.min(span/(dice.length-1),box.baseScale*1.75):0;
-    dice.forEach((mesh,i)=>{if(mesh.body){mesh.position.copy(mesh.body.position);mesh.quaternion.copy(mesh.body.quaternion);}mesh.position.x=(i-(dice.length-1)/2)*spacing;mesh.position.y=0;});
+    const dice=box.diceList||[],grid=displayGrid(box,dice.length);
+    dice.forEach((mesh,i)=>{if(mesh.body){mesh.position.copy(mesh.body.position);mesh.quaternion.copy(mesh.body.quaternion);mesh.body.type=4;}mesh.position.x=grid[i].x;mesh.position.y=grid[i].y;const r=mesh.rotation.clone();r.z=0;mesh.quaternion.setFromEuler(r);});
     box.running=false;box.rolling=false;box.renderer.render(box.scene,box.camera);
   }
   async function mountDice3D(specs,forced=null,{quiet=false,staticOnly=false}={}){
@@ -653,6 +686,21 @@ const GameUI = (() => {
       theme_customColorset:dice3dTheme(),theme_material:'metal',theme_texture:'',color_spotlight:0xd7ad58,
       light_intensity:.72,gravity_multiplier:420,baseScale:profile.scale,strength:quiet?Math.max(.45,profile.strength*.45):profile.strength,iterationLimit:1200});
     activeDiceBox=box;await box.initialize();if(token!==diceBoxToken)return null;host.classList.add('ready');
+
+    // DiceBox's stock launcher has a relatively narrow random cone. Rebuild the launch vectors
+    // with crypto-backed jitter so successive throws do not keep sharing similar trajectories.
+    box.startClickThrow=function(notation){
+      if(this.rolling){this.clearDice();this.rolling=false;}
+      const w=this.display.currentWidth||this.display.containerWidth||300,h=this.display.currentHeight||this.display.containerHeight||200;
+      let vx=(secureFloat()*2-1)*w,vy=(secureFloat()*2-1)*h;if(Math.abs(vx)<w*.12)vx+=(secureFloat()<.5?-1:1)*w*.18;if(Math.abs(vy)<h*.12)vy+=(secureFloat()<.5?-1:1)*h*.18;
+      const dist=Math.hypot(vx,vy)+80,boost=(2.5+secureFloat()*2.15)*dist*this.strength,nv=this.getNotationVectors(notation,{x:vx,y:vy},boost,dist);
+      for(const v of nv.vectors||[]){
+        v.pos.x+=(secureFloat()-.5)*this.display.containerWidth*.34;v.pos.y+=(secureFloat()-.5)*this.display.containerHeight*.34;v.pos.z=180+secureFloat()*300;
+        v.velocity.x*=.72+secureFloat()*.72;v.velocity.y*=.72+secureFloat()*.72;v.velocity.z=-6-secureFloat()*26;
+        v.angle.x=(secureFloat()*2-1)*(18+secureFloat()*24);v.angle.y=(secureFloat()*2-1)*(18+secureFloat()*24);v.angle.z=(secureFloat()*2-1)*(8+secureFloat()*18);
+        v.axis={x:secureFloat(),y:secureFloat(),z:secureFloat(),a:secureFloat()};
+      }return nv;
+    };
 
     const dims=box.display;if(dims&&profile.world>1){dims.containerWidth*=profile.world;dims.containerHeight*=profile.world;box.makeWorldBox();}
     const baseFar=box.cameraHeight?.far||box.camera.position.z,throwZ=baseFar*profile.camera,throwY=(box.display?.containerHeight||0)*profile.cameraLift;
@@ -671,15 +719,15 @@ const GameUI = (() => {
       for(const cm of box.world.contactmaterials){cm.friction=Math.max(cm.friction||0,.7);cm.restitution=Math.min(cm.restitution??.5,.38);}
     }
 
-    const rollPromise=box.roll(plan.notation),settledPromise=watchDiceSettled(box,token,{stableMs:720,timeoutMs:14000});
+    const rollPromise=box.roll(plan.notation),settledPromise=watchDiceSettled(box,token,{stableMs:620,timeoutMs:8000});
     let result;
     try{result=await Promise.race([rollPromise,settledPromise]);}
     catch(error){if(token!==diceBoxToken)return null;throw error;}
     if(token!==diceBoxToken)return null;
 
     const resultFactor=physicalCount<=1?1:physicalCount<=3?1.05:physicalCount<=6?1.12:physicalCount<=10?1.22:1.3;
-    const resultZ=baseFar*resultFactor,resultY=throwY*.45;
-    if(!quiet)await tweenDiceCamera(box,box.camera.position.z,resultZ,box.camera.position.y,resultY,physicalCount>=7?720:580);
+    const resultZ=baseFar*resultFactor,resultY=throwY*.38;
+    if(!quiet){await snapDiceDisplay(box,physicalCount>=7?520:430);await tweenDiceCamera(box,box.camera.position.z,resultZ,box.camera.position.y,resultY,physicalCount>=7?620:500);}
     return {box,result,values:plan.decode(result)};
   }
   function fallbackSlotValues(specs){
@@ -705,6 +753,8 @@ const GameUI = (() => {
     const physicalHost=hasPhysical?'<div id="manual-dice-3d" class="manual-dice-3d"><div class="dice3d-loading">正在准备 3D 骰盘…</div></div>':'';
     const fallbackHost=fallback?`<div id="manual-fallback-dice" class="manual-fallback-dice-layer">${fallback}</div>`:'';
     showModal(resolved?'检定结果':'进行检定',`<div class="manual-dice-modal" data-event-id="${esc(e.id)}"><div class="manual-dice-summary"><div><small>CHECK</small><strong>${esc(args.related_attr||e.relatedAttr||'检定')}</strong></div><span>${esc(args.dice_combine_mode||'sum').toUpperCase()}</span><em class="${esc(resultClass)}">${esc(resultText)}</em></div><div class="manual-compare-board"><section class="manual-value-panel source"><header><span>检定值</span><small>ROLL VALUE</small></header><div class="manual-value-art">${esc(leftValue)}</div><p>${esc(leftSub)}</p><div class="manual-dice-stage ${stageClasses}" id="manual-dice-stage">${physicalHost}${fallbackHost}<div class="manual-dice-labels">${specs.filter(s=>s.constant===undefined).map(s=>`<span><b>d${esc(s.faces)}</b><small>${esc((safeDiceLabel(s.label)||'骰子')+(s.faces===100?' · 百分骰双骰':s.faces===1?' · 双面均为 1':''))}</small></span>`).join('')}</div></div>${modifierLines(args.left_modifiers,'检定修正')}</section><div class="manual-operator" aria-label="${esc(operatorCaption)}"><small>${esc(operatorCaption)}</small><strong>${esc(operator)}</strong><i aria-hidden="true"></i></div><section class="manual-value-panel target"><header><span>目标值</span><small>TARGET</small></header><div class="manual-value-art">${esc(targetMain)}</div><p>${esc(targetSub)}</p>${modifierLines(args.right_modifiers,'目标修正')}<div class="manual-target-note">${baseTarget!==null&&!args.calculate_only?`<span>基础目标</span><strong>${esc(baseTarget)}</strong>${right?`<span>修正后</span><strong>${esc(finalTarget)}</strong>`:''}`:'<span>本次不进行目标比较</span>'}</div></section></div>${resolved?'<div class="modal-actions"><button type="button" data-action="close-modal">关闭</button></div>':`<div class="modal-actions"><button type="button" data-action="manual-dice-later">稍后决定</button><button type="button" class="primary" data-action="manual-dice-roll">进行检定</button></div>`}</div>`);
+    const shell=modalRoot.querySelector('.modal'),body=shell?.querySelector('.modal-body'),summary=body?.querySelector('.manual-dice-summary'),actions=body?.querySelector('.manual-dice-modal>.modal-actions'),head=shell?.querySelector(':scope>header'),close=head?.querySelector('[data-action="close-modal"]');
+    shell?.classList.add('manual-dice-shell');if(summary&&head)head.insertBefore(summary,close||null);if(actions&&shell){actions.classList.add('manual-dice-footer');shell.appendChild(actions);}
     hydrateFallbackDice();
     if(hasPhysical)mountDice3D(specs,displayRolls,{quiet:true,staticOnly:true}).catch(error=>{
       const host=document.getElementById('manual-dice-3d');if(host)host.innerHTML='<div class="dice3d-fallback">'+esc(error.message||'3D 骰盘不可用')+'</div>';
@@ -717,7 +767,7 @@ const GameUI = (() => {
   }
   async function animateManualDice(event){
     const stage=document.getElementById('manual-dice-stage'),button=modalRoot.querySelector('[data-action="manual-dice-roll"]');if(!stage||!button)return;
-    button.disabled=true;modalRoot.querySelector('[data-action="manual-dice-later"]')?.setAttribute('disabled','');stage.classList.add('rolling');
+    button.disabled=true;modalRoot.querySelector('[data-action="manual-dice-later"]')?.setAttribute('disabled','');modalRoot.querySelector('.manual-dice-shell')?.setAttribute('data-dice-rolling','true');stage.classList.add('rolling');
     const args=diceDetailArgs(event),specs=diceSpecRows(args),supported=specs.filter(isPhysicalDiceSpec);
     const fallbackPromise=animateFallbackDice(specs);
     const physicalPromise=(async()=>{
@@ -747,7 +797,7 @@ const GameUI = (() => {
     showModal('最近一回合的文件改动',`<p class="muted">${state.running?'本轮进行中，以下为已发生的改动。':'文件改动已生效。这里保留最近一轮的记录。'}</p>${changes.map(c=>`<details class="change" open><summary><span class="change-kind ${esc(c.type)}">${{add:'新增',delete:'删除',modify:'修改'}[c.type]||esc(c.type)}</span> ${esc(c.path)}</summary>${c.binary?'<p>二进制内容已变更</p>':`<div class="diff-columns"><div><header>修改前</header><pre>${esc(c.before??'（不存在）')}</pre></div><div><header>修改后</header><pre>${esc(c.after??'（不存在）')}</pre></div></div>`}</details>`).join('')||'<div class="empty-pane"><span>≡</span><p>本轮没有文件改动</p></div>'}`);
   }
   async function action(name,el) {
-    if(name==='close-modal'){diceBoxToken++;activeDiceBox=null;modalRoot.innerHTML='';return;}
+    if(name==='close-modal'){if(modalRoot.querySelector('.manual-dice-shell[data-dice-rolling="true"]'))return toast('骰子正在结算，请等待结果');diceBoxToken++;activeDiceBox=null;modalRoot.innerHTML='';return;}
     if(name==='dice-detail'){const e=state.active?.events?.find(x=>x.id===el.dataset.eventId);if(e)return diceDetailModal(e);}
     if(name==='manual-dice-later'){modalRoot.innerHTML='';return;}
     if(name==='manual-dice-roll'){const e=state.active?.events?.find(x=>x.id===el.closest('.manual-dice-modal')?.dataset.eventId);if(!e?.pending)return;return animateManualDice(e);}
