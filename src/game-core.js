@@ -154,16 +154,47 @@ const GameCore = (() => {
   function finite(v,label){if(typeof v!=='number'||!Number.isFinite(v))throw Error(label+' 必须是有限数值');return v;}
   function modifiers(x){if(x==null)return 0;if(!object(x))throw Error('修正值必须是对象');return Object.values(x).reduce((n,v)=>n+finite(v,'修正值'),0);}
   function randInt(min,max,random=Math.random){if(!Number.isSafeInteger(min)||!Number.isSafeInteger(max)||max<min||max-min>1e9)throw Error('随机范围无效');return min+Math.floor(random()*(max-min+1));}
+  function toolFailureSuggestion(name,args,message){
+    const m=String(message||'');
+    if(name==='roll_dice'){
+      if(/缺少必填参数/.test(m))return '请补齐 roll_dice 的全部字段。无修正填 {}；无大成功/大失败区间填 null；正式检定必须填写 target_value 和 compare_mode。';
+      if(/正式检定禁止使用裸整数|骰子格式应为/.test(m))return '随机骰请把 dice_dict 写成 NdM，例如 {"d100":"1d100"}；若确实要固定结果，写 set-force:N，例如 {"d100":"set-force:1"}。不要用裸整数 "1" 代表骰子。';
+      if(/critical_(success|failure)_range|闭区间/.test(m))return '大成功/大失败区间请使用 JSON 数组，例如 "critical_success_range":[1,14]、"critical_failure_range":[96,100]；不用时填 null。';
+      if(/target_value|compare_mode/.test(m))return '正式检定请提供数值 target_value 和 compare_mode（gt/lt/ge/le/ne/eq）；仅 calculate_only:true 时可填 null。';
+      if(/left_modifiers|right_modifiers|修正值/.test(m))return '修正请写成对象，例如 "left_modifiers":{"环境":-10}；没有修正时两个字段都填写 {}。';
+      if(/description|roller|related_attr|is_secret|calculate_only|dice_combine_mode/.test(m))return '请按完整 roll_dice 结构重试，所有字段都必须显式填写。';
+    }
+    if(/修改前先 read_file/.test(m))return '先用 read_file 读取该文件的最新内容，再进行修改。';
+    if(/文件不存在/.test(m))return '先用 list_dir/tree/search 确认实际路径，再按存在的路径重试。';
+    return '';
+  }
+  const DICE_REQUIRED=['description','roller','related_attr','is_secret','dice_dict','calculate_only','target_value','compare_mode','critical_success_range','critical_failure_range','dice_combine_mode','left_modifiers','right_modifiers'];
+  function diceRange(value,key){
+    if(value===null||value==='')return null;
+    let r=value;
+    if(typeof r==='string'){
+      const text=r.trim();
+      if(/^[-+]?\d+(?:\.\d+)?\s*,\s*[-+]?\d+(?:\.\d+)?$/.test(text))r=text.split(',').map(Number);
+      else try{r=JSON.parse(text);}catch(_){throw Error(key+' 格式错误：请使用 JSON 数组 [min,max]，例如 [1,14]，不要写成 "1,14"');}
+    }
+    if(!Array.isArray(r)||r.length!==2||!r.every(Number.isFinite)||r[0]>r[1])throw Error(key+' 必须是两个数字组成的闭区间 [min,max]，不用时填写 null');
+    return r;
+  }
   function diceRequest(a){
+    if(!object(a))throw Error('roll_dice 参数必须是对象');
+    const missing=DICE_REQUIRED.filter(k=>!Object.hasOwn(a,k));if(missing.length)throw Error('roll_dice 缺少必填参数：'+missing.join('、'));
+    requireText(a.description,'description');requireText(a.roller,'roller');requireText(a.related_attr,'related_attr');
+    if(typeof a.is_secret!=='boolean')throw Error('is_secret 必须是 true 或 false');
+    if(typeof a.calculate_only!=='boolean')throw Error('calculate_only 必须是 true 或 false');
     if(!object(a.dice_dict)||!Object.keys(a.dice_dict).length)throw Error('dice_dict 不得为空');
     const compare={gt:(x,y)=>x>y,ge:(x,y)=>x>=y,lt:(x,y)=>x<y,le:(x,y)=>x<=y,eq:(x,y)=>x===y,ne:(x,y)=>x!==y};
-    if(!a.calculate_only&&(!compare[a.compare_mode]||!Number.isFinite(a.target_value)))throw Error('检定需要 target_value 与 compare_mode');
-    const mode=a.dice_combine_mode||'sum';if(!['sum','max','min','independent'].includes(mode))throw Error('骰子组合方式无效');
+    if(!a.calculate_only&&(!compare[a.compare_mode]||!Number.isFinite(a.target_value)))throw Error('正式检定需要数值 target_value 与有效 compare_mode；仅 calculate_only:true 时二者可填写 null');
+    if(a.calculate_only&&a.target_value!==null&&!Number.isFinite(a.target_value))throw Error('target_value 必须是有限数值或 null');
+    if(a.calculate_only&&a.compare_mode!==null&&!compare[a.compare_mode])throw Error('compare_mode 必须是 gt/lt/ge/le/ne/eq 或 null');
+    const mode=a.dice_combine_mode;if(!['sum','max','min','independent'].includes(mode))throw Error('dice_combine_mode 必须是 sum/max/min/independent');
+    if(!object(a.left_modifiers)||!object(a.right_modifiers))throw Error('left_modifiers 与 right_modifiers 必须都是对象；没有修正时填写 {}');
     const left=modifiers(a.left_modifiers),right=modifiers(a.right_modifiers);
-    const ranges={};for(const k of ['critical_success_range','critical_failure_range']){
-      if(!a[k])continue;const r=typeof a[k]==='string'?JSON.parse(a[k]):a[k];
-      if(!Array.isArray(r)||r.length!==2||!r.every(Number.isFinite)||r[0]>r[1])throw Error(k+' 必须是 [min,max]');ranges[k]=r;
-    }
+    const ranges={};for(const k of ['critical_success_range','critical_failure_range']){const r=diceRange(a[k],k);if(r)ranges[k]=r;}
     const successRange=ranges.critical_success_range,failureRange=ranges.critical_failure_range;
     if(successRange&&failureRange&&Math.max(successRange[0],failureRange[0])<=Math.min(successRange[1],failureRange[1]))throw Error('大成功与大失败的闭区间不能重叠（包括共同端点），请修正后重新调用 roll_dice');
     const specs=Object.entries(a.dice_dict).map(([label,value])=>{
@@ -340,9 +371,9 @@ const GameCore = (() => {
       out={ok:true,result:result??{status:'ok'}};
     }catch(e){
       const {activeRound,...rest}=before;Object.assign(s,rest);Object.assign(round,activeRound);s.events.length=eventCount;
-      out={ok:false,error:e.message};
+      const suggestion=toolFailureSuggestion(name,a,e.message);out={ok:false,error:e.message,...(suggestion?{suggestion}:{})};
     }
-    round.receipts[callId]=copy(out);emit(s,'tool',{name,args:copy(a),result:out.ok?out.result:out.error,success:out.ok,callId,
+    round.receipts[callId]=copy(out);emit(s,'tool',{name,args:copy(a),result:out.ok?out.result:{error:out.error,...(out.suggestion?{suggestion:out.suggestion}:{})},success:out.ok,callId,
       fileChanges:out.ok?changes(before.tree,s.tree):[]});
     if(!round.complete&&s.snapshots.length)s.lastChanges=changes(s.snapshots.at(-1).tree,s.tree);
     s.updatedAt=Date.now();return out;
@@ -471,7 +502,7 @@ const GameCore = (() => {
           }
           out=execute(s,tc.function.name,a,tc.id,opts);
         }
-        catch(e){out={ok:false,error:'工具参数解析失败：'+e.message};emit(s,'tool',{name:tc.function.name,args:tc.function.arguments,result:out.error,success:false,callId:tc.id});}
+        catch(e){const rawError=e.message||String(e),suggestion=toolFailureSuggestion(tc.function.name,a,rawError);out={ok:false,error:'工具参数解析失败：'+rawError,raw_error:rawError,...(suggestion?{suggestion}:{})};emit(s,'tool',{name:tc.function.name,args:a??tc.function.arguments,result:{error:out.error,raw_error:rawError,...(suggestion?{suggestion}:{})},success:false,callId:tc.id});}
         if(out.ok&&tc.function.name==='append_story')storyInBatch=true;
         s.messages.push({role:'tool',tool_call_id:tc.id,content:JSON.stringify(out),round:s.activeRound.number});await step();
       }
