@@ -19,7 +19,7 @@ const GameApp=(()=>{
   async function runImport(source){
     idle();S.active=null;S.error=null;S.importing={phase:'prepare',received:0,total:null};emit();
     try{const file=await source();S.importing={...S.importing,phase:'extract'};emit();
-      const s=await GameImport.importSave(file);await settleCompletedBatch(s);await db.putSave(s);S.saves=await db.list();S.active=s;restoreLastRequest(s);S.mode='play';return s;
+      const s=await GameImport.importSave(file);GameCore.repairManualDiceEvents(s);await settleCompletedBatch(s);await db.putSave(s);S.saves=await db.list();S.active=s;restoreLastRequest(s);S.mode='play';return s;
     }catch(e){S.error=e.message||'导入失败';throw e;}finally{S.importing=null;emit();}
   }
   function restoreLastRequest(s){const last=s.requestHistory?.at(-1);S.lastRequest=last?.body?structuredClone(last.body):null;S.lastRequestSaveId=last?s.id:null;}
@@ -30,7 +30,7 @@ const GameApp=(()=>{
     await db.putSave(s);
   }
   async function openSave(id){idle();const s=await db.getSave(id);if(!s)throw Error('存档不存在');
-    peerCheck(s);if(GameHistory.backfill(s))await db.putSave(s);
+    peerCheck(s);const repairedDice=GameCore.repairManualDiceEvents(s),backfilled=GameHistory.backfill(s);if(repairedDice||backfilled)await db.putSave(s);
     if(s.activeRound?.complete&&pendingBatch(s)){peerCheck(s);await settleCompletedBatch(s);}
     if(s.activeRound&&(!s.activeRound.complete||pendingBatch(s)))s.status='interrupted';S.active=s;restoreLastRequest(s);S.mode='play';S.error=s.error||null;emit();return s;}
   function closeSave(){idle();S.active=null;S.error=null;emit();}

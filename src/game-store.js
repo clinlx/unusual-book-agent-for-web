@@ -4,7 +4,8 @@ const GameStore=(()=>{
   const lastRoundEnd=events=>events?.findLast(e=>e.type==='round_end')?.at??null;
   function create(factory=globalThis.indexedDB){
     let db=null,memory=!factory;const mem=new Map();let config={};
-    const counts=new Map();
+    const counts=new Map(),fingerprints=new Map();
+    const signature=value=>JSON.stringify(value);
     async function open(){if(!factory)return;await new Promise((resolve,reject)=>{
       let req;try{req=factory.open('trpg-single-player',1);}catch(e){memory=true;resolve();return;}
       req.onupgradeneeded=()=>{const d=req.result;d.createObjectStore('saves',{keyPath:'id'});d.createObjectStore('config',{keyPath:'id'});
@@ -27,21 +28,26 @@ const GameStore=(()=>{
       const {messages,events,...meta}=save;
       const tx=db.transaction(['saves','messages','events'],'readwrite');const finish=done(tx);
       tx.objectStore('saves').put({...meta,lastRoundEndedAt:lastRoundEnd(events)});
-      const known=counts.get(save.id)||{messages:0,events:0};
+      const known=counts.get(save.id)||{messages:0,events:0},knownFp=fingerprints.get(save.id)||{messages:[],events:[]},nextFp={messages:[],events:[]};
       for(const [name,list]of Object.entries({messages,events})){
-        const os=tx.objectStore(name),from=Math.min(known[name],list.length);
-        
+        const os=tx.objectStore(name);
         if(list.length<known[name])os.delete(IDBKeyRange.bound([save.id,list.length],[save.id,Number.MAX_SAFE_INTEGER]));
-        for(let i=from;i<list.length;i++)os.put({saveId:save.id,seq:i,value:list[i]});
+        for(let i=0;i<list.length;i++){
+          const sig=signature(list[i]);nextFp[name][i]=sig;
+          if(i>=known[name]||knownFp[name]?.[i]!==sig)os.put({saveId:save.id,seq:i,value:list[i]});
+        }
       }
-      await finish;counts.set(save.id,{messages:messages.length,events:events.length});
+      await finish;counts.set(save.id,{messages:messages.length,events:events.length});fingerprints.set(save.id,nextFp);
     }
     async function getSave(id){
       if(memory)return mem.has(id)?structuredClone(mem.get(id)):undefined;
       const tx=db.transaction(['saves','messages','events']);
       const [meta,messages,events]=await Promise.all([req(tx.objectStore('saves').get(id)),req(tx.objectStore('messages').index('saveId').getAll(id)),req(tx.objectStore('events').index('saveId').getAll(id))]);
-      if(!meta)return;counts.set(id,{messages:messages.length,events:events.length});
-      return {...meta,messages:messages.sort((a,b)=>a.seq-b.seq).map(r=>r.value),events:events.sort((a,b)=>a.seq-b.seq).map(r=>r.value)};
+      if(!meta)return;
+      const messageValues=messages.sort((a,b)=>a.seq-b.seq).map(r=>r.value),eventValues=events.sort((a,b)=>a.seq-b.seq).map(r=>r.value);
+      counts.set(id,{messages:messageValues.length,events:eventValues.length});
+      fingerprints.set(id,{messages:messageValues.map(signature),events:eventValues.map(signature)});
+      return {...meta,messages:messageValues,events:eventValues};
     }
     async function list(){const all=memory?[...mem.values()]:await req(db.transaction('saves').objectStore('saves').getAll());
       const summaries=await Promise.all(all.map(async s=>{
@@ -56,7 +62,7 @@ const GameStore=(()=>{
       return summaries.sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));}
 
     async function deleteSave(id){if(memory){mem.delete(id);return;}const tx=db.transaction(['saves','messages','events'],'readwrite');const finish=done(tx);tx.objectStore('saves').delete(id);
-      for(const name of ['messages','events'])tx.objectStore(name).delete(IDBKeyRange.bound([id,0],[id,Number.MAX_SAFE_INTEGER]));await finish;counts.delete(id);}
+      for(const name of ['messages','events'])tx.objectStore(name).delete(IDBKeyRange.bound([id,0],[id,Number.MAX_SAFE_INTEGER]));await finish;counts.delete(id);fingerprints.delete(id);}
     async function getSettings(){return memory?structuredClone(config):(await req(db.transaction('config').objectStore('config').get('settings')))?.value||{};}
     async function putSettings(value){if(memory){config=structuredClone(value);return;}const tx=db.transaction('config','readwrite'),finish=done(tx);tx.objectStore('config').put({id:'settings',value});await finish;}
     return {open,putSave,getSave,list,deleteSave,getSettings,putSettings,get memoryMode(){return memory;}};

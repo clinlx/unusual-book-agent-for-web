@@ -349,6 +349,28 @@ const GameCore = (() => {
     s.messages.push({role:'tool',tool_call_id:pending.callId,content:JSON.stringify(out),round:s.activeRound.number});
     delete s.pendingManualDice;s.status='interrupted';s.error=null;s.updatedAt=Date.now();return out;
   }
+  function repairManualDiceEvents(s){
+    const currentPending=s.pendingManualDice?.eventId||null,tools=new Map();
+    for(const e of s.events||[])if(e?.type==='tool'&&e.name==='roll_dice'&&e.success!==false&&e.callId)tools.set(e.callId,e);
+    let changed=false;
+    for(const e of s.events||[]){
+      if(e?.type!=='dice'||e.pending!==true||!e.callId||e.id===currentPending)continue;
+      const tool=tools.get(e.callId),result=tool?.result;
+      if(!result||typeof result!=='object'||!result.data)continue;
+      const args=tool.args&&typeof tool.args==='object'?tool.args:(e.diceArgs||{});
+      Object.assign(e,copy(result),{
+        roller:e.roller||args.roller||'',
+        description:e.description||args.description||'',
+        relatedAttr:e.relatedAttr||args.related_attr||'',
+        secret:diceSecret(args),
+        playerRelated:typeof e.playerRelated==='boolean'?e.playerRelated:dicePlayerRelated(s,args),
+        diceArgs:copy(args),manual:true,pending:false,callId:e.callId
+      });
+      changed=true;
+    }
+    if(changed)s.updatedAt=Date.now();
+    return changed;
+  }
   function estimate(messages){let n=0;for(const m of messages){const text=typeof m==='string'?m:JSON.stringify(m);let cjk=0;for(const c of text)if(/[\u3000-\u9fff]/.test(c))cjk++;n+=cjk+Math.ceil((text.length-cjk)/4)+5;}return n;}
   function context(s,system,cap=128000,opts={}) {
     const current=s.activeRound?.number||Math.max(1,s.round);
@@ -428,6 +450,6 @@ const GameCore = (() => {
       throw Error('本回合已达到工具循环上限，可继续本回合或回退');
     }catch(e){s.status=s.activeRound.complete?(s.cache.game_over?'ended':'waiting'):'interrupted';s.error=e.message;emit(s,'error',{content:e.message});await step();throw e;}
   }
-  return {uid,path,createSave,validateTree,beginRound,execute,run,context,estimate,player,filterVisible,visibleEvents,rollback,pruneRollback,ROLLBACK_LIMIT,changes,flatten,dice,dicePlayerRelated,diceSecret,resolveManualDice};
+  return {uid,path,createSave,validateTree,beginRound,execute,run,context,estimate,player,filterVisible,visibleEvents,rollback,pruneRollback,ROLLBACK_LIMIT,changes,flatten,dice,dicePlayerRelated,diceSecret,resolveManualDice,repairManualDiceEvents};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=GameCore;
