@@ -372,7 +372,7 @@ const GameCore = (() => {
     return changed;
   }
   function estimate(messages){let n=0;for(const m of messages){const text=typeof m==='string'?m:JSON.stringify(m);let cjk=0;for(const c of text)if(/[\u3000-\u9fff]/.test(c))cjk++;n+=cjk+Math.ceil((text.length-cjk)/4)+5;}return n;}
-  function context(s,system,cap=128000,opts={}) {
+  function context(s,system,cap=240000,opts={}) {
     const current=s.activeRound?.number||Math.max(1,s.round);
     let from=s.contextFromRound||1,compact=false;
     const rounds=[...new Set(s.messages.filter(m=>(m.round||1)>=from).map(m=>m.round||1))];
@@ -476,7 +476,7 @@ const GameCore = (() => {
       if(s.activeRound.complete){s.status=s.cache.game_over===true?'ended':'waiting';await step();return;}
       if(opts.resumePrompt){s.messages.push({role:'user',content:opts.resumePrompt,round:s.activeRound.number});await step();}
       for(let loop=0;loop<(opts.maxToolLoops||60);loop++){
-        abort();const messages=context(s,opts.system||'',opts.cap||128000,opts);
+        abort();const messages=context(s,opts.system||'',opts.cap||240000,opts);
         if(opts.transformContext)for(const m of messages){m.content=opts.transformContext(m.content);if(m.tool_calls)for(const tc of m.tool_calls)tc.function.arguments=opts.transformContext(tc.function.arguments);}
         await step();
         const resp=await transport(messages);abort();
