@@ -628,7 +628,7 @@ const GameUI = (() => {
     box.renderer.render(box.scene,box.camera);
     return dice.length?box.getDiceResults():null;
   }
-  function watchDiceSettled(box,token,{stableMs=620,timeoutMs=8000}={}){
+  function watchDiceSettled(box,token,{stableMs=620,timeoutMs=5000}={}){
     return new Promise((resolve,reject)=>{
       const start=performance.now();let stableSince=0,raf=0;
       const stop=()=>{if(raf)cancelAnimationFrame(raf);};
@@ -734,7 +734,7 @@ const GameUI = (() => {
       for(const cm of box.world.contactmaterials){cm.friction=Math.max(cm.friction||0,.7);cm.restitution=Math.min(cm.restitution??.5,.38);}
     }
 
-    const rollPromise=rollDiceVisible(box,plan.notation,420),settledPromise=watchDiceSettled(box,token,{stableMs:620,timeoutMs:8000});
+    const rollPromise=rollDiceVisible(box,plan.notation,420),settledPromise=watchDiceSettled(box,token,{stableMs:620,timeoutMs:5000});
     let result;
     try{result=await Promise.race([rollPromise,settledPromise]);}
     catch(error){if(token!==diceBoxToken)return null;throw error;}

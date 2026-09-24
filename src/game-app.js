@@ -77,7 +77,7 @@ const GameApp=(()=>{
       const snapshot=s.activeRound.promptSnapshot;
       snapshot.overrides=Prompts.migrateOverrides(snapshot.overrides);snapshot.system=Prompts.migrateText(snapshot.system);
       await persist();clearStream();emit();
-      timer=setInterval(()=>{if(lease?.available){if(lease.lostWhileRunning(s.id))controller?.abort(Error('存档被另一个页面接管'));else lease.renewLease(s.id);}},4000);
+      timer=setInterval(()=>{if(lease?.available){if(lease.lostWhileRunning(s.id))controller?.abort(Error('存档被另一个页面接管'));else lease.renewLease(s.id);}},lease?.HEARTBEAT||2000);
       const defs=GameTools.build(Prompts,snapshot.overrides);
       let currentRequest;
       const raw=GameTransport.create(settings,defs,{signal:controller.signal,

@@ -1,9 +1,9 @@
 'use strict';
 
 const Lease = (() => {
-  const EXPIRY = 15000;          
-  const HEARTBEAT = 5000;       
-  const RENEW_THROTTLE = 2000;  
+  const EXPIRY = 8000;
+  const HEARTBEAT = 2000;
+  const RENEW_THROTTLE = 750;
   const PREFIX = 'awl:lease:';
 
   function create(opts = {}) {
