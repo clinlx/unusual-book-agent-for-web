@@ -376,11 +376,56 @@ const GameCore = (() => {
     const current=s.activeRound?.number||Math.max(1,s.round);
     let from=s.contextFromRound||1,compact=false;
     const rounds=[...new Set(s.messages.filter(m=>(m.round||1)>=from).map(m=>m.round||1))];
+    const parseCache=value=>{
+      try{
+        const args=typeof value==='string'?JSON.parse(value):value;
+        let cache=args?.NEXT_TURN_CACHE;
+        if(typeof cache==='string')cache=JSON.parse(cache);
+        return object(cache)?copy(cache):null;
+      }catch(_){return null;}
+    };
+    function boundaryCache(round){
+      if(round<=1)return null;
+      const target=round-1;
+      for(let i=s.messages.length-1;i>=0;i--){
+        const m=s.messages[i],mr=m.round||1;
+        if(mr>target)continue;
+        if(mr<target)break;
+        for(let j=(m.tool_calls||[]).length-1;j>=0;j--){
+          const tc=m.tool_calls[j];
+          if(tc?.function?.name!=='end_the_round')continue;
+          const found=parseCache(tc.function.arguments);
+          if(found)return found;
+        }
+      }
+      for(let i=(s.snapshots||[]).length-1;i>=0;i--){
+        const snap=s.snapshots[i];
+        if(snap?.round===target&&object(snap.cache))return copy(snap.cache);
+      }
+      try{
+        const root=vfs.resolve(s.tree,vfs.normalize('/workspace/过往回合历史记忆'));
+        const prefix='Round_'+target+'_Time_';
+        const dirs=Object.values(root?.children||{}).filter(n=>n?.type==='dir'&&n.name.startsWith(prefix));
+        for(let i=dirs.length-1;i>=0;i--){
+          const n=dirs[i]?.children?.['ROUND_CACHE.xml'];
+          if(!n||n.type!=='file'||n.encoding==='base64')continue;
+          const parsed=JSON.parse(n.content.replace(/^\uFEFF/,''));
+          if(object(parsed))return copy(parsed);
+        }
+      }catch(_){}
+      return null;
+    }
     function build(){
       const head=[{role:'system',content:system}];
-      const recap=s.summaries.filter(r=>r.round<from).slice(-30);
-      if(recap.length)head.push({role:'user',content:(opts.summariesPrompt||'[前情提要]')+'\n'+recap.map(r=>`第${r.round}回合：${r.content}`).join('\n')});
-      if(Object.keys(s.cache||{}).length)head.push({role:'user',content:(opts.cachePrompt||'[NEXT_TURN_CACHE]')+'\n'+JSON.stringify(s.cache)});
+      // With complete history, end_the_round already carries NEXT_TURN_CACHE in-place.
+      // Do not prepend a changing copy: keeping the prefix append-only is critical for provider prompt caching.
+      // Only reconstruct summary/cache state when old rounds have actually been truncated.
+      if(from>1){
+        const recap=s.summaries.filter(r=>r.round<from).slice(-30);
+        if(recap.length)head.push({role:'user',content:(opts.summariesPrompt||'[前情提要]')+'\n'+recap.map(r=>`第${r.round}回合：${r.content}`).join('\n')});
+        const cache=boundaryCache(from);
+        if(cache&&Object.keys(cache).length)head.push({role:'user',content:(opts.cachePrompt||'[NEXT_TURN_CACHE]')+'\n'+JSON.stringify(cache)});
+      }
       const msgs=s.messages.filter(m=>(m.round||1)>=from).map(m=>{
         const out={role:m.role,content:m.content||''};
         for(const k of ['tool_calls','tool_call_id','reasoning_content'])if(m[k]!==undefined)out[k]=copy(m[k]);return out;
