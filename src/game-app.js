@@ -123,7 +123,7 @@ const GameApp=(()=>{
     next.stream=!!next.stream;next.manualDice=!!next.manualDice;await db.putSettings(next);S.settings=next;emit();
   }
   async function resolveManualDice(rolls){
-    idle();const s=active();peerCheck(s);GameCore.resolveManualDice(s,rolls);await persist();emit();await executeRound('resume','');return s;
+    idle();const s=active();peerCheck(s);GameCore.resolveManualDice(s,rolls);await persist();emit();return s;
   }
   const promptList=()=>Prompts.list().filter(p=>p.id!=='flow/tools.json').map(p=>({...p,overridden:Object.hasOwn(S.settings.promptOverrides,p.id)}));
   const getPrompt=id=>Prompts.get(id,S.settings.promptOverrides);

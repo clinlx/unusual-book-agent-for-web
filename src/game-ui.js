@@ -656,14 +656,12 @@ const GameUI = (() => {
   async function snapDiceDisplay(box,duration=460){
     const dice=box.diceList||[];if(!dice.length)return;
     syncDiceMeshes(box);const grid=displayGrid(box,dice.length),moves=dice.map((mesh,i)=>{
-      const fromP=mesh.position.clone(),fromQ=mesh.quaternion.clone(),targetP=mesh.position.clone(),targetRot=mesh.rotation.clone();
-      targetP.x=grid[i].x;targetP.y=grid[i].y;targetRot.z=0;
-      const targetQ=mesh.quaternion.clone();targetQ.setFromEuler(targetRot);
-      if(mesh.body)mesh.body.type=4;return {mesh,fromP,fromQ,targetP,targetQ};
+      const fromP=mesh.position.clone(),targetP=mesh.position.clone();targetP.x=grid[i].x;targetP.y=grid[i].y;
+      if(mesh.body)mesh.body.type=4;return {mesh,fromP,targetP};
     });
     const start=performance.now();
     await new Promise(resolve=>{const tick=now=>{const t=Math.min(1,(now-start)/duration),ease=1-Math.pow(1-t,3);
-      for(const m of moves){m.mesh.position.lerpVectors(m.fromP,m.targetP,ease);m.mesh.quaternion.slerpQuaternions(m.fromQ,m.targetQ,ease);}
+      for(const m of moves)m.mesh.position.lerpVectors(m.fromP,m.targetP,ease);
       box.renderer.render(box.scene,box.camera);if(t<1)requestAnimationFrame(tick);else resolve();
     };requestAnimationFrame(tick);});
   }
@@ -673,8 +671,20 @@ const GameUI = (() => {
     const desired=plan.forcedPhysical;
     for(let i=0;i<desired.length;i++){const mesh=box.diceList[i];if(!mesh)continue;if(Number(mesh.getLastValue?.().value)!==Number(desired[i]))box.swapDiceFace(mesh,desired[i]);}
     const dice=box.diceList||[],grid=displayGrid(box,dice.length);
-    dice.forEach((mesh,i)=>{if(mesh.body){mesh.position.copy(mesh.body.position);mesh.quaternion.copy(mesh.body.quaternion);mesh.body.type=4;}mesh.position.x=grid[i].x;mesh.position.y=grid[i].y;const r=mesh.rotation.clone();r.z=0;mesh.quaternion.setFromEuler(r);});
+    dice.forEach((mesh,i)=>{if(mesh.body){mesh.position.copy(mesh.body.position);mesh.quaternion.copy(mesh.body.quaternion);mesh.body.type=4;}mesh.position.x=grid[i].x;mesh.position.y=grid[i].y;});
     box.running=false;box.rolling=false;box.renderer.render(box.scene,box.camera);
+  }
+  async function rollDiceVisible(box,notation,readyMs=420){
+    box.notationVectors=box.startClickThrow(notation);if(!box.notationVectors||box.notationVectors.error)throw Error('无法建立掷骰向量');
+    box.clearDice();
+    for(const vector of box.notationVectors.vectors||[])box.spawnDice(vector);
+    // Show the actual starting dice before any physics steps are consumed.
+    syncDiceMeshes(box);await new Promise(resolve=>setTimeout(resolve,readyMs));
+    box.simulateThrow();box.steps=0;box.iteration=0;
+    for(let i=0;i<box.diceList.length;i++)if(box.diceList[i])box.spawnDice(box.notationVectors.vectors[i],box.diceList[i]);
+    box.rolling=true;box.running=Date.now();box.last_time=0;
+    const thread=box.running;
+    return new Promise(resolve=>box.animateThrow(thread,()=>resolve(box.getDiceResults())));
   }
   async function mountDice3D(specs,forced=null,{quiet=false,staticOnly=false}={}){
     const host=document.getElementById('manual-dice-3d'),Ctor=diceBoxCtor(),plan=dice3dPlan(specs,forced);
@@ -694,9 +704,14 @@ const GameUI = (() => {
       const w=this.display.currentWidth||this.display.containerWidth||300,h=this.display.currentHeight||this.display.containerHeight||200;
       let vx=(secureFloat()*2-1)*w,vy=(secureFloat()*2-1)*h;if(Math.abs(vx)<w*.12)vx+=(secureFloat()<.5?-1:1)*w*.18;if(Math.abs(vy)<h*.12)vy+=(secureFloat()<.5?-1:1)*h*.18;
       const dist=Math.hypot(vx,vy)+80,boost=(2.5+secureFloat()*2.15)*dist*this.strength,nv=this.getNotationVectors(notation,{x:vx,y:vy},boost,dist);
+      const cw=this.display.containerWidth||w,ch=this.display.containerHeight||h;
       for(const v of nv.vectors||[]){
-        v.pos.x+=(secureFloat()-.5)*this.display.containerWidth*.34;v.pos.y+=(secureFloat()-.5)*this.display.containerHeight*.34;v.pos.z=180+secureFloat()*300;
-        v.velocity.x*=.72+secureFloat()*.72;v.velocity.y*=.72+secureFloat()*.72;v.velocity.z=-6-secureFloat()*26;
+        // Start well inside the camera frustum so the player sees the ready state before the throw.
+        v.pos.x=(secureFloat()-.5)*cw*.46;v.pos.y=(secureFloat()-.5)*ch*.42;v.pos.z=150+secureFloat()*180;
+        const speed=.78+secureFloat()*.8;
+        v.velocity.x=(secureFloat()*2-1)*Math.max(180,Math.abs(v.velocity.x))*speed;
+        v.velocity.y=(secureFloat()*2-1)*Math.max(180,Math.abs(v.velocity.y))*speed;
+        v.velocity.z=-8-secureFloat()*28;
         v.angle.x=(secureFloat()*2-1)*(18+secureFloat()*24);v.angle.y=(secureFloat()*2-1)*(18+secureFloat()*24);v.angle.z=(secureFloat()*2-1)*(8+secureFloat()*18);
         v.axis={x:secureFloat(),y:secureFloat(),z:secureFloat(),a:secureFloat()};
       }return nv;
@@ -719,7 +734,7 @@ const GameUI = (() => {
       for(const cm of box.world.contactmaterials){cm.friction=Math.max(cm.friction||0,.7);cm.restitution=Math.min(cm.restitution??.5,.38);}
     }
 
-    const rollPromise=box.roll(plan.notation),settledPromise=watchDiceSettled(box,token,{stableMs:620,timeoutMs:8000});
+    const rollPromise=rollDiceVisible(box,plan.notation,420),settledPromise=watchDiceSettled(box,token,{stableMs:620,timeoutMs:8000});
     let result;
     try{result=await Promise.race([rollPromise,settledPromise]);}
     catch(error){if(token!==diceBoxToken)return null;throw error;}
@@ -790,7 +805,10 @@ const GameUI = (() => {
       final.push(isPhysicalDiceSpec(spec)?physicalValues[pi++]:fallbackValues.get(i));
     }
     if(final.some(v=>!Number.isFinite(v)))throw Error('手动掷骰未能取得完整结果');
-    await GameApp.resolveManualDice(final);modalRoot.innerHTML='';activeDiceBox=null;diceBoxToken++;
+    await GameApp.resolveManualDice(final);
+    modalRoot.querySelector('.manual-dice-shell')?.removeAttribute('data-dice-rolling');
+    modalRoot.innerHTML='';activeDiceBox=null;diceBoxToken++;
+    await GameApp.resume();
   }
   function changesModal() {
     const changes=state.active.lastChanges||[];
