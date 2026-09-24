@@ -154,8 +154,7 @@ const GameCore = (() => {
   function finite(v,label){if(typeof v!=='number'||!Number.isFinite(v))throw Error(label+' 必须是有限数值');return v;}
   function modifiers(x){if(x==null)return 0;if(!object(x))throw Error('修正值必须是对象');return Object.values(x).reduce((n,v)=>n+finite(v,'修正值'),0);}
   function randInt(min,max,random=Math.random){if(!Number.isSafeInteger(min)||!Number.isSafeInteger(max)||max<min||max-min>1e9)throw Error('随机范围无效');return min+Math.floor(random()*(max-min+1));}
-  function dice(a,random=Math.random,fixedRolls=null){
-    let fixedIndex=0;
+  function diceRequest(a){
     if(!object(a.dice_dict)||!Object.keys(a.dice_dict).length)throw Error('dice_dict 不得为空');
     const compare={gt:(x,y)=>x>y,ge:(x,y)=>x>=y,lt:(x,y)=>x<y,le:(x,y)=>x<=y,eq:(x,y)=>x===y,ne:(x,y)=>x!==y};
     if(!a.calculate_only&&(!compare[a.compare_mode]||!Number.isFinite(a.target_value)))throw Error('检定需要 target_value 与 compare_mode');
@@ -173,6 +172,13 @@ const GameCore = (() => {
       if(!/^-?\d+$/.test(formula)||!Number.isSafeInteger(Number(formula)))throw Error('骰子格式应为 NdM、-NdM 或整数');
       return {label,formula,constant:Number(formula)};
     });
+    if(!a.calculate_only&&specs.some(r=>r.constant!==undefined))throw Error('正式检定的 dice_dict 只能填写 NdM 或 -NdM；固定加减值请放入 left_modifiers / right_modifiers，纯整数仅允许 calculate_only:true');
+    if(!a.calculate_only&&!specs.some(r=>r.n))throw Error('正式检定至少需要一个真实骰式 NdM');
+    return {compare,mode,left,right,ranges,specs};
+  }
+  function dice(a,random=Math.random,fixedRolls=null){
+    let fixedIndex=0;
+    const {compare,mode,left,right,ranges,specs}=diceRequest(a);
     const rows=specs.map(r=>{const rolls=r.n?Array.from({length:r.n},()=>{
       if(Array.isArray(fixedRolls)){
         if(fixedIndex>=fixedRolls.length)throw Error('手动掷骰结果数量不足');
@@ -455,6 +461,7 @@ const GameCore = (() => {
         try{
           a=JSON.parse(tc.function.arguments||'{}');
           if(tc.function.name==='roll_dice'&&opts.manualDice===true&&dicePlayerRelated(s,a)&&!diceSecret(a)){
+            diceRequest(a);
             const e=emit(s,'dice',{roller:a.roller,description:a.description||'',relatedAttr:a.related_attr||'',secret:false,playerRelated:true,
               diceArgs:copy(a),manual:true,pending:true,callId:tc.id});
             s.pendingManualDice={callId:tc.id,eventId:e.id,round:s.activeRound.number,args:copy(a),createdAt:Date.now()};
