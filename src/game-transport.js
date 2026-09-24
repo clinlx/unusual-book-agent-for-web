@@ -2,6 +2,22 @@
 const GameTransport=(()=>{
   const sse=typeof module!=='undefined'&&module.exports?require('./sse.js'):SSE;
   const tiers=new Map();
+  const object=x=>!!x&&typeof x==='object'&&!Array.isArray(x);
+  function customBody(settings){
+    const raw=String(settings.customRequestBody||'').trim();if(!raw)return {};
+    let value;try{value=JSON.parse(raw);}catch(e){throw Error('自定义请求包体不是有效 JSON：'+e.message);}
+    if(!object(value))throw Error('自定义请求包体必须是 JSON 对象');
+    return value;
+  }
+  function mergeBody(base,extra){
+    const out={...base};
+    for(const [key,value]of Object.entries(extra||{}))out[key]=object(value)&&object(out[key])?mergeBody(out[key],value):value;
+    return out;
+  }
+  function optionalNumber(value,min,max,label,{integer=false}={}){
+    if(value===null||value===undefined||String(value).trim()==='')return null;
+    const n=Number(value);if(!Number.isFinite(n)||n<min||n>max||(integer&&!Number.isInteger(n)))throw Error(label+' 超出有效范围');return n;
+  }
   function create(settings,tools,hooks={}){
     const fetcher=hooks.fetch||globalThis.fetch.bind(globalThis);
     return async function(messages){
@@ -17,20 +33,24 @@ const GameTransport=(()=>{
       const armTimeout=()=>{clearTimeout(timer);timer=setTimeout(()=>ctrl.abort(Error('模型请求超时，请重试本回合')),timeoutMs);};
       armTimeout();
       try{
-        let resp;
+        let resp,responseStreams=!!settings.stream;
         for(let attempt=0;;){
-          const body={model:settings.model,messages,stream:!!settings.stream,max_tokens:settings.maxOutputTokens||16384};
+          let body={model:settings.model,messages,stream:!!settings.stream,max_tokens:settings.maxOutputTokens||16384};
           if(tools?.length)body.tools=tools;
           const effort=settings.reasoningEffort||'high';
           const deepseek=/deepseek/i.test(base+' '+settings.model);
           if(!deepseek||effort==='none')body.temperature=Number(settings.temperature??0.7);
+          const topP=optionalNumber(settings.topP,0,1,'top_p'),frequencyPenalty=optionalNumber(settings.frequencyPenalty,-2,2,'frequency_penalty'),presencePenalty=optionalNumber(settings.presencePenalty,-2,2,'presence_penalty'),seed=optionalNumber(settings.seed,-2147483648,2147483647,'seed',{integer:true});
+          if(topP!==null)body.top_p=topP;if(frequencyPenalty!==null)body.frequency_penalty=frequencyPenalty;if(presencePenalty!==null)body.presence_penalty=presencePenalty;if(seed!==null)body.seed=seed;
           if(tier===0){if(deepseek){body.thinking={type:effort==='none'?'disabled':'enabled'};if(effort!=='none')body.reasoning_effort=effort==='max'?'max':'high';}else body.reasoning_effort=effort;}
+          body=mergeBody(body,customBody(settings));
+          const requestStreams=!!body.stream;
           if(ctrl.signal.aborted)throw ctrl.signal.reason||Error('已中止请求');
           if(hooks.onRequest)await hooks.onRequest(body);
           if(ctrl.signal.aborted)throw ctrl.signal.reason||Error('已中止请求');
           resp=await fetcher(url,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+(settings.apiKey||'')},body:JSON.stringify(body),signal:ctrl.signal});
-          if(settings.stream)armTimeout();
-          if(resp.ok)break;
+          if(requestStreams)armTimeout();
+          if(resp.ok){responseStreams=requestStreams;break;}
           const text=await resp.text();
           if(tier===0&&[400,422].includes(resp.status)&&/reasoning|thinking/i.test(text)){tier=1;continue;}
           if([429,500,502,503,504].includes(resp.status)&&attempt<(settings.maxRetries??2)){
@@ -39,7 +59,7 @@ const GameTransport=(()=>{
           throw Error('API '+resp.status+'：'+text.slice(0,500));
         }
         tiers.set(key,tier);
-        if(!settings.stream){const data=await resp.json();const choice=data.choices?.[0];
+        if(!responseStreams){const data=await resp.json();const choice=data.choices?.[0];
           if(data.error)throw Error(data.error.message||'模型返回错误');
           if(!choice?.message)throw Error('模型响应缺少 message');
           if(choice.finish_reason==='length')throw Error('模型输出被截断，请增加输出上限后继续本回合');
@@ -96,6 +116,6 @@ const GameTransport=(()=>{
     await create({...settings,stream:false,maxOutputTokens:64,reasoningEffort:'none',maxRetries:0,httpTimeoutSeconds:30},[],hooks)([{role:'user',content:'Reply with OK.'}]);
     return {elapsedMs:Date.now()-start};
   }
-  return {create,testConnection,listModels};
+  return {create,testConnection,listModels,mergeBody,customBody};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=GameTransport;

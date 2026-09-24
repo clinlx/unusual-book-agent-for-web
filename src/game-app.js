@@ -1,6 +1,6 @@
 'use strict';
 const GameApp=(()=>{
-  const defaults={baseUrl:'https://api.deepseek.com/v1',apiKey:'',model:'deepseek-flash',stream:true,temperature:0.7,maxContextK:240,maxOutputTokens:16384,
+  const defaults={baseUrl:'https://api.deepseek.com/v1',apiKey:'',model:'deepseek-flash',stream:true,temperature:0.7,topP:'',frequencyPenalty:'',presencePenalty:'',seed:'',customRequestBody:'',maxContextK:240,maxOutputTokens:16384,
     reasoningEffort:'high',maxToolLoops:60,httpTimeoutSeconds:180,maxRetries:2,worldListSource:'',manualDice:false,promptOverrides:{}};
   const S={saves:[],active:null,settings:{...defaults},mode:'play',running:false,importing:null,stream:{content:'',reasoning:'',tools:[],story:'',storyPublished:0},error:null,storageWarning:null,usage:null};
   const db=GameStore.create();const listeners=new Set();let controller=null,initialized=false,storage=null,lease=null;
@@ -117,7 +117,13 @@ const GameApp=(()=>{
     const next={...S.settings};for(const k of Object.keys(defaults))if(k!=='promptOverrides'&&Object.hasOwn(values,k))next[k]=values[k];
     for(const [key,min,max]of [['maxContextK',4,4000],['maxOutputTokens',256,200000],['maxToolLoops',1,300],['httpTimeoutSeconds',10,3600],['maxRetries',0,10],['temperature',0,2]]){
       const n=Number(next[key]);if(!Number.isFinite(n)||n<min||n>max)throw Error(key+' 超出有效范围');next[key]=n;}
+    for(const [key,min,max,integer]of [['topP',0,1,false],['frequencyPenalty',-2,2,false],['presencePenalty',-2,2,false],['seed',-2147483648,2147483647,true]]){
+      const raw=String(next[key]??'').trim();if(!raw){next[key]='';continue;}const n=Number(raw);
+      if(!Number.isFinite(n)||n<min||n>max||(integer&&!Number.isInteger(n)))throw Error(key+' 超出有效范围');next[key]=n;
+    }
     for(const k of ['baseUrl','apiKey','model','worldListSource'])next[k]=String(next[k]||'').trim();
+    next.customRequestBody=String(next.customRequestBody||'').trim();
+    if(next.customRequestBody){let extra;try{extra=JSON.parse(next.customRequestBody);}catch(e){throw Error('自定义请求包体不是有效 JSON：'+e.message);}if(!extra||typeof extra!=='object'||Array.isArray(extra))throw Error('自定义请求包体必须是 JSON 对象');}
     if(next.worldListSource)GameCatalog.source(next.worldListSource);
     if(!['none','low','high','xhigh','max'].includes(next.reasoningEffort))throw Error('思考强度无效');
     next.stream=!!next.stream;next.manualDice=!!next.manualDice;await db.putSettings(next);S.settings=next;emit();

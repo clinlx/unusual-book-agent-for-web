@@ -135,3 +135,14 @@
 .app-prompt-dialog label{margin:0;color:#6f6048}
 .app-prompt-dialog input{font-size:14px}
 @media(max-width:520px){#dialog-root .app-dialog-backdrop{padding:14px}.app-dialog{width:100%}.app-dialog .modal-body{padding:16px}}
+
+.api-settings-heading{grid-column:1/-1;display:flex;align-items:center;gap:7px;margin:0 0 2px;color:#6d5b3f;font:13px/1.4 var(--serif)}
+.settings-info-button{width:20px;height:20px!important;min-width:20px;padding:0!important;border:1px solid #b79b6270!important;border-radius:50%!important;display:inline-grid!important;place-items:center;font:600 11px/18px var(--serif)!important;color:#8d713d!important;background:#fff6!important}
+.settings-info-button[aria-expanded="true"]{background:#b79b6220!important;border-color:var(--gold)!important}
+.api-options-help{margin:2px 0 16px;padding:12px 14px;border:1px solid var(--rule);background:#fff5;border-radius:3px;font-size:11px;line-height:1.7;color:var(--muted)}
+.api-options-help p{margin:0 0 8px}.api-options-help p:last-child{margin-bottom:0}
+.api-options-help pre{margin:9px 0;padding:10px 12px;border:1px solid #b79b6238;background:#f9f4e9;font-size:11px;line-height:1.55;color:#594a34;overflow:auto}
+.api-options-help code{font:11px Consolas,monospace;color:#6b512c}
+.custom-request-body-setting{margin-top:2px!important}
+.custom-request-body{min-height:112px;resize:vertical;font:11px/1.65 Consolas,monospace}
+.custom-request-body-setting>small{font-size:10px;line-height:1.55;color:var(--muted);font-weight:400}
