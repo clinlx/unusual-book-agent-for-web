@@ -121,3 +121,17 @@
   .manual-dice-shell .manual-compare-board{grid-template-columns:1fr;gap:6px}
   .manual-dice-shell .manual-operator{min-height:48px}
 }
+
+/* In-app confirm / prompt dialogs replace browser-native prompt() and confirm(). */
+#dialog-root .app-dialog-backdrop{z-index:90;background:#111810c8;backdrop-filter:blur(4px)}
+.app-dialog{width:min(430px,100%);border-color:#b79b6299;box-shadow:0 22px 75px #0008,0 0 0 1px #fff3 inset}
+.app-dialog>header{padding:13px 18px;background:linear-gradient(180deg,#fff5,#b79b6208)}
+.app-dialog>header h2{font-size:18px;letter-spacing:.02em}
+.app-dialog .modal-body{padding:18px}
+.app-dialog-message{margin:0!important;font:14px/1.8 var(--serif);color:#4b4131;white-space:pre-wrap;overflow-wrap:anywhere}
+.app-dialog-actions{margin-top:18px;padding-top:12px;border-top:1px solid var(--rule)}
+.app-dialog-actions .danger{border-color:#9a514888;color:#8a4039;background:#9a51480b}
+.app-dialog-actions .danger:hover,.app-dialog-actions .danger:focus-visible{background:#9a514818;border-color:#9a5148}
+.app-prompt-dialog label{margin:0;color:#6f6048}
+.app-prompt-dialog input{font-size:14px}
+@media(max-width:520px){#dialog-root .app-dialog-backdrop{padding:14px}.app-dialog{width:100%}.app-dialog .modal-body{padding:16px}}
