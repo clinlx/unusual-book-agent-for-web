@@ -167,13 +167,13 @@ const GameCore = (() => {
     const successRange=ranges.critical_success_range,failureRange=ranges.critical_failure_range;
     if(successRange&&failureRange&&Math.max(successRange[0],failureRange[0])<=Math.min(successRange[1],failureRange[1]))throw Error('大成功与大失败的闭区间不能重叠（包括共同端点），请修正后重新调用 roll_dice');
     const specs=Object.entries(a.dice_dict).map(([label,value])=>{
-      const formula=String(value).trim(),m=formula.match(/^(-?)(\d+)d(\d+)$/i);
+      const formula=String(value).trim(),m=formula.match(/^(-?)(\d+)d(\d+)$/i),forced=formula.match(/^set-force:(-?\d+)$/i);
       if(m){const n=Number(m[2]),faces=Number(m[3]);if(n<1||n>1000||faces<1||faces>1e9)throw Error('骰子数量或面数超出范围');return {label,formula,n,faces,sign:m[1]?-1:1};}
-      if(!/^-?\d+$/.test(formula)||!Number.isSafeInteger(Number(formula)))throw Error('骰子格式应为 NdM、-NdM 或整数');
+      if(forced){const value=Number(forced[1]);if(!Number.isSafeInteger(value))throw Error('set-force 的值必须是安全整数');return {label,formula,forced:value};}
+      if(!/^-?\d+$/.test(formula)||!Number.isSafeInteger(Number(formula)))throw Error('骰子格式应为 NdM、-NdM、set-force:N，或仅在 calculate_only:true 时使用整数');
       return {label,formula,constant:Number(formula)};
     });
-    if(!a.calculate_only&&specs.some(r=>r.constant!==undefined))throw Error('正式检定的 dice_dict 只能填写 NdM 或 -NdM；固定加减值请放入 left_modifiers / right_modifiers，纯整数仅允许 calculate_only:true');
-    if(!a.calculate_only&&!specs.some(r=>r.n))throw Error('正式检定至少需要一个真实骰式 NdM');
+    if(!a.calculate_only&&specs.some(r=>r.constant!==undefined))throw Error('正式检定禁止使用裸整数；随机骰使用 NdM / -NdM，明确固定结果使用 set-force:N，固定修正使用 left_modifiers / right_modifiers');
     return {compare,mode,left,right,ranges,specs};
   }
   function dice(a,random=Math.random,fixedRolls=null){
@@ -186,7 +186,7 @@ const GameCore = (() => {
         return value*r.sign;
       }
       return randInt(1,r.faces,random)*r.sign;
-    }):[r.constant];return {label:r.label,formula:r.formula,rolls,total:rolls.reduce((x,y)=>x+y,0)};});
+    }):[r.forced!==undefined?r.forced:r.constant];return {label:r.label,formula:r.formula,rolls,total:rolls.reduce((x,y)=>x+y,0),forced:r.forced!==undefined};});
     if(Array.isArray(fixedRolls)&&fixedIndex!==fixedRolls.length)throw Error('手动掷骰结果数量不匹配');
     function judge(raw){const total=raw+left,target=(a.target_value||0)+right;const hints=[];
       if(ranges.critical_success_range&&raw>=ranges.critical_success_range[0]&&raw<=ranges.critical_success_range[1])hints.push('可能是大成功');
@@ -461,11 +461,13 @@ const GameCore = (() => {
         try{
           a=JSON.parse(tc.function.arguments||'{}');
           if(tc.function.name==='roll_dice'&&opts.manualDice===true&&dicePlayerRelated(s,a)&&!diceSecret(a)){
-            diceRequest(a);
-            const e=emit(s,'dice',{roller:a.roller,description:a.description||'',relatedAttr:a.related_attr||'',secret:false,playerRelated:true,
-              diceArgs:copy(a),manual:true,pending:true,callId:tc.id});
-            s.pendingManualDice={callId:tc.id,eventId:e.id,round:s.activeRound.number,args:copy(a),createdAt:Date.now()};
-            s.status='interrupted';s.error=null;await step();return true;
+            const request=diceRequest(a);
+            if(request.specs.some(spec=>spec.n)){
+              const e=emit(s,'dice',{roller:a.roller,description:a.description||'',relatedAttr:a.related_attr||'',secret:false,playerRelated:true,
+                diceArgs:copy(a),manual:true,pending:true,callId:tc.id});
+              s.pendingManualDice={callId:tc.id,eventId:e.id,round:s.activeRound.number,args:copy(a),createdAt:Date.now()};
+              s.status='interrupted';s.error=null;await step();return true;
+            }
           }
           out=execute(s,tc.function.name,a,tc.id,opts);
         }
