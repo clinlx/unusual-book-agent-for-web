@@ -15,7 +15,7 @@ call npm ci --no-audit --no-fund
 if errorlevel 1 goto failed
 call npm run build
 if errorlevel 1 goto failed
-echo Build complete: dist\index.html
+echo Build complete: dist\index.html and dist\designer.html
 if /i not "%~1"=="--no-pause" pause
 exit /b 0
 

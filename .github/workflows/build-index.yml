@@ -1,4 +1,4 @@
-name: Build index.html
+name: Build pages
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build:
-    name: Build standalone HTML
+    name: Build game and world designer
     runs-on: ubuntu-latest
 
     steps:
@@ -27,16 +27,19 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Build index.html
+      - name: Build pages
         run: npm run build
 
       - name: Verify artifact
-        run: test -s dist/index.html
+        run: test -s dist/index.html && test -s dist/designer.html
 
-      - name: Upload index.html
+      - name: Upload pages and page resources
         uses: actions/upload-artifact@v4
         with:
-          name: index-html
-          path: dist/index.html
+          name: book-agent-pages
+          path: |
+            dist/index.html
+            dist/designer.html
+            dist/robots.txt
           if-no-files-found: error
           retention-days: 30

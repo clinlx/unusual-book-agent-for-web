@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0c0d0f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<!-- 反爬/防收录：页面级指令，随文件走，部署到任何 URL 都生效。
+     robots.txt 只在域名根目录才被读取，单文件分发时形同虚设，故这里用 meta。 -->
+<meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex, notranslate">
+<meta name="googlebot" content="noindex, nofollow, noarchive, nosnippet">
+<meta name="bingbot" content="noindex, nofollow, noarchive, nosnippet">
+<meta name="referrer" content="no-referrer">
+<title>世界设计者</title>
+<style>/*__STYLES__*/</style>
+</head>
+<body>
+<!-- 启动遮罩：写在 HTML 里而非由 JS 创建，才能在脚本解析/执行期间就可见。
+     init 完成后由 JS 淡出移除；超时或异常也会移除并给出提示。 -->
+<div id="boot">
+  <div class="boot-box">
+    <div class="boot-spinner"></div>
+    <div class="boot-title">世界设计者</div>
+    <div class="boot-step" id="bootStep">正在启动…</div>
+    <div class="boot-bar"><div class="boot-bar-fill" id="bootBar"></div></div>
+  </div>
+</div>
+<div id="app"></div>
+<script>/*__SCRIPTS__*/</script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+# 拒绝所有爬虫索引本站。
+#
+# 注意：robots.txt 只有放在【域名根目录】（https://你的域名/robots.txt）才会被读取。
+# 若你只是本地双击打开 agent.html，或把页面放在子路径下，这个文件不生效——
+# 真正起作用的是 HTML <head> 里的 <meta name="robots" content="noindex,...">，
+# 它随文件走，部署到任何位置都有效。此文件仅供你把整个目录部署到独立域名时使用。
+#
+# 另外：robots.txt 是君子协定，只对守规矩的搜索引擎有效，
+# 拦不住恶意抓取。真要防未授权访问，需要服务端鉴权。
+
+User-agent: *
+Disallow: /
+
+# 常见 AI 训练/抓取爬虫，单独声明一遍以防其忽略通配规则
+User-agent: GPTBot
+Disallow: /
+
+User-agent: ClaudeBot
+Disallow: /
+
+User-agent: Claude-Web
+Disallow: /
+
+User-agent: anthropic-ai
+Disallow: /
+
+User-agent: CCBot
+Disallow: /
+
+User-agent: Google-Extended
+Disallow: /
+
+User-agent: PerplexityBot
+Disallow: /
+
+User-agent: Bytespider
+Disallow: /
+
+User-agent: Amazonbot
+Disallow: /
+
+User-agent: FacebookBot
+Disallow: /

@@ -15,6 +15,33 @@ const GameApp=(()=>{
     S.settings.promptOverrides=Prompts.migrateOverrides(S.settings.promptOverrides);delete S.settings.promptOverrides['flow/tools.json'];await db.putSettings(S.settings);
     S.saves=await db.list();if(db.memoryMode)S.storageWarning='浏览器存储不可用，当前内容仅临时保存，请在关闭页面前导出存档。';initialized=true;emit();}
   async function importSave(file){return runImport(()=>Promise.resolve(file));}
+  async function importHandoff(id,onProgress=()=>{}){
+    idle();
+    const target=WorldHandoff.saveId(id),bridge=WorldHandoff.create();
+    if(db.memoryMode)throw Error('存档数据库不可用，请导出 ZIP 后重试；世界尚未导入');
+    S.importing={phase:'prepare',received:0,total:null};S.error=null;emit();
+    try{
+      onProgress('正在读取世界…');
+      let existing=await db.getSave(target);
+      if(!existing){
+        const record=await bridge.get(id);
+        if(!record?.blob)throw Error(record?.status==='complete'?'该世界曾导入，但对应存档已删除。请返回设计者重新试玩。':'未找到交接数据，可能已过期，或当前浏览器隔离了本地页面存储。请返回设计者导出 ZIP 后手动导入。');
+        S.importing={phase:'extract'};emit();
+        onProgress('正在解包世界…');
+        const file=new File([record.blob],record.name.replace(/[\\/:*?"<>|]/g,'_')+'.zip',{type:'application/zip'});
+        const save=await GameImport.importSave(file,{onProgress});
+        save.id=target;
+        onProgress('正在保存新的游玩存档…');
+        await db.putSave(save,{ifAbsent:true});
+      }
+      S.saves=await db.list();
+    }catch(error){S.error=error.message;throw error;}
+    finally{S.importing=null;emit();}
+    await openSave(target);
+    // A committed save is authoritative, including after a crash before this cleanup.
+    try{await bridge.complete(id);}catch(_){/* Retry can still recover the deterministic save. */}
+    return S.active;
+  }
   async function importLink(link,name){GameCatalog.url(link);return runImport(async()=>{const file=await GameCatalog.download(link,{onProgress:p=>{S.importing={...p,phase:'download'};emit();}});if(name)file.name=name+'.zip';return file;});}
   async function runImport(source){
     idle();S.active=null;S.error=null;S.importing={phase:'prepare',received:0,total:null};emit();
@@ -141,10 +168,10 @@ const GameApp=(()=>{
     const settings={...S.settings,promptOverrides:overrides};await db.putSettings(settings);S.settings=settings;emit();}
   async function saveDraft(text){if(!S.active)return;peerCheck(S.active);S.active.draft=String(text);await persist();}
   if(typeof window!=='undefined'){
-    window.addEventListener('beforeunload',e=>{if(S.running||S.importing){e.preventDefault();e.returnValue='';}});
+    // Navigation inside the app is guarded by page-rendered UI, never a native unload dialog.
     window.addEventListener('storage',e=>{if(e.key?.startsWith('awl:lease:'))emit();});
   }
-  return {getState:()=>S,subscribe,init,importSave,importLink,openSave,closeSave,renameSave,deleteSave,exportSave,send,skip,start,resume,abort,rollback,setMode,
+  return {getState:()=>S,subscribe,init,importSave,importHandoff,importLink,openSave,closeSave,renameSave,deleteSave,exportSave,send,skip,start,resume,abort,rollback,setMode,
     readFile,writeFile,fileOperation,player,currentContext,updateSettings,promptList,getPrompt,savePrompt,resetPrompt,saveDraft,resolveManualDice,
     testConnection:values=>GameTransport.testConnection({...S.settings,...values}),
     listModels:values=>GameTransport.listModels({...S.settings,...values})};

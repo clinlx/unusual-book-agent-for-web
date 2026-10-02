@@ -22,11 +22,13 @@ const GameStore=(()=>{
     });}
     const req=r=>new Promise((resolve,reject)=>{r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
     const done=tx=>new Promise((resolve,reject)=>{tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error||Error('存档事务中断'));tx.onerror=()=>reject(tx.error);});
-    async function putSave(save){
+    async function putSave(save,{ifAbsent=false}={}){
       core.pruneRollback(save);
-      if(memory){mem.set(save.id,structuredClone({...save,lastRoundEndedAt:lastRoundEnd(save.events)}));return;}
+      if(memory){if(ifAbsent&&mem.has(save.id))return;mem.set(save.id,structuredClone({...save,lastRoundEndedAt:lastRoundEnd(save.events)}));return;}
       const {messages,events,...meta}=save;
       const tx=db.transaction(['saves','messages','events'],'readwrite');const finish=done(tx);
+      try{
+      if(ifAbsent&&await req(tx.objectStore('saves').get(save.id))){await finish;return;}
       tx.objectStore('saves').put({...meta,lastRoundEndedAt:lastRoundEnd(events)});
       const known=counts.get(save.id)||{messages:0,events:0},knownFp=fingerprints.get(save.id)||{messages:[],events:[]},nextFp={messages:[],events:[]};
       for(const [name,list]of Object.entries({messages,events})){
@@ -38,6 +40,7 @@ const GameStore=(()=>{
         }
       }
       await finish;counts.set(save.id,{messages:messages.length,events:events.length});fingerprints.set(save.id,nextFp);
+      }catch(error){try{tx.abort();}catch(_){}await finish.catch(()=>{});throw error;}
     }
     async function getSave(id){
       if(memory)return mem.has(id)?structuredClone(mem.get(id)):undefined;

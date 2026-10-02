@@ -1,8 +1,12 @@
 node_modules/
 dist/
 others/
-tests/
-docs/
+tests/*
+!tests/build.test.js
+!tests/world-designer/
+!tests/integration/
+docs/*
+!docs/integration.md
 assets/trpg_rule_books/
 参考/
 assets/modules.json

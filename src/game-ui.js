@@ -288,6 +288,26 @@ const GameUI = (() => {
     });
   }
   async function attempt(fn) { try { return await fn(); } catch (error) { toast(error.message || String(error)); } }
+  let backBusy = false;
+  function handleBack() {
+    if (TransferDialog.handleBack()) return true;
+    if (dialogRoot?.firstChild) { finishAppDialog(null); return true; }
+    if (fileMenuNode) { closeFileMenu(); return true; }
+    if (modalRoot?.firstChild) { attempt(() => action('close-modal')); return true; }
+    if (backBusy || state?.importing || handoffReceiving) return true;
+    const leaveLayer = name => {
+      backBusy = true;
+      attempt(() => action(name)).finally(() => { backBusy = false; });
+      return true;
+    };
+    const narrow = matchMedia('(max-width: 768px)').matches;
+    if (filePath && state?.mode === 'debug' && (!narrow || mobile === 'left')) return leaveLayer('close-file');
+    if (narrow && mobile !== 'center') { mobile = 'center'; render(); return true; }
+    if (state?.active && state.mode === 'debug') { attempt(() => action('play')); return true; }
+    if (state?.running) { toast('请先中止当前回合，再离开故事'); return true; }
+    if (state?.active) return leaveLayer('home');
+    return false;
+  }
   function fields(value) {
     return GamePresentation.fields(value);
   }
@@ -303,7 +323,7 @@ const GameUI = (() => {
     const scroll=root.querySelector('#history'),oldHeight=scroll?.scrollHeight||0,oldScroll=scroll?.scrollTop||0,nearBottom=!scroll||scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<90;
     const s=state, a=s.active;
     if(viewSave!==a?.id){fileSelection='';fileClipboard=null;preview=false;closeFileMenu();viewSave=a?.id;previousVitals={};secondaryVital='mp';renderedSecondary=null;scrollAmount=lastScroll=0;clearTimeout(navTimer);playViewportAnchor=null;debugAutoSynced=false;pendingDebugSync=false;}
-    const desired=document.createElement('template');desired.innerHTML=`<header class="topbar"><div class="brand"><span class="brand-seal" aria-label="骰子">${brandDiceIcon()}</span><div>异闻手记<small>${a?esc(a.name):'一人，一卷，尚未写下的故事'}</small></div></div><nav>${a ? button('home','切换存档')+`<div class="mode-switch" aria-label="展示方式">${button('play','游戏模式',`aria-pressed="${s.mode!=='debug'}"`)}${button('debug','调试模式',`aria-pressed="${s.mode==='debug'}"`)}</div>` : ''}${button('settings',gearIcon(),'class="settings-icon" aria-label="设置" title="设置"')}</nav></header>${s.storageWarning?`<div class="notice">${esc(s.storageWarning)}</div>`:''}${a ? gameHTML() : chooserHTML()}<input id="zip-input" type="file" hidden>`;
+    const desired=document.createElement('template');desired.innerHTML=`<header class="topbar"><div class="brand"><span class="brand-seal" aria-label="骰子">${brandDiceIcon()}</span><div>异闻手记<small>${a?esc(a.name):'一人，一卷，尚未写下的故事'}</small></div></div><nav><a class="page-switch" href="designer.html" data-page-switch>世界设计者 ↗</a>${a ? button('home','切换存档')+`<div class="mode-switch" aria-label="展示方式">${button('play','游戏模式',`aria-pressed="${s.mode!=='debug'}"`)}${button('debug','调试模式',`aria-pressed="${s.mode==='debug'}"`)}</div>` : ''}${button('settings',gearIcon(),'class="settings-icon" aria-label="设置" title="设置"')}</nav></header>${s.storageWarning?`<div class="notice">${esc(s.storageWarning)}</div>`:''}${a ? gameHTML() : chooserHTML()}<input id="zip-input" type="file" hidden>`;
     patchDOM(root,desired.content);
     root.querySelector('#zip-input').onchange=e=>{ const f=e.target.files[0]; if(f)attempt(async()=>{await GameApp.importSave(f);filePath='';fileDraft=fileOriginal='';draft=state.active?.draft||'';render();apiKeyWarning();}); };
     const next=root.querySelector('#history');if(next){if(forceHistoryBottom){next.scrollTop=next.scrollHeight;forceHistoryBottom=false;lastScroll=next.scrollTop;scrollAmount=0;}else if(next.scrollHeight!==oldHeight)next.scrollTop=nearBottom&&!pointerHeld?next.scrollHeight:oldScroll;}
@@ -372,7 +392,7 @@ const GameUI = (() => {
   const moduleCover=(item,index)=>item.CoverFit==='none'?'':item.Cover?`<div class="module-cover fit-${esc(item.CoverFit||'auto')}"><img src="${esc(item.Cover)}" alt="" loading="lazy" referrerpolicy="no-referrer"></div>`:`<div class="module-cover fit-${esc(item.CoverFit||'auto')}" data-cover-index="${index}" hidden></div>`;
   function importMenu(){
     const choice=(action,icon,title,description)=>`<button class="import-choice" data-action="${action}"><span class="choice-icon">${icon}</span><span><strong>${title}</strong><small>${description}</small></span><span class="choice-arrow">→</span></button>`;
-    showModal('开启新的故事',`<div class="import-choices">${catalog.length?choice('catalog','▤','从列表选择','浏览收录的世界，寻找下一段旅程'):''}${choice('import-url','↗','从链接导入','粘贴 ZIP 链接，载入远方的故事')}${choice('import-file','◇','从文件导入','打开设备中的 ZIP，或带存档数据的 PNG')}</div>`);
+    showModal('开启新的故事',`<div class="import-choices">${catalog.length?choice('catalog','▤','从列表选择','浏览收录的世界，寻找下一段旅程'):''}${choice('import-url','↗','从链接导入','粘贴 ZIP 链接，载入远方的故事')}${choice('import-file','◇','从文件导入','打开设备中的 ZIP，或带存档数据的 PNG')}${choice('import-designer','◎','从世界设计器导入','选择本浏览器中已通过校验的设计者项目')}</div>`);
     modalRoot.querySelector('.modal').classList.add('import-modal');
     if(catalogError){const notice=document.createElement('p');notice.className='notice error';notice.textContent=catalogError;modalRoot.querySelector('.modal').append(notice);}
   }
@@ -384,6 +404,78 @@ const GameUI = (() => {
     showModal(m.Name,`${moduleCover(m,index)}<p class="module-intro">${esc(m.Introduction)}</p>${tags(m)}<div class="module-text">${esc(m.Text)}</div><div class="modal-actions">${button('catalog','取消')}${button('module-confirm','确认选择',`class="primary" data-index="${index}"`)}</div>`);hydrateFallbackCovers();
   }
   async function startDownload(link,name){GameCatalog.url(link);modalRoot.innerHTML='';await GameApp.importLink(link,name);filePath='';fileDraft=fileOriginal='';draft=state.active?.draft||'';mobile='center';render();apiKeyWarning();}
+  let handoffReceiving=false;
+  async function designerProjectMenu(){
+    showModal('选择设计者项目','<div data-designer-projects><p class="muted">正在读取设计者项目…</p></div>');
+    const holder=modalRoot.querySelector('[data-designer-projects]');
+    try{
+      const projects=await DesignerProjects.list();
+      if(!holder.isConnected)return;
+      holder.innerHTML=`<p class="muted">绿灯项目可导入。红灯项目请先点击「编辑」，完成格式校验。</p><div class="designer-project-list">${projects.map(project=>{
+        const explanation=project.available?'校验通过，可以导入':!project.validation?.checkedAt?'尚未校验，请先打开设计者':project.validation.current===false?'最新内容尚未完成校验':project.validation.valid?'项目正在生成内容，请稍后重试':'未通过格式校验，请前往设计者修复';
+        const roots=project.validation?.roots||[];
+        return `<article class="designer-project-row" data-project-id="${esc(project.id)}"><span class="designer-project-light ${project.available?'valid':'invalid'}" data-state="${project.available?'valid':'invalid'}" role="img" aria-label="${esc(explanation)}" title="${esc(explanation)}"></span><div class="designer-project-main"><button class="designer-project-pick" data-action="designer-project-import" data-id="${esc(project.id)}" data-root="${esc(roots[0]?.path||'')}" ${project.available?'':'disabled'}><strong>${esc(project.name||'未命名项目')}</strong><small>${project.available?'导入为新的游玩存档':'暂不可导入'}</small></button>${project.available&&roots.length>1?`<label class="designer-world-select">世界目录<select aria-label="${esc(project.name)}的世界目录">${roots.map(root=>`<option value="${esc(root.path)}">${esc(root.path)}</option>`).join('')}</select></label>`:''}</div><button class="designer-project-edit" data-action="designer-project-edit" data-id="${esc(project.id)}">编辑</button></article>`;
+      }).join('')}</div>${projects.length?'':'<p class="notice">还没有可读取的设计者项目。请在同一浏览器中打开世界设计者创建世界；本地页面存储受隔离时，可下载 ZIP 后从文件导入。</p>'}<div class="modal-actions">${button('import','返回')}${button('import-designer','刷新')}${button('designer-project-edit','打开世界设计者')}</div>`;
+    }catch(error){if(holder.isConnected)holder.innerHTML=`<p class="notice error">${esc(error.message)}</p><div class="modal-actions">${button('import','返回')}${button('import-designer','重试')}${button('designer-project-edit','打开世界设计者')}</div>`;}
+  }
+  async function editDesignerProject(id){
+    if(state.running||state.importing||handoffReceiving)return toast('请先停止当前回合或等待导入完成');
+    if(fileDraft!==fileOriginal&&!await appConfirm('文件有未保存改动，仍前往世界设计者？',{title:'放弃未保存改动'}))return;
+    clearTimeout(draftTimer);if(state.active)await GameApp.saveDraft(draft);
+    location.assign(id?DesignerProjects.editURL(id):'designer.html');
+  }
+  async function importDesignerProject(id,root){
+    if(state.running||state.importing||handoffReceiving)return toast('请先停止当前回合或等待导入完成');
+    if(fileDraft!==fileOriginal&&!await appConfirm('文件有未保存改动，仍导入新的世界？',{title:'放弃未保存改动'}))return;
+    handoffReceiving=true;modalRoot.innerHTML='';
+    const dialog=TransferDialog.open('正在导入设计者项目');let archive,transferId,project;
+    const close=()=>{dialog.close();handoffReceiving=false;};
+    try{
+      dialog.update('正在检查项目的最新校验状态…');
+      project=await DesignerProjects.load(id,root);
+      archive=await DesignerProjects.archive(project,(text,fraction)=>dialog.update(text,fraction));
+      dialog.update('正在暂存世界…');
+      transferId=await WorldHandoff.create().put(archive,project.name);
+      close();await receiveWorld(transferId,DesignerProjects.editURL(id));
+    }catch(error){
+      dialog.choices('导入未完成：'+error.message,[
+        ['重新选择项目',()=>{close();return designerProjectMenu();}],
+        ['编辑项目',()=>{close();return editDesignerProject(id);}],
+        ...(archive?[['下载 ZIP',()=>TransferDialog.download(archive,project.name)]]:[]),
+        ['关闭',close],
+      ]);
+    }
+  }
+  async function receiveWorld(id,designerURL='designer.html'){
+    if(handoffReceiving)return;
+    handoffReceiving=true;
+    modalRoot.innerHTML='';
+    const dialog=TransferDialog.open('正在接收设计者的世界');
+    const close=()=>{dialog.close();handoffReceiving=false;};
+    const retry=async()=>{
+      try{
+        dialog.update('正在读取本地交接数据…');
+        await new Promise(resolve=>setTimeout(resolve,0));
+        await GameApp.importHandoff(id,(text,fraction)=>dialog.update(text,fraction));
+        filePath='';fileDraft=fileOriginal='';draft=state.active?.draft||'';mobile='center';render();
+        close();apiKeyWarning();
+      }catch(error){
+        dialog.choices('导入未完成：'+error.message+'\n世界设计者中的文件不受影响，暂存 ZIP 会保留七天供重试。',[
+          ['重试',retry],
+          ['下载 ZIP',async()=>{const record=await WorldHandoff.create().get(id);if(!record?.blob)throw Error('没有可下载的暂存 ZIP，请返回设计者导出');TransferDialog.download(record.blob,record.name);}],
+          ['返回世界设计者',()=>location.assign(designerURL)],
+          ['关闭',()=>{history.replaceState(history.state,'',location.pathname+location.search);close();}],
+        ]);
+      }
+    };
+    await retry();
+  }
+  async function receiveWorldLink(){
+    if(!new URLSearchParams(location.hash.slice(1)).has('handoff'))return false;
+    let id;
+    try{id=WorldHandoff.fromHash(location.hash);}catch(error){await appConfirm(error.message,{title:'交接链接无效',confirmLabel:'关闭'});return true;}
+    await receiveWorld(id);return true;
+  }
   function downloadHTML(){const d=state.importing;if(!d)return '';const mb=n=>(n/1024/1024).toFixed(1)+' MB',percent=d.total?Math.min(100,d.received/d.total*100):null;
     return `<section class="import-progress" aria-label="存档导入进度"><div><strong>${d.phase==='extract'?'正在解压并载入存档':d.phase==='prepare'?'正在准备导入':'正在下载世界'}</strong><span>${d.phase==='download'?mb(d.received)+(d.total?' / '+mb(d.total)+' · '+Math.floor(percent)+'%':' · 大小未知'):''}</span></div><progress aria-label="下载进度" max="100" ${d.phase==='download'&&percent!==null?`value="${percent}"`:''}></progress><p role="status">请不要离开此页面，完成后将自动打开存档。</p></section>`;
   }
@@ -928,6 +1020,9 @@ const GameUI = (() => {
     if(name==='import')return importMenu();
     if(name==='import-file'){modalRoot.innerHTML='';const input=document.getElementById('zip-input');input.value='';return input.click();}
     if(name==='import-url')return showModal('从链接导入',`<form id="link-import-form"><label>ZIP 文件链接<input name="link" type="url" placeholder="https://…/world.zip" required></label><p class="muted">文件不超过 100 MB。链接需允许浏览器跨域下载。</p><div class="modal-actions">${button('import','返回')}<button type="submit" class="primary">开始导入</button></div></form>`);
+    if(name==='import-designer')return designerProjectMenu();
+    if(name==='designer-project-edit')return editDesignerProject(el.dataset.id);
+    if(name==='designer-project-import')return importDesignerProject(el.dataset.id,el.closest('.designer-project-row')?.querySelector('select')?.value||el.dataset.root);
     if(name==='catalog')return catalogPage();
     if(name==='module-detail')return moduleDetail(Number(el.dataset.index));
     if(name==='module-confirm')return startDownload(catalog[Number(el.dataset.index)].Link,catalog[Number(el.dataset.index)].Name);
@@ -964,11 +1059,24 @@ const GameUI = (() => {
     document.addEventListener('focusin',e=>{if(e.target.id==='action-input')refreshInput();});document.addEventListener('focusout',e=>{if(e.target.id==='action-input')setTimeout(refreshInput,0);});window.addEventListener('resize',refreshInput);
     document.addEventListener('scroll',e=>{if(e.target.id!=='history')return;const now=Date.now();scrollAmount=Math.max(0,scrollAmount-(now-lastScrollAt)*.5)+Math.abs(e.target.scrollTop-lastScroll);lastScroll=e.target.scrollTop;lastScrollAt=now;if(state?.mode!=='debug')capturePlayViewport();if(scrollAmount>=3000)revealNavigation();},true);
     root=document.getElementById('app');modalRoot=document.createElement('div');modalRoot.id='modal-root';document.body.append(modalRoot);dialogRoot=document.createElement('div');dialogRoot.id='dialog-root';document.body.append(dialogRoot);const notice=document.createElement('div');notice.id='toast';notice.setAttribute('role','status');notice.hidden=true;document.body.append(notice);
+    BackNavigation.install(handleBack);
     document.addEventListener('pointerdown',e=>{pointerHeld=true;if(!e.target.closest('.file-context-menu'))closeFileMenu();});
     document.addEventListener('keydown',debugKey);
     document.addEventListener('contextmenu',e=>{if(state?.mode!=='debug'||!e.target.closest('.file-tree'))return;e.preventDefault();const row=e.target.closest('[data-path]');fileMenu(row?.dataset.path||'/workspace',e.clientX,e.clientY);});
     document.addEventListener('click',e=>{const row=e.target.closest('.file-tree [data-path]');if(row)selectFile(row.dataset.path);});
     let pressTimer,pressPoint;document.addEventListener('pointerdown',e=>{if(e.pointerType==='mouse'||state?.mode!=='debug'||!e.target.closest('.file-tree'))return;pressPoint={x:e.clientX,y:e.clientY};const p=e.target.closest('[data-path]')?.dataset.path||'/workspace';pressTimer=setTimeout(()=>fileMenu(p,pressPoint.x,pressPoint.y),550);});document.addEventListener('pointermove',e=>{if(pressPoint&&Math.hypot(e.clientX-pressPoint.x,e.clientY-pressPoint.y)>10)clearTimeout(pressTimer);});for(const type of ['pointerup','pointercancel'])document.addEventListener(type,()=>clearTimeout(pressTimer));document.addEventListener('pointerup',()=>{pointerHeld=false;});document.addEventListener('pointercancel',()=>{pointerHeld=false;});
+    document.addEventListener('click',e=>{
+      const link=e.target.closest('[data-page-switch]');
+      if(!link||e.button!==0||e.ctrlKey||e.metaKey||e.shiftKey||e.altKey)return;
+      e.preventDefault();
+      attempt(async()=>{
+        if(state.running||state.importing)return toast('请先停止当前回合或等待导入完成，再切换页面');
+        if(fileDraft!==fileOriginal&&!await appConfirm('文件有未保存改动，仍前往世界设计者？',{title:'放弃未保存改动'}))return;
+        clearTimeout(draftTimer);
+        if(state.active)await GameApp.saveDraft(draft);
+        location.assign(link.href);
+      });
+    });
     document.addEventListener('click',e=>{const el=e.target.closest('[data-action]');if(el&&!el.disabled)attempt(()=>action(el.dataset.action,el));});
     document.addEventListener('input',e=>{if(e.target.id==='action-input'){draft=e.target.value;refreshInput();const send=e.target.form.querySelector('button[type="submit"]');if(send&&!send.disabled)send.textContent=draft.trim()?'提交行动 ↗':'空过';clearTimeout(draftTimer);const id=state.active?.id;draftTimer=setTimeout(()=>{if(state.active?.id===id)attempt(()=>GameApp.saveDraft(draft));},250);}if(e.target.id==='file-editor'){fileDraft=e.target.value;document.getElementById('file-dirty').textContent=fileDraft===fileOriginal?'已保存':'有未保存改动';}});
     document.addEventListener('change',e=>{if(e.target.id==='prompt-select')promptModal(e.target.value);});
@@ -981,7 +1089,9 @@ const GameUI = (() => {
       if(e.target.id==='file-operation'){const data=new FormData(e.target),op=data.get('op'),from=data.get('from'),to=data.get('to');if(op==='delete'&&!await appConfirm('删除 '+from+' 及其内容？',{title:'删除文件',confirmLabel:'删除',danger:true}))return;await GameApp.fileOperation(op,{path:from,from,to});if(filePath===from){filePath='';fileDraft=fileOriginal='';}modalRoot.innerHTML='';render();}
     });});
     try {await GameApp.init();state=GameApp.getState();GameApp.subscribe(next=>{state=next||GameApp.getState();if(!renderTimer)renderTimer=setTimeout(()=>{renderTimer=null;render();},50);});render();reloadCatalog();} catch(error){root.innerHTML=`<main class="save-home"><h1>启动未完成</h1><p>${esc(error.message)}</p><button onclick="location.reload()">重新载入</button></main>`;return;} finally {document.getElementById('boot')?.remove();}
-    await attempt(async()=>{const link=GameCatalog.fromQuery(location.search);if(link!==null)await startDownload(link);});
+    window.addEventListener('hashchange',()=>receiveWorldLink().catch(error=>toast(error.message)));
+    if(!await receiveWorldLink())await attempt(async()=>{const link=GameCatalog.fromQuery(location.search);if(link!==null)await startDownload(link);});
+    WorldHandoff.create().prune().catch(()=>{});
   }
   if(typeof document!=='undefined'){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();}
   return {visibleEvents,eventHTML,continuationHTML,runPhase,requestProgress};

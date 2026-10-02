@@ -1,0 +1,35 @@
+'use strict';
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const Projects = require('../../src/shared/designer-projects');
+const Validation = require('../../src/world-designer/validation');
+const VFS = require('../../src/world-designer/vfs');
+const ZIP = require('../../src/shared/zip');
+const { fixture } = require('./world-fixture.cjs');
+test('public validation checkpoints retain only status and world roots', () => {
+  const f = fixture(), summary = Projects.summary(Validation.check(f.tree));
+  assert.equal(Projects.eligible(summary), true);
+  assert.equal(Projects.eligible({ ...summary, current: false }), false);
+  assert.equal(Projects.eligible(undefined), false);
+  f.write('开场白.md', '');
+  const failed = Projects.summary(Validation.check(f.tree));
+  assert.equal(Projects.eligible(failed), false);
+  assert.equal(failed.roots[0].valid, false);
+  assert.equal(failed.issues, undefined); assert.equal(failed.errors, undefined);
+  assert.equal(Projects.editURL('a/# 中文'), 'designer.html#project=a%2F%23%20%E4%B8%AD%E6%96%87');
+});
+test('project archive exports just the selected world, preserving binary and empty dirs', async () => {
+  const f = fixture(); f.write('.trpg-save.json', 'old history'); f.write('../README.md', 'unrelated');
+  VFS.mkdir(f.tree, f.root + '/空目录');
+  VFS.writeFile(f.tree, f.root + '/cover.png', 'AQIDBA==', { encoding: 'base64' });
+  VFS.mkdirp(f.tree, ['skills']); VFS.writeFile(f.tree, '/workspace/settings.md', 'unrelated');
+  const original = JSON.stringify(f.tree), progress = [];
+  const blob = await Projects.archive({ tree: f.tree, root: f.root }, (...p) => progress.push(p), { vfs: VFS, zip: ZIP });
+  const files = await ZIP.parseZip(await blob.arrayBuffer());
+  assert.ok(files.some(file => file.name === '空目录/'));
+  assert.deepEqual([...files.find(file => file.name === 'cover.png').bytes], [1, 2, 3, 4]);
+  assert.ok(!files.some(file => /README|settings|\.trpg-save|skills/.test(file.name)));
+  assert.equal(JSON.stringify(f.tree), original); assert.ok(progress.length);
+  await assert.rejects(Projects.archive({ tree: f.tree, root: '/skills' }, () => {}, { vfs: VFS, zip: ZIP }), /workspace/);
+  await assert.rejects(Projects.load('id', '/workspace/../skills'), /workspace/);
+});

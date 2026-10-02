@@ -11,21 +11,23 @@ const GameImport=(()=>{
     for(let i=0;i<bytes.length;i+=32768)out+=String.fromCharCode(...bytes.subarray(i,i+32768));
     return btoa(out);
   }
-  async function importSave(file){
+  async function importSave(file,{onProgress=()=>{}}={}){
     if(!/\.(zip|png)$/i.test(file.name))throw Error('请选择 ZIP 存档或带存档数据的 PNG');
     const buffer=await file.arrayBuffer();
     const coverBytes=zip.extractPngPrefix(buffer);
     if(coverBytes&&!zip.zipArchiveBase(buffer))throw Error('该文件是普通 PNG 图片，不包含可导入的世界信息（ZIP 数据）。请检查文件格式。');
     const archiveFile={name:file.name.replace(/\.png$/i,'.zip'),lastModified:file.lastModified,arrayBuffer:async()=>buffer};
-    const entries=await importer.prepare([archiveFile],{extractZip:true});
+    const entries=await importer.prepare([archiveFile],{extractZip:true,onProgress});
     const manifest=entries.find(e=>e.name===MANIFEST&&!e.isDir);
     const tree=vfs.createTree();vfs.mkdirp(tree,['workspace']);
     const seen=new Set();
+    let completed=0;
     for(const e of entries){
       if(e.name===MANIFEST)continue;
       if(seen.has(e.name))throw Error('压缩包包含重名路径：'+e.name);seen.add(e.name);
       if(e.isDir)vfs.mkdirp(tree,core.path(e.name).split('/').filter(Boolean));
       else vfs.writeFile(tree,core.path(e.name),e.content,{encoding:e.encoding});
+      if(++completed%16===0||completed===entries.length){onProgress('正在载入世界文件：'+completed+' / '+entries.length,completed/entries.length);await new Promise(resolve=>setTimeout(resolve,0));}
     }
     const s=core.createSave(file.name.replace(/\.(zip|png)$/i,''),tree);
     if(manifest){
