@@ -501,6 +501,7 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--blue); outl
 .proj-store-item .head { display: flex; align-items: center; gap: 8px; }
 .proj-store-item .head .name { flex: 1; font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .proj-store-item .head .total { color: var(--fg-2); font-size: 13px; }
+.proj-store-item .store-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
 .proj-store-item .detail { display: flex; gap: 14px; margin-top: 4px; color: var(--fg-3); font-size: 12px; flex-wrap: wrap; }
 .store-total { display: flex; justify-content: space-between; font-size: 14px; font-weight: 600; padding: 8px 4px 0; }
 
@@ -1118,6 +1119,13 @@ button.rv-undo:hover { color: var(--blue); }
   display: inline-flex; align-items: center; justify-content: center;
 }
 .help-btn:hover { color: var(--blue); border-color: var(--blue); }
+.api-settings-heading { display: flex; align-items: center; gap: 7px; margin: 14px 0 12px; color: var(--fg-2); }
+.settings-info-button[aria-expanded="true"] { color: var(--blue); border-color: var(--blue); background: var(--blue-tint); }
+.api-options-help { margin-bottom: 14px; padding: 12px 14px; border: 1px solid var(--sep); background: var(--panel2); color: var(--fg-2); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.api-options-help p + p { margin-top: 8px; }
+.api-base-setting { flex: 1; min-width: 0; }
+.api-base-setting input { width: 100%; }
+.api-base-setting .hint { margin-top: 5px; }
 .help-pop {
   position: fixed; z-index: 95; width: min(340px, 92vw);
   max-height: min(70vh, 520px); overflow-y: auto;

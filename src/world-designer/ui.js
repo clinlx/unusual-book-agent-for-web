@@ -18,6 +18,7 @@
     validationPending: false,
     validationDirty: false,     // 工作区发生改动后，下一次经过状态按钮时再检查一次
     repairSending: false,
+    storageBusy: false,
     activeTmpPaths: new Set(),  // 正在运行的轮次需要的临时文件，容量清理时暂时保留
     readState: new Map(),       // 写保护：path → 读取时 mtime（每项目重置）
     running: false,             // 本页正在跑 Agent 轮次
@@ -478,6 +479,7 @@
     return p;
   }
   async function switchProject(id) {
+    if (S.storageBusy && id !== S.projectId) { toast('正在清理项目数据，请稍后切换'); return; }
     if (S.running) { toast('轮次进行中，不能切换项目'); return; }
     S.projectId = id;
     await DB.put('config', { id: 'lastProject', value: id });
@@ -610,6 +612,43 @@
     S.abort.abort();
     if (S.pendingAsk?.sessionId === S.runningSession) S.pendingAsk.done('本轮已中止。');
     toast('正在中止…');
+  }
+  async function clearProjectData(p) {
+    if (S.storageBusy || S.handoffBusy || (S.running && S.projectId === p.id) || lease.isHeldByOther(p.id))
+      return toast('请先等待任务完成或中止 AI，再清理项目数据');
+    if (!await confirmDialog('清理项目数据',
+      `将永久清除项目「${p.name}」的文件、对话、输入草稿、目标、分组、临时文件、待审阅变更和全部撤回点。未保存的编辑也会丢弃。\n\n保留项目名称、内置技能及模型设置，并恢复默认 README 和一个空会话。此操作不可恢复。`, true)) return;
+    if (S.storageBusy || S.handoffBusy || (S.running && S.projectId === p.id) || lease.isHeldByOther(p.id))
+      return toast('项目正在执行任务，请稍后清理');
+    const acquired = lease.acquireForRun(p.id, 'storage-cleanup');
+    if (!acquired.ok) return toast('项目正在其他窗口执行，请先在该窗口中止任务');
+    S.storageBusy = true;
+    try {
+      await flushDraft();
+      const isCurrent = p.id === S.projectId;
+      if (isCurrent) { if (draftTimer) clearTimeout(draftTimer); draftTimer = null; draftOwner = null; }
+      const tree = seedTree(), report = WorldValidation.check(tree);
+      report.checkedAt = Date.now();
+      const session = { id: uid(), projectId: p.id, groupId: null, name: '新会话', createdAt: Date.now(), updatedAt: Date.now(), msgCount: 0 };
+      const project = { ...p, historyLocked: true };
+      await DB.resetProjectData(project, session, tree, DesignerProjects.summary(report, true));
+      Object.assign(p, project);
+      S.sessions = S.sessions.filter(s => s.projectId !== p.id);
+      S.sessions.push({ ...session, messages: [] });
+      S.groups = S.groups.filter(g => g.projectId !== p.id);
+      if (isCurrent) {
+        clearInput($('#chatInput'));
+        S.view = 'chat'; S.editorPath = null; S.editorDirty = false; S.clipboard = null;
+        S.validationPending = false; S.activeTmpPaths.clear();
+        await switchProject(p.id);
+      } else renderSidebar();
+      toast('已清理项目数据');
+    } catch (error) { toast('清理失败：' + error.message); }
+    finally {
+      S.storageBusy = false;
+      if (S.projectId === p.id && !draftOwner) draftOwner = S.sessionId;
+      lease.releaseLease(p.id); reconcileLease();
+    }
   }
   async function stopRun() {
     const run = S.run;
@@ -2258,6 +2297,7 @@
 
   // ---------- 发送轮次 ----------
   async function send(repair = null) {
+    if (S.storageBusy) return toast('正在清理项目数据，请稍后发送');
     if (S.repairSending && !repair) return;
     if (S.handoffBusy) return toast('请先完成世界交接');
     const input = $('#chatInput');
@@ -3116,12 +3156,15 @@
     }
     return out;
   }
-  function projectArchiveName() {
-    const name = String(cur.project()?.name || '未命名项目').replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').trim() || '未命名项目';
+  function projectTimestampName(projectName = cur.project()?.name) {
+    const name = String(projectName || '未命名项目').trim() || '未命名项目';
     const date = new Date();
     const stamp = [date.getFullYear(), date.getMonth() + 1, date.getDate(), date.getHours(), date.getMinutes(), date.getSeconds()]
       .map((value, index) => String(value).padStart(index ? 2 : 4, '0')).join('');
-    return name + '_' + stamp + '.zip';
+    return name + '_' + stamp;
+  }
+  function projectArchiveName() {
+    return projectTimestampName().replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_') + '.zip';
   }
   function downloadPath(path, { projectArchive = false } = {}) {
     const node = VFS.resolve(S.tree, VFS.normalize(path));
@@ -3134,11 +3177,13 @@
       downloadBlob(ZIP.makeZip(entries), projectArchive ? projectArchiveName() : (node.name || 'workspace') + '.zip');
     }
   }
-  function confirmWorldPlay(paths, projectName) {
+  function confirmWorldPlay(paths, projectName, initialName) {
     return new Promise(resolve => {
       const overlay = el('div', { class: 'overlay', id: 'worldPlayConfirm' });
       const select = el('select', { 'aria-label': '试玩世界目录', style: 'width:100%;min-width:0' }, ...paths.map(path => el('option', { value: path, text: path })));
       if (paths.includes(S.fmRoot)) select.value = S.fmRoot;
+      const saveName = el('input', { type: 'text', 'aria-label': '存档名称', value: initialName, maxlength: 120, style: 'width:100%;min-width:0;box-sizing:border-box' });
+      const nameError = el('div', { class: 'field-error', 'aria-live': 'polite' });
       const done = value => { overlay.remove(); document.removeEventListener('keydown', onKey, true); resolve(value); };
       overlay.dismissFromBack = () => done(null);
       const onKey = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(null); } };
@@ -3148,8 +3193,14 @@
       const forceLabel = el('label', { class: 'force-world-play' }, force, '强制跳转（格式错误可能导致无法游玩）');
       let report;
       const submit = el('button', { class: 'primary', text: '确认并前往', onclick: () => {
-        if (!submit.disabled && (report.valid || force.checked)) done({ root: select.value, force: force.checked });
+        if (!submit.disabled && (report.valid || force.checked) && saveName.value.trim())
+          done({ root: select.value, force: force.checked, name: saveName.value.trim() });
       } });
+      const updateSubmit = () => {
+        const emptyName = !saveName.value.trim();
+        submit.disabled = emptyName || (!report.valid && !force.checked);
+        nameError.textContent = emptyName ? '请输入存档名称' : '';
+      };
       const refresh = () => {
         force.checked = false;
         try {
@@ -3159,21 +3210,23 @@
         status.dataset.state = report.valid ? 'valid' : 'invalid';
         status.replaceChildren(el('p', { text: validationSummary(report) + (report.valid ? '，可以前往试玩。' : '，请先修复，或勾选强制跳转。') }),
           validationIssueList(report, issue => { done(null); locateValidationIssue(issue); }));
-        forceLabel.hidden = report.valid; submit.disabled = !report.valid;
+        forceLabel.hidden = report.valid; updateSubmit();
       };
-      force.onchange = () => { submit.disabled = !report.valid && !force.checked; };
+      force.onchange = updateSubmit;
+      saveName.oninput = updateSubmit;
       select.onchange = refresh;
       validateWorkspace(); refresh();
       overlay.append(el('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': '前往异闻手记试玩' },
         el('h3', { text: '前往异闻手记试玩' }),
         el('p', { text: '项目：' + projectName }),
+        el('label', { style: 'display:flex;flex-direction:column;gap:6px;margin:10px 0' }, '存档名称', saveName), nameError,
         el('label', { style: 'display:flex;flex-direction:column;gap:6px;margin:10px 0' }, '世界目录', select),
         el('p', { text: '将创建新的独立游玩存档，不覆盖之前的进度，也不修改设计者中的世界。导入完成后由你点击开始。' }),
         S.editorDirty ? el('p', { text: '当前文件有未保存修改，确认后会先保存，再打包。' }) : null,
         status, forceLabel,
         el('div', { class: 'foot' }, el('button', { text: '取消', onclick: () => done(null) }),
           submit)));
-      document.body.append(overlay); select.focus();
+      document.body.append(overlay); saveName.focus(); saveName.select();
     });
   }
   async function playWorld() {
@@ -3198,10 +3251,11 @@
       }
     };
     try {
-      let decision;
+      let decision, proposedName = projectTimestampName(projectName);
       for (;;) {
-        decision = await confirmWorldPlay(WorldHandoff.roots(S.tree), projectName);
+        decision = await confirmWorldPlay(WorldHandoff.roots(S.tree), projectName, proposedName);
         if (!decision) { close(); return; }
+        proposedName = decision.name;
         if (S.projectId !== projectId || S.running || S.lockedBy || lease.isHeldByOther(projectId)) throw Error('项目状态已变化，请重新发起试玩');
         dialog = TransferDialog.open('准备前往异闻手记');
         dialog.update('正在保存编辑与草稿…');
@@ -3217,7 +3271,7 @@
       const root = decision.root;
       const node = VFS.resolve(S.tree, VFS.normalize(root));
       if (!node || node.type !== 'dir') throw Error('世界目录不存在');
-      worldName = root === '/workspace' ? projectName : node.name;
+      worldName = decision.name;
       const entries = [];
       let nextPaint = Date.now();
       async function collect(dir, prefix) {
@@ -4945,26 +4999,9 @@
   }
 
   // ---------- 存储占用估算 ----------
-  const jsonSize = obj => { try { return JSON.stringify(obj).length; } catch (_) { return 0; } };
   async function estimateStorage() {
-    const [sessions, snapshots, vfsRecs] = await Promise.all([
-      DB.all('sessions'), DB.all('snapshots'), DB.all('vfs'),
-    ]);
-    const perProject = new Map();
-    const entry = pid => {
-      if (!perProject.has(pid)) perProject.set(pid, { chat: 0, files: 0, snaps: 0, snapCount: 0 });
-      return perProject.get(pid);
-    };
-    // 消息已拆表：会话记录只剩元数据，聊天体积要按会话逐个取消息来算
-    for (const s of sessions) {
-      const msgs = await DB.getMessages(s.id);
-      entry(s.projectId).chat += jsonSize(s) + jsonSize(msgs);
-    }
-    for (const s of snapshots) { const e = entry(s.projectId); e.snaps += jsonSize(s); e.snapCount++; }
-    for (const v of vfsRecs) entry(v.id).files += jsonSize(v);
-    let total = 0;
-    for (const e of perProject.values()) total += e.chat + e.files + e.snaps;
-    return { perProject, total };
+    await flushDraft();
+    return DesignerStorage.estimate(DB, SEED_FILES);
   }
 
   // 可折叠分区：count > 5 时默认折叠
@@ -4983,7 +5020,7 @@
   // ---------- 设置弹窗 ----------
   // 发一条无上下文的 hello 验证配置是否可用。成功返回模型回复文本，失败抛出可读原因。
   async function testConnection(cfg) {
-    const url = cfg.baseUrl.replace(/\/$/, '') + '/chat/completions';
+    const url = ApiUrl.root(cfg.baseUrl) + '/chat/completions';
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 20000);
     let resp;
@@ -5036,17 +5073,19 @@
     const field = (labelText, inputEl, helpKey) => el('div', { class: 'row' },
       el('label', { text: labelText }), inputEl, helpKey ? helpBtn(helpKey) : null);
 
-    const baseUrl = el('input', { value: s.baseUrl, placeholder: 'https://api.deepseek.com/v1' });
+    const baseUrl = el('input', { value: s.baseUrl, placeholder: 'https://api.deepseek.com/v1', 'aria-label': 'API Base URL' });
+    const baseUrlWrap = el('div', { class: 'api-base-setting' }, baseUrl,
+      el('div', { class: 'hint', text: '可填写基础地址或完整 /chat/completions 地址，路径会自动处理。' }));
     const apiKey = el('input', { value: s.apiKey, type: 'password' });
     // 模型：可输入 + 可从 /models 拉取后下拉选择
     const model = el('input', { value: s.model, list: 'modelListOpts', style: 'flex:1;min-width:0' });
     const modelDatalist = el('datalist', { id: 'modelListOpts' });
     const fetchModelsBtn = el('button', { class: 'iconbtn', title: '从接口获取模型列表', onclick: async () => {
-      const base = baseUrl.value.trim().replace(/\/$/, '');
+      const base = baseUrl.value.trim();
       if (!base) { toast('请先填写 API Base URL'); return; }
       fetchModelsBtn.disabled = true;
       try {
-        const resp = await fetch(base + '/models', { headers: { 'Authorization': 'Bearer ' + apiKey.value.trim() } });
+        const resp = await fetch(ApiUrl.root(base) + '/models', { headers: { 'Authorization': 'Bearer ' + apiKey.value.trim() } });
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         const json = await resp.json();
         const ids = (json.data || []).map(m => m.id).filter(Boolean).sort();
@@ -5063,7 +5102,7 @@
     // 连通性测试：用当前表单里的值（而非已保存值）发一条无上下文的 hello
     const testResult = el('div', { class: 'api-test-result' });
     const testBtn = el('button', { text: '测试连接', onclick: async () => {
-      const base = baseUrl.value.trim().replace(/\/$/, '');
+      const base = baseUrl.value.trim();
       const key = apiKey.value.trim();
       const mdl = model.value.trim();
       testResult.className = 'api-test-result';
@@ -5159,6 +5198,15 @@
     const temp = el('input', { value: String(s.temperature), type: 'number', step: '0.1', min: '0', max: '2' });
     const stream = el('select', {}, el('option', { value: '1', text: '开启' }), el('option', { value: '0', text: '关闭' }));
     stream.value = s.stream ? '1' : '0';
+    const apiHelp = el('div', { id: 'api-options-help', class: 'api-options-help', hidden: true },
+      el('p', { text: 'API 地址可填写基础地址（如 https://api.example.com/v1），也可填写完整的 /chat/completions 地址。模型请求、测试连接和模型列表都会自动处理路径。' }),
+      el('p', { text: '温度控制输出的随机性，数值越低越稳定；思考强度控制模型推理投入，是否支持以及实际效果取决于服务商和模型。' }),
+      el('p', { text: '流式输出会逐步接收正文、思考过程和工具调用；视觉模型设为“是”时可发送图片，需要接口与模型支持图片输入。' }),
+      el('p', { text: '测试连接会使用当前表单中的地址、API Key 和模型发送一条简短消息。参数修改后请点击“保存”。' }));
+    const apiHelpButton = el('button', { class: 'help-btn settings-info-button', type: 'button', text: 'i',
+      title: '参数说明与示例', 'aria-label': '参数说明与示例', 'aria-controls': 'api-options-help', 'aria-expanded': 'false',
+      onclick: () => { apiHelp.hidden = !apiHelp.hidden; apiHelpButton.setAttribute('aria-expanded', String(!apiHelp.hidden)); } });
+    const apiHeading = el('div', { class: 'api-settings-heading' }, el('span', { text: '请求参数' }), apiHelpButton);
     const imageSending = el('select', { 'aria-label': '视觉模型' }, el('option', { value: '1', text: '是' }), el('option', { value: '0', text: '否' }));
     imageSending.value = s.imageSending ? '1' : '0';
     const overflow = el('select', {},
@@ -5182,24 +5230,29 @@
       projStoreList.innerHTML = '';
       const { perProject, total } = await estimateStorage();
       for (const p of S.projects) {
-        const e = perProject.get(p.id) || { chat: 0, files: 0, snaps: 0, snapCount: 0 };
-        const sub = e.chat + e.files + e.snaps;
+        const e = perProject.get(p.id) || { chat: 0, files: 0, snaps: 0, snapCount: 0, other: 0 };
+        const sub = e.chat + e.files + e.snaps + e.other;
+        const busy = S.storageBusy || S.handoffBusy || (S.running && S.projectId === p.id) || lease.isHeldByOther(p.id);
         projStoreList.append(el('div', { class: 'proj-store-item' },
           el('div', { class: 'head' },
             el('span', { class: 'name', text: p.name + (p.id === S.projectId ? '（当前）' : '') }),
-            el('span', { class: 'total', text: fmtBytes(sub) }),
-            el('button', { class: 'danger', text: '清理撤回', title: '删除该项目的全部撤回点（文件与对话保留）', onclick: async () => {
+            el('span', { class: 'total', text: fmtBytes(sub) })),
+          el('div', { class: 'store-actions' },
+            el('button', { class: 'danger', text: '清理撤回', disabled: busy || !e.snapCount, title: '删除该项目的全部撤回点（文件与对话保留）', onclick: async () => {
               if (!await confirmDialog('清理撤回数据',
                 `删除项目「${p.name}」的全部撤回点（${e.snapCount} 个）？其历史轮次将无法再回滚；文件与对话不受影响。`, true)) return;
+              if (S.storageBusy || S.handoffBusy || (S.running && S.projectId === p.id) || lease.isHeldByOther(p.id)) return toast('项目正在执行任务，请稍后清理');
               await DB.delWhere('snapshots', x => x.projectId === p.id);
               if (p.id === S.projectId) S.snapshots = [];
               p.historyLocked = true; await DB.put('projects', p);
               renderChat(); renderProjStore(); toast('已清理');
-            } })),
+            } }),
+            el('button', { class: 'danger', text: '清理项目数据', disabled: busy || !sub, onclick: async () => { await clearProjectData(p); await renderProjStore(); } })),
           el('div', { class: 'detail' },
             el('span', { text: '撤回数据 ' + fmtBytes(e.snaps) + '（' + e.snapCount + ' 点）' }),
             el('span', { text: '文件 ' + fmtBytes(e.files) }),
-            el('span', { text: '对话历史 ' + fmtBytes(e.chat) }))));
+            el('span', { text: '对话与草稿 ' + fmtBytes(e.chat) }),
+            e.other ? el('span', { text: '其他数据 ' + fmtBytes(e.other) }) : null)));
       }
       projStoreList.append(el('div', { class: 'store-total' },
         el('span', { text: '总占用（估算）' }), el('span', { text: fmtBytes(total) })));
@@ -5288,7 +5341,8 @@
       el('h3', { text: '设置' }),
       el('div', { class: 'settings-project' },
         el('a', { class: 'github-link', href: 'https://github.com/clinlx/unusual-book-agent-for-web', target: '_blank', rel: 'noopener noreferrer', title: '在 GitHub 查看项目', 'aria-label': '在 GitHub 查看异闻手记项目' }, icon('github'), el('span', { text: 'GitHub' }))),
-      field('API Base URL', baseUrl), field('API Key', apiKey), field('模型', modelWrap),
+      apiHeading, apiHelp,
+      field('API Base URL', baseUrlWrap), field('API Key', apiKey), field('模型', modelWrap),
       field('温度', temp), field('思考强度', effortWrap), field('流式输出', stream),
       field('视觉模型', imageSending),
       el('div', { class: 'row' }, el('label', { text: '' }), el('div', { style: 'flex:1;min-width:0' }, testBtn, testResult)),
@@ -5303,7 +5357,7 @@
       el('div', { class: 'section' }, skillSection),
       el('div', { class: 'section' }, projSection),
       el('div', { class: 'section' }, el('h3', { text: '数据管理' }),
-        el('div', { class: 'hint', text: '单个项目的撤回数据请在上方「项目与存储」中逐项清理。' }),
+        el('div', { class: 'hint', text: '统计仅包含用户数据，已排除内置技能、未改动的预制文件和空会话基础记录。可在上方按项目清理；文件、对话及草稿会永久删除，请先下载备份。' }),
         el('div', { class: 'row' },
           el('button', { class: 'danger', text: '清理所有撤回数据', onclick: async () => {
             if (!await confirmDialog('清理所有撤回数据', '删除全部项目的所有撤回点，均不可再回滚历史。', true)) return;

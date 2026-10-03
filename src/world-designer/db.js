@@ -46,9 +46,13 @@ const DB = (() => {
     });
   }
 
-  // Save the exact tree and its public validation summary in one transaction.
+  // Save the editable tree and its public validation summary in one transaction.
+  function storedTree(tree) {
+    const { skills, ...children } = tree.children || {};
+    return { ...tree, children }; // Mounted page resources are rebuilt on entry.
+  }
   function putWorkspace(id, tree, validation) {
-    const workspace = { id, tree }, record = { id: 'world-validation:' + id, value: validation };
+    const workspace = { id, tree: storedTree(tree) }, record = { id: 'world-validation:' + id, value: validation };
     if (memoryMode) {
       store('vfs').set(id, structuredClone(workspace)); store('config').set(record.id, structuredClone(record));
       return Promise.resolve();
@@ -58,6 +62,42 @@ const DB = (() => {
       tx.oncomplete = resolve; tx.onerror = tx.onabort = () => reject(tx.error || Error('工作区保存中断'));
       try { tx.objectStore('vfs').put(workspace); tx.objectStore('config').put(record); }
       catch (error) { tx.abort(); reject(error); }
+    });
+  }
+
+  // Reset a single project's growing data atomically, retaining its identity and global settings.
+  async function resetProjectData(project, session, tree, validation) {
+    const id = project.id;
+    const sessions = (await all('sessions')).filter(s => s.projectId === id);
+    const sessionIds = new Set(sessions.map(s => s.id));
+    const predicates = {
+      sessions: item => item.projectId === id,
+      messages: item => sessionIds.has(item.sessionId),
+      groups: item => item.projectId === id,
+      snapshots: item => item.projectId === id,
+      config: item => ['pending:' + id, 'stream:' + id, 'world-validation:' + id].includes(item.id),
+    };
+    const writes = {
+      projects: project, sessions: session, vfs: { id, tree: storedTree(tree) },
+      config: { id: 'world-validation:' + id, value: validation },
+    };
+    if (memoryMode) {
+      for (const [name, predicate] of Object.entries(predicates))
+        for (const [key, item] of store(name)) if (predicate(item)) store(name).delete(key);
+      for (const [name, item] of Object.entries(writes)) store(name).set(item.id, structuredClone(item));
+      return;
+    }
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction([...new Set([...Object.keys(predicates), ...Object.keys(writes)])], 'readwrite');
+      tx.oncomplete = resolve; tx.onerror = tx.onabort = () => reject(tx.error || Error('项目清理中断'));
+      for (const [name, predicate] of Object.entries(predicates)) {
+        const os = tx.objectStore(name), request = os.getAll();
+        request.onsuccess = () => {
+          for (const item of request.result) if (predicate(item)) os.delete(item.id);
+          if (writes[name]) os.put(writes[name]);
+        };
+      }
+      for (const [name, item] of Object.entries(writes)) if (!predicates[name]) tx.objectStore(name).put(item);
     });
   }
 
@@ -248,7 +288,7 @@ const DB = (() => {
     });
   }
 
-  return { open, put, putWorkspace, get, all, del, delWhere, wipeAll, isMemoryMode: () => memoryMode,
+  return { open, put, putWorkspace, resetProjectData, get, all, del, delWhere, wipeAll, isMemoryMode: () => memoryMode,
     putMessages, appendMessages, getMessages, getMessagesRange, getMessagesTailWhile,
     countMessages, delMessages };
 })();

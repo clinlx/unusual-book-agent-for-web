@@ -44,9 +44,21 @@ const GamePresentation=(()=>{
     return id=>map.get(String(id))||id;
   }
   function eventContent(save,e){let text=String(e.content||'');if(!save?.tree)return text;const resolve=names(save),roller=e.data?.roller||e.roller; if(roller&&resolve(roller)!==roller){if(text.startsWith(roller))text=resolve(roller)+text.slice(String(roller).length);}return text.replace(/\b(?:Player|KPC)-[^\s:：·，。;；()[\]<>]+/g,id=>resolve(id));}
+  function hasPlayHistory(save){
+    return Number(save?.round)>0 || (save?.events||[]).some(event =>
+      ['dice','round_end'].includes(event.type) || ['story','player'].includes(event.type) && String(event.content||'').trim());
+  }
   function exportName(save,at=Date.now()){return String(save.name||'故事')+'-故事-'+new Date(at).toISOString().replace(/[:.]/g,'-')+'.html';}
   function historyHTML(save,renderStory=text=>'<p class="plain">'+esc(text)+'</p>',projection={}){
     const safeJSON=value=>JSON.stringify(value).replace(/</g,'\\u003c').replace(/\u2028/g,'\\u2028').replace(/\u2029/g,'\\u2029');
+    const resourceHTML=info=>{
+      const resources=vitals(info);
+      const bars=['hp','mp','san'].map(key=>{
+        const v=resources[key];if(!v)return '';
+        return `<div class="resource ${key}"><span class="resource-label">${key.toUpperCase()} · ${v.value} / ${v.max}</span><span class="track" role="progressbar" aria-label="${key.toUpperCase()}" aria-valuemin="0" aria-valuemax="${v.max}" aria-valuenow="${Math.max(0,Math.min(v.value,v.max))}"><i style="width:${v.ratio*100}%"></i></span></div>`;
+      }).join('');
+      return bars?'<div class="resource-strips">'+bars+'</div>':'';
+    };
     const events=(save.events||[]).filter(e=>['player','story','round_end','dice','note'].includes(e.type));
     const eventHTML=e=>{
       if(e.type==='round_end')return `<article class="round_end" data-round="${esc(e.round)}"><header>回合结束 · ${esc(metadata(e))}</header></article>`;
@@ -65,11 +77,15 @@ const GamePresentation=(()=>{
       const file=dir.children?.['玩家结束状态.json'];if(!file||file.type!=='file'||file.encoding==='base64')continue;
       try{
         const state=JSON.parse(String(file.content||'').replace(/^\uFEFF/,''));
-        if(state&&typeof state==='object')roundStates[Number(m[1])]={info:D.visible(state.info||{}),items:D.visible(state.items||[],true)};
+        if(state&&typeof state==='object'){
+          const info=D.visible(state.info||{});
+          roundStates[Number(m[1])]={info,items:D.visible(state.items||[],true),vitals:resourceHTML(info)};
+        }
       }catch(_){}
     }
 
     const finalState={info:D.visible(projection.info||{}),items:D.visible(projection.items||[],true)};
+    finalState.vitals=resourceHTML(finalState.info);
     const stateHTML=(current,previous={info:{},items:[]})=>({
       info:fields(current?.info||{},previous?.info||{},'info')||'<p>暂无资料</p>',
       items:fields(current?.items||[],previous?.items||[],'items')||'<p>暂无物品</p>'
@@ -92,8 +108,7 @@ const GamePresentation=(()=>{
     const script=`(()=>{'use strict';
 const archive=document.getElementById('archive'),history=document.getElementById('archive-history'),articles=[...history.querySelectorAll('article')],next=document.getElementById('replay-next'),prev=document.getElementById('replay-prev'),progress=document.getElementById('replay-progress'),jump=document.getElementById('replay-jump'),items=document.getElementById('items-content'),status=document.getElementById('status-content'),vitals=document.getElementById('archive-vitals');
 const nodes=${safeJSON(nodes.map(({round,type,secret})=>({round,type,secret})))},states=${safeJSON(replayStates)},finalState=${safeJSON(finalState)},finalHTML=${safeJSON(finalHTML)},finalDiff=${safeJSON(finalDiff)};let index=0;
-const bars=info=>{const groups=['状态','衍生属性','属性'].map(k=>info&&info[k]).concat(info||{}),num=k=>{for(const g of groups){if(!g||typeof g!=='object')continue;for(const key of Object.keys(g))if(String(key).replace(/[_\\s-]/g,'').toLowerCase()===k.toLowerCase()){const n=Number(g[key]);if(Number.isFinite(n))return n;}}},one=(k,m,fallback,cls)=>{const v=num(k),mx=num(m)??fallback;if(v==null||mx==null||mx<=0)return'';const pct=Math.max(0,Math.min(100,v/mx*100));return '<div class="resource '+cls+'"><span class="resource-label">'+k+' · '+v+' / '+mx+'</span><span class="track"><i style="width:'+pct+'%"></i></span></div>'};return '<div class="resource-strips">'+one('HP','MAXHP',null,'hp')+one('MP','MAXMP',null,'mp')+one('SAN','MAXSAN',99,'san')+'</div>'};
-function setPanels(html,raw,animate){items.innerHTML=html.items;status.innerHTML=html.info;vitals.innerHTML=bars(raw.info||{});if(animate){for(const el of [items,status]){el.classList.remove('state-enter');void el.offsetWidth;el.classList.add('state-enter');}}}
+function setPanels(html,raw,animate){items.innerHTML=html.items;status.innerHTML=html.info;vitals.innerHTML=raw.vitals||'';if(animate){for(const el of [items,status]){el.classList.remove('state-enter');void el.offsetWidth;el.classList.add('state-enter');}}}
 function stateAt(i){let found=null,changed=false;for(let n=0;n<i;n++){const node=nodes[n],s=node&&states[node.round];if(node?.type==='round_end'&&s){found=s;changed=n===i-1;}}if(i>=nodes.length)return {info:finalDiff.info,items:finalDiff.items,raw:finalState};if(!found)return {info:'<p>暂无资料</p>',items:'<p>暂无物品</p>',raw:{info:{},items:[]}};return {info:changed?found.infoDiff:found.infoClean,items:changed?found.itemsDiff:found.itemsClean,raw:found.raw};}
 function render(animate=true){archive.classList.add('replay-mode');archive.classList.remove('overview-mode');articles.forEach((a,i)=>{a.classList.toggle('revealed',i<index);a.classList.remove('replay-enter')});if(animate&&index>0){const a=articles[index-1];if(a){a.classList.add('replay-enter');a.scrollIntoView({block:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});}}const s=stateAt(index);setPanels({info:s.info,items:s.items},s.raw,animate);jump.value=String(index);prev.disabled=index<=0;next.disabled=index>=nodes.length;next.textContent=index>=nodes.length?'已到结局':'下一节点 →';}
 function overview(){archive.classList.remove('replay-mode');archive.classList.add('overview-mode');articles.forEach(a=>a.classList.remove('replay-enter'));setPanels(finalHTML,finalState,false);}
@@ -116,6 +131,6 @@ render(false);
 
     return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'"><title>'+esc(save.name)+' · 故事存档</title><style>'+styles+'</style></head><body>'+layout+'<script>'+script.replaceAll('</script','<\\/script')+'</script></body></html>';
   }
-  return {vitals,secondary,diff,fields,createReader,metadata,realTime,historyHTML,eventContent,exportName};
+  return {vitals,secondary,diff,fields,createReader,metadata,realTime,historyHTML,eventContent,hasPlayHistory,exportName};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=GamePresentation;

@@ -1,6 +1,7 @@
 'use strict';
 const GameTransport=(()=>{
   const sse=typeof module!=='undefined'&&module.exports?require('./sse.js'):SSE;
+  const apiUrl=typeof module!=='undefined'&&module.exports?require('./shared/api-url.js'):ApiUrl;
   const tiers=new Map();
   const object=x=>!!x&&typeof x==='object'&&!Array.isArray(x);
   function customBody(settings){
@@ -21,9 +22,7 @@ const GameTransport=(()=>{
   function create(settings,tools,hooks={}){
     const fetcher=hooks.fetch||globalThis.fetch.bind(globalThis);
     return async function(messages){
-      const base=String(settings.baseUrl||'').replace(/\/+$/,'');
-      if(!/^https?:\/\//.test(base))throw Error('请在设置中填写有效的模型 API 地址');
-      const url=base.endsWith('/chat/completions')?base:base+'/chat/completions';
+      const base=apiUrl.root(settings.baseUrl),url=base+'/chat/completions';
       const key=base+'|'+settings.model;let tier=tiers.get(key)||0;
       const ctrl=new AbortController();
       const cancel=()=>ctrl.abort(hooks.signal?.reason);hooks.signal?.addEventListener('abort',cancel,{once:true});
@@ -84,14 +83,9 @@ const GameTransport=(()=>{
       finally{clearTimeout(timer);hooks.signal?.removeEventListener('abort',cancel);}
     };
   }
-  function apiRoot(settings){
-    const base=String(settings.baseUrl||'').trim().replace(/\/+$/,'');
-    if(!/^https?:\/\//.test(base))throw Error('请在设置中填写有效的模型 API 地址');
-    return base.endsWith('/chat/completions')?base.slice(0,-'/chat/completions'.length):base;
-  }
   async function listModels(settings,hooks={}){
     if(!String(settings.apiKey||'').trim())throw Error('请填写 API Key');
-    const fetcher=hooks.fetch||globalThis.fetch.bind(globalThis),root=apiRoot(settings);
+    const fetcher=hooks.fetch||globalThis.fetch.bind(globalThis),root=apiUrl.root(settings.baseUrl);
     const ctrl=new AbortController(),cancel=()=>ctrl.abort(hooks.signal?.reason);
     hooks.signal?.addEventListener('abort',cancel,{once:true});if(hooks.signal?.aborted)cancel();
     const timer=setTimeout(()=>ctrl.abort(Error('获取模型列表超时')),30000);

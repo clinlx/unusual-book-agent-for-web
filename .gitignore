@@ -3,6 +3,12 @@ dist/
 others/
 tests/*
 !tests/build.test.js
+!tests/game-core-review.test.js
+!tests/game-core.test.js
+!tests/game-presentation.test.js
+!tests/game-ui.test.js
+!tests/reference-details.test.js
+!tests/reference-parity.test.js
 !tests/world-designer/
 !tests/integration/
 docs/*

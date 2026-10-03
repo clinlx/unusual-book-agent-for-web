@@ -135,12 +135,13 @@ const GameCore = (() => {
     }).filter(i=>i!==null);
     return {info,items,name:data.get(info,'姓名')||s.playerPath.split('/').pop()};
   }
-  const actorKey=v=>String(v||'').trim().toLowerCase().replace(/[\\s·._-]+/g,'');
+  const actorKey=v=>String(v||'').trim().toLowerCase().replace(/[\s·._-]+/g,'');
   function dicePlayerRelated(s,a={}){
-    const roller=actorKey(a.roller),p=player(s,'info'),name=actorKey(p.name),id=actorKey(s.playerPath.split('/').pop());
+    const directory=s.playerPath.split('/').pop();
+    const roller=actorKey(a.roller),p=player(s,'info'),name=actorKey(p.name),id=actorKey(directory),shortId=actorKey(directory.replace(/^Player-/i,''));
     if(!roller)return false;
     if(['玩家','玩家角色','主角','你','player','pc'].includes(roller))return true;
-    if(roller===name||roller===id)return true;
+    if(roller===name||roller===id||roller===shortId)return true;
     if(name.length>=2&&roller.includes(name))return true;
     return false;
   }

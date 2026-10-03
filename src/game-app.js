@@ -31,6 +31,7 @@ const GameApp=(()=>{
         const file=new File([record.blob],record.name.replace(/[\\/:*?"<>|]/g,'_')+'.zip',{type:'application/zip'});
         const save=await GameImport.importSave(file,{onProgress});
         save.id=target;
+        save.name=record.name.trim()||save.name;
         onProgress('正在保存新的游玩存档…');
         await db.putSave(save,{ifAbsent:true});
       }

@@ -4,6 +4,7 @@ const Agent = (() => {
   const _SSE = (typeof module !== 'undefined') ? require('./sse.js') : SSE;
   const _Diff = (typeof module !== 'undefined') ? require('./diff.js') : Diff;
   const _BuilderTools = (typeof module !== 'undefined') ? require('./builder-tools.js') : BuilderTools;
+  const _ApiUrl = (typeof module !== 'undefined') ? require('../shared/api-url.js') : ApiUrl;
 
   const WRITE_TOOLS = new Set(['write_file', 'apply_patch', 'delete', 'move', 'copy']);
   const _GOAL_MAX = (typeof module !== 'undefined') ? require('./00-config.js').GOAL_MAX_CHARS : GOAL_MAX_CHARS;
@@ -436,7 +437,8 @@ const Agent = (() => {
 
   function createHttpTransport(settings, toolDefs, callbacks) {
     return async function transport(messages) {
-      const tierKey = settings.baseUrl + '|' + settings.model;
+      const base = _ApiUrl.root(settings.baseUrl);
+      const tierKey = base + '|' + settings.model;
       let tier = _thinkTiers.get(tierKey) || 0;
       let resp;
       for (;;) {
@@ -454,7 +456,7 @@ const Agent = (() => {
         const encoded = JSON.stringify(body);
         if (new TextEncoder().encode(encoded).length > 48 * 1024 * 1024)
           throw new Error('请求超过 48 MiB，请减少图片或压缩上下文后重试');
-        resp = await fetch(settings.baseUrl.replace(/\/$/, '') + '/chat/completions', {
+        resp = await fetch(base + '/chat/completions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + settings.apiKey },
           body: encoded,

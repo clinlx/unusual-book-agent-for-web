@@ -74,9 +74,16 @@ const call = (name, args, id) => ({ id, type: 'function', function: { name, argu
       ]);
       await GameApp.importSave(new File([zip], '页面切换存档.zip'));
     });
+    assert.equal(await page.locator('[data-action="history-export"]').isDisabled(), true, 'an unplayed world has no gameplay record to export');
     await page.locator('[data-action="start"]').click();
     await page.waitForFunction(() => GameApp.getState().active?.round === 1 && !GameApp.getState().running);
+    await page.waitForFunction(() => !document.querySelector('[data-action="history-export"]')?.disabled);
+    assert.equal(await page.locator('[data-action="history-export"]').isEnabled(), true, 'the first played round enables gameplay export');
     await page.locator('#action-input').fill('保留跑团输入');
+    assert.equal(await page.locator('a[data-page-switch]').count(), 0, 'the play page has no designer entry');
+    await page.locator('[data-action="debug"]').click();
+    assert.equal(await page.locator('a[data-page-switch]').count(), 0, 'debugging an active save also has no designer entry');
+    await page.locator('[data-action="home"]').click();
     await page.locator('a[data-page-switch]').click();
     await waitDesigner();
     assert.equal(await page.title(), '世界设计者');
@@ -125,6 +132,7 @@ const call = (name, args, id) => ({ id, type: 'function', function: { name, argu
     await page.locator('[data-action="open-save"]').click();
     await page.waitForFunction(() => !!GameApp.getState().active);
     assert.equal(await page.evaluate(() => GameApp.getState().active.draft), '保留跑团输入');
+    await page.locator('[data-action="home"]').click();
     await page.locator('a[data-page-switch]').click();
     await waitDesigner();
     assert.equal(await page.evaluate(() => __UI_STATE__.settings.model), 'designer-test');

@@ -42,18 +42,23 @@ ZIP 打包使用与原导出相同的格式，增加异步分块执行，每 256
 - 浏览器集成覆盖：模拟跑团回合、模拟模型工具写文件、编辑放弃确认、输入草稿持久化、跨页数据隔离、旧技能清理、设置页四技能、320/390px 页面导航与控件、HTTP 与 file 打开。
 - 本轮浏览器验证另覆盖真实工具调度至虚拟世界校验器及其结果回传、完整技能正文进入模型请求、旧 builder 禁用状态清理、固定 SVG 头像、删除的设置和 GitHub 链接，以及 320/390/800/1024/1440px 标题栏居中与不重叠。
 
-现有 8 个失败用例（本次修改前后相同）：
+2026-10-03 核查并修正了此前的 8 个失败用例：
 
-1. flow injection follows recovered tool replies and uses configured context labels
-2. 暗骰只在 DEBUG 显示，随机结果按调用 ID 缓存
-3. history export excludes all internal events and escapes unsafe content
-4. offline archive includes independent panels, native tabs and resource controls
-5. play events only expose player story public dice and round end
-6. player and dice events carry world time, updated world files beat a stale cache
-7. critical dice show possible hints and suppress ordinary comparison
-8. overlapping closed critical ranges fail before rolling and emit no dice event
+| 用例 | 失败原因与处理 |
+| --- | --- |
+| 恢复工具回执后的上下文注入 | 旧测试要求完整历史也在开头插入当前缓存，与 `e49ad56` 的稳定前缀设计冲突。现在检查回执先于恢复提示，以及裁剪后使用边界缓存和自定义标签。 |
+| 暗骰事件与游戏模式事件筛选（2 项） | 骰子参数不完整，且仍要求游戏模式完全删除暗骰事件。现在使用完整参数，检查玩家暗骰显示占位而不透露结果、DEBUG 显示详情，以及调用 ID 防止重复掷骰。 |
+| 故事 HTML 导出（2 项） | 测试存档缺少文件树，且断言沿用静态导出的无脚本、资源条开关和暗骰过滤。`e09d2bb` 已改为脚本驱动的离线回放，并保留暗骰结果。现在使用完整存档，检查回放控件、原生手机标签、HTML 转义、隐藏字段和内部模型事件过滤。 |
+| 玩家和骰子事件的世界时间 | 旧骰子调用缺少必填字段，根本没有产生骰子事件。补齐调用并先断言工具成功，再检查世界时间更新。 |
+| 大成功提示和区间重叠（2 项） | 参数没有跟随 `1a22b03` 的完整结构要求；固定骰值还使用了已禁止的裸整数。改用完整参数和 `set-force:1`，保留大成功省略普通比较、重叠区间在随机调用之前失败的断言。 |
 
-这些历史测试原本被仓库忽略。本次没有修改对应业务逻辑，也没有跳过或隐藏它们。运行完整 `npm test` 时，本地仍会报告这 8 项；本次迁入和新增部分可通过 `npm run test:integration` 单独验证。
+补测还发现并修正了三处实现问题：
+
+- 玩家骰者识别没有接受短 ID，姓名规范化还误把字母 `s` 当作空白删除；现在支持姓名、完整目录名、短 ID 和空白分隔，并验证不会把 `Sam` 错认成 `am`。
+- UI 的备用 DEBUG 过滤分支受条件表达式优先级影响，会丢失 `playerRelated:false` 的事件；现在 DEBUG 直接保留全部事件。
+- 离线回放重复实现了资源数值读取，未支持 `Status`、`Health`、`MaxMana` 等别名；现在生成回放时使用与游戏页相同的 `vitals` 解析器，为每个历史状态和最终状态预生成资源条。
+
+这 6 份历史测试此前被 `.gitignore` 排除，现在已加入例外，便于纳入版本管理。完整 `npm test` 的 427 项测试全部通过，没有跳过用例。新增 `archive.browser.cjs` 覆盖中文和英文别名资源、回放前进与后退、总览、手机标签、HTML 注入防护、隐藏字段，以及离线零网络请求，并已加入 `npm run test:browser`。
 
 浏览器测试使用本地模拟模型响应，没有发送真实 API 请求或验证付费模型服务。
 
