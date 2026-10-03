@@ -6,6 +6,32 @@ const Builder = require('../../src/world-designer/builder-tools');
 const { fixture } = require('./world-fixture.cjs');
 const validation = () => require('../../src/world-designer/validation');
 
+test('merged opening instructions replace the two legacy opening files', () => {
+  const f = fixture();
+  VFS.deletePath(f.tree, f.root + '/开场白.md');
+  VFS.deletePath(f.tree, f.root + '/样例开场.md');
+  f.write('开场说明.md', '## 主持人开场白\n' + '主持说明。'.repeat(30) + '\n## 样例开场\n' + '开场小说。'.repeat(30));
+  assert.deepEqual(Builder.validate(f.tree, f.root).errors, []);
+  f.write('开场说明.md', '太短');
+  assert.ok(Builder.validate(f.tree, f.root).issues.some(i => i.message.includes('内容过短') && i.path === f.root + '/开场说明.md'));
+});
+
+test('fixed openings accept the renamed original text without changing its contents', () => {
+  const f = fixture(), original = '开场原文\n\n  原有对白与空白。\n';
+  f.write('故事.txt', '既定主角');
+  f.write('开场原文.txt', original);
+  assert.deepEqual(Builder.validate(f.tree, f.root).errors, []);
+  assert.equal(VFS.readFile(f.tree, f.root + '/开场原文.txt').content, original);
+});
+
+test('worlds without opening files report the new opening instructions path', () => {
+  const f = fixture();
+  VFS.deletePath(f.tree, f.root + '/开场白.md');
+  VFS.deletePath(f.tree, f.root + '/样例开场.md');
+  const result = Builder.validate(f.tree, f.root);
+  assert.deepEqual(result.issues.map(i => i.path), [f.root + '/开场说明.md']);
+});
+
 test('diagnostics carry exact file paths, including field errors and punctuation in names', () => {
   const f = fixture();
   f.write('世界状态和世界规则/世界共识.json', {});
