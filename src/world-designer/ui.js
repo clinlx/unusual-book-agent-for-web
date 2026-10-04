@@ -5076,8 +5076,7 @@
       el('label', { text: labelText }), inputEl, helpKey ? helpBtn(helpKey) : null);
 
     const baseUrl = el('input', { value: s.baseUrl, placeholder: 'https://api.deepseek.com/v1', 'aria-label': 'API Base URL' });
-    const baseUrlWrap = el('div', { class: 'api-base-setting' }, baseUrl,
-      el('div', { class: 'hint', text: '可填写基础地址或完整 /chat/completions 地址，路径会自动处理。' }));
+    const baseUrlWrap = el('div', { class: 'api-base-setting' }, baseUrl);
     const apiKey = el('input', { value: s.apiKey, type: 'password' });
     // 模型：可输入 + 可从 /models 拉取后下拉选择
     const model = el('input', { value: s.model, list: 'modelListOpts', style: 'flex:1;min-width:0' });
