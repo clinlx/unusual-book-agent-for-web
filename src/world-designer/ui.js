@@ -2489,6 +2489,8 @@
         }
         const ctx = { tree: S.tree, skills: cur.allSkills(), config: AGENT_CONFIG, readState: S.readState,
           viewImage: S.settings.imageSending ? viewImage : undefined,
+          parseDocument: args => Documents.parse(S.tree, args, { signal: S.abort.signal,
+            checkActive: () => { if (S.projectId !== projectId || !S.running || lease.isHeldByOther(projectId)) throw Error('文档解析任务已失效'); } }),
           askUser: askUserDialog, goal: S.goal || (S.goal = { content: '', changedPending: false }) };
         S.streamSession = sess.id;      // 流式内容归属本会话，切走后不画到别处
         S.streamBuf = '';
@@ -2547,7 +2549,7 @@
             // 记录本轮读过的 /tmp 文件，用于刷新其 TTL
             try {
               const a = JSON.parse(tc.function.arguments || '{}');
-              if (['read_file', 'view_image'].includes(tc.function.name) && !/^错误/.test(res.result) && a.path && String(a.path).startsWith('/tmp/')) readPaths.add(a.path);
+              if (['read_file', 'view_image', 'parse_document'].includes(tc.function.name) && !/^错误/.test(res.result) && a.path && String(a.path).startsWith('/tmp/')) readPaths.add(a.path);
             } catch (_) { /* 参数非法时忽略 */ }
             recordPendingChange(res, turnNo);
             renderFileTree();
@@ -3800,9 +3802,9 @@
     try {
       const entries = await WorkspaceImport.prepare([...fileList], options);
       if (!entries.length) return;
-      const binary = entries.filter(e => e.encoding === 'base64');
+      const binary = entries.filter(e => e.encoding === 'base64' && !Documents.supported(e.name));
       if (binary.length && !await confirmDialog('非文本文件提醒',
-        '文件工具只能读取文本。以下文件可以保存和下载；开启多模态后，图片可由 AI 按需查看，其他非文本文件暂不支持解析：\n\n' +
+        '以下文件可以保存和下载；开启多模态后，图片可由 AI 按需查看，列表中的其他非文本类型暂不支持解析：\n\n' +
         binary.map(e => e.name).join('\n') +
         (!options.extractZip && binary.some(e => /\.zip$/i.test(e.name)) ? '\n\nZIP 将作为普通文件保存；需要解压请使用“上传 ZIP 并解压”。' : '') +
         '\n\n点击“我已知晓”后继续上传。', false, '我已知晓')) return;
@@ -4923,7 +4925,7 @@
     S.validationReveal = false;
     const node = VFS.resolve(S.tree, VFS.normalize(path));
     if (node && node.encoding === 'base64') {
-      confirmDialog('非文本文件', '文本编辑器无法打开此文件。开启多模态后，AI 可通过 view_image 按需查看图片；其他非文本文件暂不支持解析。文件可通过菜单下载。', false, '我已知晓');
+      confirmDialog('非文本文件', '文本编辑器无法打开此文件。PDF、DOCX 可由 AI 使用 parse_document 解析；图片可在多模态开启时通过 view_image 查看。文件可通过菜单下载。', false, '我已知晓');
       return;
     }
     // Agent 运行中也可编辑：冲突由 syncOpenEditor 的提示条与待审阅机制处理

@@ -184,6 +184,11 @@ const Agent = (() => {
     const before = isWrite ? snapshotFile(ctx.tree, args.path || args.from) : null;
     try {
       switch (name) {
+        case 'parse_document': {
+          if (typeof ctx.parseDocument !== 'function') throw Error('文档解析工具不可用');
+          if (args.format === 'images' && args.output === 'return' && typeof ctx.viewImage !== 'function') throw Error('图片发送已关闭，请开启多模态或使用 output=file 保存图片');
+          return { isWrite: args.output === 'file', pending: Promise.resolve().then(() => ctx.parseDocument(args)) };
+        }
         case 'validate_game_structure': {
           if (!_BuilderTools.enabled(ctx.skills)) throw Error('该工具所需的 game-world-builder 技能未启用');
           return { isWrite: false, result: JSON.stringify(_BuilderTools.validate(ctx.tree, args.path)) };
@@ -387,6 +392,10 @@ const Agent = (() => {
           imageParts.push({ type: 'text', text: '工具 view_image 返回的图片：' + out.image.path },
             { type: 'image_url', image_url: { url: out.image.dataUrl } });
         }
+        for (const image of out.images || []) {
+          imageParts.push({ type: 'text', text: '工具 ' + tc.function.name + ' 返回的第 ' + image.page + ' 页图片（' + image.width + '×' + image.height + '）' },
+            { type: 'image_url', image_url: { url: image.dataUrl } });
+        }
         msgs.push(toolMsg); newMessages.push(toolMsg);
         if (h.onMessage) await h.onMessage(toolMsg);
         if (h.onToolEnd) h.onToolEnd(tc, out);
@@ -517,7 +526,11 @@ const Agent = (() => {
 
   function toolDefinitions(skills, { imageSending = true } = {}) {
     return [..._TOOL_DEFS, ...(_BuilderTools.enabled(skills) ? _BuilderTools.definitions : [])]
-      .filter(tool => imageSending || tool.function.name !== 'view_image');
+      .filter(tool => imageSending || tool.function.name !== 'view_image')
+      .map(tool => imageSending || tool.function.name !== 'parse_document' ? tool : {
+        ...tool, function: { ...tool.function,
+          description: tool.function.description + ' 当前模型不支持图片输入：format=images 只允许 output=file；format=text 可直接返回或保存。' },
+      });
   }
   return { toolDefinitions, executeTool, runTurn, createHttpTransport, applyThinkingFields, isThinkFieldError, EFFORT_LEVELS, WRITE_TOOLS, recordRead, assertReadBeforeWrite, normalizeQuestions, hasOtherOption, readCapFor };
 })();

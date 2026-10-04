@@ -77,7 +77,7 @@ const AGENT_CONFIG = {
     '- `/workspace/` 唯一可写目录，用户的工作成果在此。',
     '- `/skills/` 只读，存放 Skill 的参考资料。',
     '- `/tmp/` 存放用户超长输入的暂存文件，提示词引用到时用 read_file 读完再继续。',
-    '- read_file / search 只能解析文本。多模态开启时，可用 view_image 查看 /workspace/ 或 /tmp/ 中的图片；PDF、Office 等其他非文本文件没有解析器，不得声称读过其内容。',
+    '- read_file / search 只能读取文本。PDF、DOCX 使用 parse_document，按参数选择纯文字或页图，以及直接返回或保存到指定路径。纯文字模式不做 OCR，扫描件请用页图；直接返回图片需要开启多模态。图片文件可用 view_image 查看。其他非文本类型没有解析器，不得声称读过其内容。',
     '- 粘贴图片只在首次讨论的轮次自动附带；历史保留图片路径，需再次确认细节时用 view_image。预览可能缩小，长截图和小字可按工具返回的原图尺寸裁剪查看。',
     '- /tmp/ 文件连续 10 轮未使用或 7 天未使用会过期，容量达到上限时也会清理。文件过期后说明需要用户重新提供，不得假装仍能看到原图。/workspace/ 文件不会自动过期。',
     '',
@@ -358,6 +358,17 @@ const DEFAULT_SETTINGS = {
 };
 
 const TOOL_DEFS = [
+  { type: 'function', function: { name: 'parse_document', description: '解析 /workspace/ 或 /tmp/ 中的 PDF、DOCX，仅支持这两种文档。format=text 提取纯文字（不做 OCR），format=images 生成页图。output=return 直接返回文字或真实图片（图片需开启多模态）；output=file 保存文字到 output_path，或保存图片到 output_dir。PDF 页码从 1 开始；DOCX 图片按浏览器排版分页，可能与 Word 不同。每次默认最多 20 页文字或 5 页图片，按 next_page 继续。DOCX 文字不支持页码，可用 offset/limit 分段返回。保存不覆盖已有文件。', parameters: { type: 'object', properties: {
+    path: { type: 'string', description: 'PDF 或 DOCX 文件完整路径' },
+    format: { type: 'string', enum: ['text', 'images'] },
+    output: { type: 'string', enum: ['return', 'file'] },
+    output_path: { type: 'string', description: '文字保存时必填：完整输出文件路径，含目录与文件名' },
+    output_dir: { type: 'string', description: '图片保存时必填：输出目录；图片按页码命名' },
+    start_page: { type: 'integer', description: '起始页码，默认 1' },
+    end_page: { type: 'integer', description: '结束页码，文字最多 100 页、图片最多 5 页' },
+    offset: { type: 'integer', description: '直接返回文字的起始字符位置，默认 0' },
+    limit: { type: 'integer', description: '直接返回文字的最大字符数，默认 32000，上限 120000' },
+  }, required: ['path', 'format', 'output'], additionalProperties: false } } },
   { type: 'function', function: { name: 'view_image', description: '查看 /workspace/ 或 /tmp/ 图片，返回真实图片供视觉理解。先看整图；小字或长截图可按原图像素坐标传 crop 放大局部。临时图片可能过期。', parameters: { type: 'object', properties: {
     path: { type: 'string', description: '图片文件完整路径' },
     crop: { type: 'object', description: '可选，按原图像素裁剪', properties: { x: { type: 'integer' }, y: { type: 'integer' }, width: { type: 'integer' }, height: { type: 'integer' } }, required: ['x', 'y', 'width', 'height'] },

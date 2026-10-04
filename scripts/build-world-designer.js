@@ -3,8 +3,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { root, safeJSON, scripts, compose } = require('./build-common.js');
 const { buildSnapshot } = require('./bundle-skills.js');
+const { bundleDocuments } = require('./bundle-documents.js');
 const SKILLS = ['write-novel', 'desire-analysis', 'grilling', 'game-world-builder'];
-const modules = ['00-config', 'vfs', 'tokens', 'temp-files', 'images', 'compress',
+const modules = ['00-config', 'vfs', 'tokens', 'temp-files', 'images', 'document-runtime', 'documents', 'compress',
   'sse', 'zip', 'workspace-import', 'skills', 'skill-loader', 'versioning', 'diff',
   'pending', 'md', 'db', 'storage', 'builder-tools', 'validation', 'agent', 'lease', 'resources', 'ui'];
 
@@ -29,7 +30,8 @@ function buildWorldDesigner() {
     ...modules.map(name => 'src/world-designer/' + name + '.js')]);
   const schema = JSON.parse(fs.readFileSync(path.join(root, 'skills/game-world-builder/scripts/world-schema.json'), 'utf8'));
   const prefix = 'const BUNDLED_SKILLS = ' + safeJSON(bundled.snapshot) + ';\n'
-    + 'const WORLD_BUILDER_SCHEMA = ' + safeJSON(schema) + ';\n';
+    + 'const WORLD_BUILDER_SCHEMA = ' + safeJSON(schema) + ';\n'
+    + 'const DOCUMENT_ASSETS = ' + safeJSON(bundleDocuments()) + ';\n';
   const settings = 'const WORLD_DESIGNER_STANDALONE = true;\n';
   const html = compose('src/world-designer/template.html', 'src/world-designer/styles.css', prefix + settings + source);
   fs.writeFileSync(path.join(root, 'dist/designer.html'), html);
