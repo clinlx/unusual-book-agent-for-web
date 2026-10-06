@@ -7,6 +7,8 @@ tests/*
 !tests/game-core.test.js
 !tests/game-presentation.test.js
 !tests/game-ui.test.js
+!tests/game-prompts.test.js
+!tests/prompt-complex.test.js
 !tests/reference-details.test.js
 !tests/reference-parity.test.js
 !tests/world-designer/
