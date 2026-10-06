@@ -2,6 +2,7 @@
 const Documents = (() => {
   const vfs = typeof module !== 'undefined' && module.exports ? require('./vfs') : VFS;
   const images = typeof module !== 'undefined' && module.exports ? require('./images') : Images;
+  const fileValidation = typeof module !== 'undefined' && module.exports ? require('../shared/file-write-validation') : FileWriteValidation;
   const runtime = () => typeof DocumentRuntime !== 'undefined' ? DocumentRuntime : null;
   const supported = name => /\.(pdf|docx)$/i.test(name);
   function safePath(value) {
@@ -57,7 +58,7 @@ const Documents = (() => {
           next_offset: offset + limit < text.length ? offset + limit : null });
       } else {
         if (vfs.resolve(tree, vfs.normalize(target))) throw Error('输出文件已存在，请选择其他路径: ' + target);
-        vfs.writeFile(tree, target, text); result.path = target;
+        vfs.writeFile(tree, target, text, {validateContent:fileValidation.validate}); result.path = target;
       }
       return { result: JSON.stringify(result) };
     }

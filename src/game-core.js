@@ -4,6 +4,8 @@ const GameCore = (() => {
   const vfs = typeof module !== 'undefined' && module.exports ? require('./vfs.js') : VFS;
   const data = typeof module !== 'undefined' && module.exports ? require('./game-data.js') : GameData;
   const history = typeof module !== 'undefined' && module.exports ? require('./game-history.js') : GameHistory;
+  const fileValidation = typeof module !== 'undefined' && module.exports ? require('./shared/file-write-validation.js') : FileWriteValidation;
+  const writeOptions = {cap:120000,validateContent:fileValidation.validate};
   const copy = x => structuredClone(x);
   const ROLLBACK_LIMIT=10;
   function reverseTreeDelta(before,after){
@@ -334,16 +336,16 @@ const GameCore = (() => {
           if(!node||node.type!=='file')throw Error('文件不存在: '+p);
           if(node.encoding==='base64')throw Error('该文件不能作为文本追加');
           if(typeof a.content!=='string'||!a.content.length)throw Error('content 必须是非空文本');
-          const content=node.content+a.content;vfs.writeFile(s.tree,p,content,{cap:120000});
+          const content=node.content+a.content;vfs.writeFile(s.tree,p,content,writeOptions);
           result={path:p,appended:a.content.length,totalLength:content.length};break;
         }
-        case 'write_file':readFirst(p);if(typeof a.content!=='string')throw Error('content 必须是文本');vfs.writeFile(s.tree,p,a.content,{cap:120000});result={path:p,written:a.content.length};break;
-        case 'apply_patch':readFirst(p);if(typeof a.new_str!=='string')throw Error('new_str 必须是文本');result=vfs.applyPatch(s.tree,p,requireText(a.old_str,'old_str'),a.new_str,{cap:120000});break;
+        case 'write_file':readFirst(p);if(typeof a.content!=='string')throw Error('content 必须是文本');vfs.writeFile(s.tree,p,a.content,writeOptions);result={path:p,written:a.content.length};break;
+        case 'apply_patch':readFirst(p);if(typeof a.new_str!=='string')throw Error('new_str 必须是文本');result=vfs.applyPatch(s.tree,p,requireText(a.old_str,'old_str'),a.new_str,writeOptions);break;
         case 'mkdir':writable(p);vfs.mkdir(s.tree,p);result={path:p};break;
         case 'delete':if(p===s.playerPath)throw Error('不能删除唯一玩家目录');readSubtreeFirst(p);vfs.deletePath(s.tree,p);result={path:p};break;
         case 'move':case 'copy':{
           const from=path(a.from),to=path(a.to);writable(to);if(name==='move'){writable(from);if(from===s.playerPath)throw Error('不能修改玩家目录 ID');}
-          if(to==='/workspace'||to.startsWith(from+'/'))throw Error('无效目标路径');vfs[name](s.tree,from,to);result={from,to};break;
+          if(to==='/workspace'||to.startsWith(from+'/'))throw Error('无效目标路径');vfs[name](s.tree,from,to,writeOptions);result={from,to};break;
         }
         case 'roll_dice':{
           const d=dice(a,options.random,options.fixedDiceRolls),payload={...d,roller:a.roller,description:a.description||'',relatedAttr:a.related_attr||'',

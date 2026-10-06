@@ -73,6 +73,7 @@ const VFSCore = { create({ readableRoots, writableRoots, binaryReadError }) {
     if (parts.length < 2) throw new Error('非法文件路径: ' + path);
     if (opts.cap && content.length > opts.cap)
       throw new Error('内容超过单次写入上限 ' + opts.cap + ' 字符，请先写入部分内容再用 apply_patch 分段追加');
+    if (opts.validateContent) opts.validateContent('/' + parts.join('/'), String(content), opts);
     const dir = mkdirp(tree, parts.slice(0, -1), opts);
     const name = parts[parts.length - 1];
     const existing = dir.children[name];
@@ -125,7 +126,13 @@ const VFSCore = { create({ readableRoots, writableRoots, binaryReadError }) {
       : JSON.parse(JSON.stringify(node));
   }
 
-  function move(tree, from, to) {
+  function validateTransfer(node, parts, opts) {
+    if (!opts.validateContent) return;
+    if (node.type === 'file') opts.validateContent('/' + parts.join('/'), node.content, node);
+    else for (const [name, child] of Object.entries(node.children || {})) validateTransfer(child, parts.concat(name), opts);
+  }
+
+  function move(tree, from, to, opts = {}) {
     const fromParts = normalize(from); assertWritable(fromParts);
     const toParts = normalize(to); assertWritable(toParts);
     if (fromParts.length < 2) throw new Error('不能移动工作区根目录');
@@ -133,6 +140,7 @@ const VFSCore = { create({ readableRoots, writableRoots, binaryReadError }) {
       throw new Error('不能移动到自身内部');
     const node = resolve(tree, fromParts);
     if (!node) throw new Error('路径不存在: ' + from);
+    validateTransfer(node, toParts, opts);
     const destParent = mkdirp(tree, toParts.slice(0, -1));
     const destName = toParts[toParts.length - 1];
     if (destParent.children[destName]) throw new Error('目标已存在: ' + to);
@@ -142,11 +150,12 @@ const VFSCore = { create({ readableRoots, writableRoots, binaryReadError }) {
     destParent.children[destName] = node;
   }
 
-  function copy(tree, from, to) {
+  function copy(tree, from, to, opts = {}) {
     const fromParts = normalize(from); assertReadable(fromParts);
     const toParts = normalize(to); assertWritable(toParts);
     const node = resolve(tree, fromParts);
     if (!node) throw new Error('路径不存在: ' + from);
+    validateTransfer(node, toParts, opts);
     const destParent = mkdirp(tree, toParts.slice(0, -1));
     const destName = toParts[toParts.length - 1];
     if (destParent.children[destName]) throw new Error('目标已存在: ' + to);
@@ -168,7 +177,9 @@ const VFSCore = { create({ readableRoots, writableRoots, binaryReadError }) {
     if (first === -1) throw new Error('old_str 未在文件中找到，请先 read_file 确认内容');
     if (node.content.indexOf(oldStr, first + 1) !== -1)
       throw new Error('old_str 在文件中出现多次，请提供更长的唯一片段');
-    node.content = node.content.slice(0, first) + String(newStr) + node.content.slice(first + oldStr.length);
+    const content = node.content.slice(0, first) + String(newStr) + node.content.slice(first + oldStr.length);
+    if (opts.validateContent) opts.validateContent('/' + parts.join('/'), content, node);
+    node.content = content;
     node.mtime = opts.now !== undefined ? opts.now : nowTs();
   }
 

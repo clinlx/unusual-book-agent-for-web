@@ -44,13 +44,13 @@ const GameData=(()=>{
     try{const info=read(s,file);if(!hiddenFlag(info['.是否对玩家隐藏'])){const name=get(info,['名称','姓名','Name','name']);if(typeof name==='string'&&name.trim())return name;}}catch(_){}
     return n.type==='dir'?n.name:p.split('/').at(-2)||n.name;
   }
-  function references(s,entries){const warnings=[];for(const entry of entries||[]){if(!object(entry))continue;const p=entry.所在文件,k=entry.剧情关键词||entry.事件关键词;if(typeof p!=='string'||!p.trim())continue;const n=node(s,p);if(!n){warnings.push('[引用错误] 文件或目录不存在: '+p);continue;}if(typeof k==='string'&&k.trim()){
+  function references(s,entries){const warnings=[];for(const entry of entries||[]){if(!object(entry))continue;const p=entry.所在文件,k=entry.剧情关键词||entry.事件关键词;if(typeof p!=='string'||!p.trim())continue;const n=node(s,p);if(!n){warnings.push('[引用错误] 文件或目录不存在: '+p+'。先用 tree/search 确认实际路径，再读取模组和相关台本，修正 phase_plan 或 Cache 的引用；确需新增的后续事件先落实到文件，再登记引用，不凭不存在的引用推进剧情。');continue;}if(typeof k==='string'&&k.trim()){
       const contains=(n,depth=0)=>depth<=8&&(n.type==='file'?n.encoding!=='base64'&&n.content.includes(k):Object.values(n.children||{}).some(c=>contains(c,depth+1)));
-      if(!contains(n))warnings.push('[关键词缺失] '+p+' 中不存在: '+k);
+      if(!contains(n))warnings.push('[关键词缺失] '+p+' 中不存在: '+k+'。先读取对应文件，使用其中真实存在的剧情/事件关键词修正引用；检查是否改名、已完成或引用了错误文件，不用猜测的名称替代。');
     }}return warnings;}
   function cacheWarnings(s,cache){if((s.activeRound?.number||s.round)<=3)return [];const required=['Game_World_Time','EraDate&LocalFestival&SeasonCustoms','Active_Scene','Next_Possible_Scene','Current_Story_Progress','Next_Story_Progress','Next_Possible_Relevant_Triggers_In_File','Triggers_Not_In_File','Story_Safety_State','In_Free_Exploration','Free_Exploration_Entry_Cond','Free_Exploration_Exit_Cond','Active_Flags','Global_Timers','NPC_Status_Snapshot'];
-    const warnings=required.filter(k=>!Object.hasOwn(cache,k)).map(k=>'[缓存字段缺失] '+k);
-    if(Array.isArray(cache.Next_Possible_Relevant_Triggers_In_File)&&!cache.Next_Possible_Relevant_Triggers_In_File.length)warnings.push('[缓存校验] Next_Possible_Relevant_Triggers_In_File 为空，请检查后续剧情引用');
+    const warnings=required.filter(k=>!Object.hasOwn(cache,k)).map(k=>'[缓存字段缺失] '+k+'。下一回合按 NEXT_TURN_CACHE Schema 补全当前状态，不复制历史快照。');
+    if(Array.isArray(cache.Next_Possible_Relevant_Triggers_In_File)&&!cache.Next_Possible_Relevant_Triggers_In_File.length)warnings.push('[缓存校验] Next_Possible_Relevant_Triggers_In_File 为空，请检查后续剧情引用。优先核对模组与台本中仍可触发的事件；确需新增后续分支时，先写入与模组因果衔接的剧情文件，再登记真实路径和关键词，不重复已完成事件或代替玩家决定。此为成功结束后的提醒，下一回合处理，不重试已结束回合。');
     return warnings.concat(references(s,[cache.Current_Story_Progress,...Object.values(object(cache.Next_Story_Progress)?cache.Next_Story_Progress:{}),...(Array.isArray(cache.Next_Possible_Relevant_Triggers_In_File)?cache.Next_Possible_Relevant_Triggers_In_File:[])]));
   }
   function validate(s){

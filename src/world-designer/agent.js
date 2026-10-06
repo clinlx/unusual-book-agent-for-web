@@ -5,6 +5,7 @@ const Agent = (() => {
   const _Diff = (typeof module !== 'undefined') ? require('./diff.js') : Diff;
   const _BuilderTools = (typeof module !== 'undefined') ? require('./builder-tools.js') : BuilderTools;
   const _ApiUrl = (typeof module !== 'undefined') ? require('../shared/api-url.js') : ApiUrl;
+  const _FileWriteValidation = (typeof module !== 'undefined') ? require('../shared/file-write-validation.js') : FileWriteValidation;
 
   const WRITE_TOOLS = new Set(['write_file', 'apply_patch', 'delete', 'move', 'copy']);
   const _GOAL_MAX = (typeof module !== 'undefined') ? require('./00-config.js').GOAL_MAX_CHARS : GOAL_MAX_CHARS;
@@ -176,6 +177,7 @@ const Agent = (() => {
   // ctx: { tree, skills, config, readState?, askUser? }
   function executeTool(ctx, name, args) {
     const cfg = ctx.config;
+    const writeOptions = { cap: cfg.writeCharLimit, validateContent: _FileWriteValidation.validate };
     const isWrite = WRITE_TOOLS.has(name);
     // 参数不合工具定义时立刻退回，别让脏参数流进 VFS 变成难以归因的报错
     const bad = validateToolArgs(name, args);
@@ -211,13 +213,13 @@ const Agent = (() => {
         }
         case 'write_file': {
           assertReadBeforeWrite(ctx, args.path);
-          _VFS.writeFile(ctx.tree, args.path, args.content, { cap: cfg.writeCharLimit });
+          _VFS.writeFile(ctx.tree, args.path, args.content, writeOptions);
           recordRead(ctx, args.path);
           const change = buildChange(name, args, before, ctx.tree);
           return { isWrite, change, result: '写入成功: ' + args.path + ' (' + String(args.content).length + ' 字符)' };
         }
         case 'apply_patch': {
-          _VFS.applyPatch(ctx.tree, args.path, args.old_str, args.new_str, { cap: cfg.writeCharLimit });
+          _VFS.applyPatch(ctx.tree, args.path, args.old_str, args.new_str, writeOptions);
           recordRead(ctx, args.path);
           const change = buildChange(name, args, before, ctx.tree);
           return { isWrite, change, result: '补丁应用成功: ' + args.path };
@@ -232,14 +234,14 @@ const Agent = (() => {
           return { isWrite, change: binary ? null : buildChange(name, args, before, ctx.tree), result: '已删除: ' + args.path };
         }
         case 'move': {
-          _VFS.move(ctx.tree, args.from, args.to);
+          _VFS.move(ctx.tree, args.from, args.to, writeOptions);
           // 目标文件的内容是自己搬过来的，等于刚读过；源路径已不存在
           if (ctx.readState) ctx.readState.delete(args.from);
           recordRead(ctx, args.to);
           return { isWrite, change: buildChange(name, args, before, ctx.tree), result: '已移动: ' + args.from + ' → ' + args.to };
         }
         case 'copy': {
-          _VFS.copy(ctx.tree, args.from, args.to);
+          _VFS.copy(ctx.tree, args.from, args.to, writeOptions);
           // 同上：副本内容就是自己刚复制的，无须再读一遍才能改
           recordRead(ctx, args.to);
           return { isWrite, change: buildChange(name, args, before, ctx.tree), result: '已复制: ' + args.from + ' → ' + args.to };
