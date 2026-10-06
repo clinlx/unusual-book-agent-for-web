@@ -69,7 +69,7 @@ const GameUI = (() => {
     const formula=aggregate?'合计':diceFormulaShort(row?.formula||'掷骰');
     const raw=Number.isFinite(result?.raw)?result.raw:Number.isFinite(row?.total)?row.total:result?.total;
     const total=Number.isFinite(result?.total)?result.total:raw;
-    const left=showModifier?(Number(result?.left)||0):0;
+    const left=showModifier&&!result?.special?(Number(result?.left)||0):0;
     return `<span class="dice-roll-chip">${label?`<span class="dice-roll-label">${esc(label)}</span>`:''}<small>${esc(formula)}</small><span class="dice-equals">=</span><strong>${esc(raw)}</strong>${left?`<em class="dice-modifier">${esc(signedModifier(left))} → ${esc(total)}</em>`:''}</span>`;
   }
   function diceTarget(result){
@@ -562,7 +562,7 @@ const GameUI = (() => {
     }
     const left=Number(d.left)||0,right=Number(d.right)||0,target=Number(d.target);
     return {description:e?.description||'',roller:e?.roller||'',related_attr:e?.relatedAttr||'',is_secret:!!e?.secret,dice_dict,
-      calculate_only:d.success==null,target_value:Number.isFinite(target)?target-right:undefined,compare_mode:d.compare_mode,dice_combine_mode:d.mode||'sum',
+      calculate_only:d.mode==='independent'&&rows.length?rows.every(row=>row.success==null&&!row.special):d.success==null,target_value:Number.isFinite(target)?target-right:undefined,compare_mode:d.compare_mode,dice_combine_mode:d.mode||'sum',
       left_modifiers:left?{'旧存档合计':left}:{},right_modifiers:right?{'旧存档合计':right}:{}};
   }
   const V3={
@@ -911,9 +911,10 @@ const GameUI = (() => {
     const args=diceDetailArgs(e),specs=diceSpecRows(args),d=e.data||{},storedRows=Array.isArray(d.rows)?d.rows:[],hasStoredRolls=storedRows.some(row=>Array.isArray(row.rolls)&&row.rolls.length>0),resolved=hasStoredRolls||e.pending!==true;
     const left=Object.values(args.left_modifiers||{}).reduce((n,v)=>n+(Number(v)||0),0),right=Object.values(args.right_modifiers||{}).reduce((n,v)=>n+(Number(v)||0),0);
     const baseTarget=Number.isFinite(Number(args.target_value))?Number(args.target_value):null,finalTarget=baseTarget===null?null:baseTarget+right;
-    const compare=DICE_COMPARE[args.compare_mode]||'',special=resolved&&d.special&&d.critical;
-    const resultText=resolved?(d.success==null?'仅计算':special?String(d.critical).replace(/^可能是/,''):(d.success?'通过':'不通过')):'等待检定';
-    const resultClass=!resolved?'pending':d.success==null?'calculated':special?(String(d.critical).includes('失败')?'critical-fail':'critical-success'):(d.success?'success':'fail');
+    const independent=args.dice_combine_mode==='independent'&&!args.calculate_only;
+    const compare=DICE_COMPARE[args.compare_mode]||'',special=resolved&&!independent&&d.special&&d.critical;
+    const resultText=resolved?(independent?'各项分别判定':d.success==null?'仅计算':special?String(d.critical).replace(/^可能是/,''):(d.success?'通过':'不通过')):'等待检定';
+    const resultClass=!resolved?'pending':independent||d.success==null?'calculated':special?(String(d.critical).includes('失败')?'critical-fail':'critical-success'):(d.success?'success':'fail');
     const leftValue=!resolved?'?':d.mode==='independent'?'EACH':Number.isFinite(Number(d.total))?String(d.total):Number.isFinite(Number(d.raw))?String(d.raw):'?';
     const rawValue=resolved&&Number.isFinite(Number(d.raw))?String(d.raw):'?';
     const operator=args.calculate_only?'∑':special?'✦':compare||'?';

@@ -51,9 +51,12 @@ for mc in 本回合节拍触发的强制检定:
 if 即兴信息影响未来的状态/互动/线索/资源/派系/分支:
     write_to_file(create_directory(new_info_name), new_info_file)
 
-if 存在 '开场说明.md' and (文风不明确 or 明显偏离样例): @read_file(path="/workspace/开场说明.md")
-draft_story = 写出丰沛的正文
-draft_story = 发布前审校并修正(draft_story, [玩家行动授权范围, 保密, 文风, 收尾])
+if 存在 '开场说明.md' and 当前上下文缺少其样例开场内容: @read_file(path="/workspace/开场说明.md")
+# 样例开场用于全程文风校准：学习语气、视角、句段衔接与对白节奏，不重播开场情节；主持人开场白中的车卡说明不作为小说范本。
+scene_plan = 从本轮已确定事实中编排当前处境、角色已知背景与关系、要展开的关键过程、交还玩家的决策点
+draft_story = 按 scene_plan 和系统中的“剧情执行与小说成稿”连贯写出这一场戏，让动作、对白、记忆与感受共同展开
+draft_story = 发布前审校并修正(draft_story, [玩家能否理解处境与因果, 关键过程是否被摘要跳过, 玩家行动授权范围, 保密, 文风, 收尾])
+# 审校可补写必要背景与过程，再删去重复；不要把成稿压成感官清单。正文发布前完成修订。
 update_all_files_change_by_story(draft_story, [create/move/edit])
 if 剧情触发器已成功触发 and 该触发器不可重复:
     标记而非删除: 该条目加 ".已触发": true，"发生权重" 置 0

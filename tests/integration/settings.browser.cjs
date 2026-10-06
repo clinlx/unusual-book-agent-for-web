@@ -7,9 +7,11 @@ const path = require('node:path');
 const { chromium } = require('playwright');
 const readyDesigner = require('./designer-ready.cjs');
 const dist = path.resolve(__dirname, '../../dist');
+const artifacts = path.resolve(__dirname, '../artifacts');
 let server, browser, origin;
 
 before(async () => {
+  fs.mkdirSync(artifacts, { recursive: true });
   server = http.createServer((req, res) => {
     const file = path.resolve(dist, '.' + decodeURIComponent(req.url.split('?')[0]));
     if (!file.startsWith(dist + path.sep)) return res.writeHead(404).end();
@@ -60,7 +62,7 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 
           return text.top >= Math.max(0, clip.top) && text.top < Math.min(innerHeight, clip.bottom);
         });
         assert.equal(inView, true, 'clicking i exposes the explanation inside the visible settings area');
-        await page.screenshot({ path: path.join(dist, 'settings-' + name + '-' + viewport.width + '.png') });
+        await page.screenshot({ path: path.join(artifacts, 'settings-' + name + '-' + viewport.width + '.png') });
         await button.press('Enter');
         assert.equal(await panel.isHidden(), true);
         await button.press('Space');

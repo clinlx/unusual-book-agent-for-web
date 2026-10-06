@@ -3,6 +3,7 @@ const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { randomUUID } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 const { chromium } = require('playwright');
 const VFS = require('../../src/vfs');
@@ -16,7 +17,7 @@ for (const [name, status] of [
   ['canonical', { 状态: { HP: 9, MAXHP: 12, MP: 4, MAXMP: 8, SAN: 60 } }],
   ['aliases', { Status: { Health: 9, MaxHealth: 12, Mana: 4, MaxMana: 8, Sanity: 60 } }],
 ]) {
-  test('offline replay displays ' + name + ' resources, safe data and mobile tabs without network access', async () => {
+  test('offline replay displays ' + name + ' resources, safe data and mobile tabs without network access', async t => {
     const tree = VFS.createTree();
     VFS.writeFile(tree, '/workspace/Player-p/基础信息.json', JSON.stringify({ 姓名: '青', ...status, '.秘密': 'HIDDEN_CHARACTER' }));
     VFS.writeFile(tree, '/workspace/Player-p/背包.json', JSON.stringify([{ 名称: '钥匙', 剧情台本: 'HIDDEN_ITEM' }]));
@@ -28,7 +29,8 @@ for (const [name, status] of [
       { type: 'assistant', content: 'INTERNAL_MODEL' },
     ];
     VFS.writeFile(tree, '/workspace/过往回合历史记忆/Round_1_Time_夜晚/玩家结束状态.json', JSON.stringify(Core.player(save)));
-    const file = path.resolve(__dirname, '../../dist/archive-' + name + '.html');
+    const file = path.resolve(__dirname, '../artifacts/archive-' + name + '-' + randomUUID() + '.html');
+    t.after(() => fs.rmSync(file, { force: true }));
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, Presentation.historyHTML(save, undefined, Core.player(save)));
     const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });

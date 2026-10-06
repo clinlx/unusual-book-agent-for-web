@@ -208,6 +208,10 @@ const GameCore = (() => {
       return {label,formula,constant:Number(formula)};
     });
     if(!a.calculate_only&&specs.some(r=>r.constant!==undefined))throw Error('正式检定禁止使用裸整数；随机骰使用 NdM / -NdM，明确固定结果使用 set-force:N，固定修正使用 left_modifiers / right_modifiers');
+    if(mode==='independent'){
+      const shape=r=>r.n!==undefined?`dice:${r.n}:${r.faces}:${r.sign}`:r.forced!==undefined?'forced':'constant';
+      if(new Set(specs.map(shape)).size>1)throw Error('independent 只能批量处理同一骰式、同一套检定规则。不同用途或骰子规格请拆开，分别调用 roll_dice；例如先进行 SAN 检定，再用 calculate_only:true 计算损失。');
+    }
     return {compare,mode,left,right,ranges,specs};
   }
   function dice(a,random=Math.random,fixedRolls=null){
@@ -223,11 +227,13 @@ const GameCore = (() => {
     }):[r.forced!==undefined?r.forced:r.constant];return {label:r.label,formula:r.formula,rolls,total:rolls.reduce((x,y)=>x+y,0),forced:r.forced!==undefined};});
     if(Array.isArray(fixedRolls)&&fixedIndex!==fixedRolls.length)throw Error('手动掷骰结果数量不匹配');
     function judge(raw){const total=raw+left,target=(a.target_value||0)+right;const hints=[];
-      if(ranges.critical_success_range&&raw>=ranges.critical_success_range[0]&&raw<=ranges.critical_success_range[1])hints.push('可能是大成功');
-      if(ranges.critical_failure_range&&raw>=ranges.critical_failure_range[0]&&raw<=ranges.critical_failure_range[1])hints.push('可能是大失败');
+      if(!a.calculate_only&&ranges.critical_success_range&&raw>=ranges.critical_success_range[0]&&raw<=ranges.critical_success_range[1])hints.push('可能是大成功');
+      if(!a.calculate_only&&ranges.critical_failure_range&&raw>=ranges.critical_failure_range[0]&&raw<=ranges.critical_failure_range[1])hints.push('可能是大失败');
       return {raw,total,target,success:a.calculate_only?null:compare[a.compare_mode](total,target),criticalHints:hints,critical:hints.join('，')||null,special:!a.calculate_only&&hints.length>0};}
     const raw=mode==='max'?Math.max(...rows.map(r=>r.total)):mode==='min'?Math.min(...rows.map(r=>r.total)):rows.reduce((n,r)=>n+r.total,0);
-    const result={rows:mode==='independent'?rows.map(r=>({...r,...judge(r.total)})):rows,mode,left,right,compare_mode:a.compare_mode,...judge(raw)};
+    const summary=judge(raw);
+    if(mode==='independent')Object.assign(summary,{success:null,criticalHints:[],critical:null,special:false});
+    const result={rows:mode==='independent'?rows.map(r=>({...r,left,right,compare_mode:a.compare_mode,...judge(r.total)})):rows,mode,left,right,compare_mode:a.compare_mode,...summary};
     const describe=r=>r.special?r.raw+' · '+r.critical+'（已忽略修正值，已省略比较）':r.total+(r.success===null?'':(' / '+r.target+' · '+(r.success?'通过':'未通过')));
     const resultText=mode==='independent'?result.rows.map(r=>r.label+': '+describe(r)).join('；'):describe(result);
     return {data:result,content:`${a.roller||'角色'} · ${a.description||a.related_attr||'掷骰'}\n${rows.map(r=>`${r.label} ${r.formula} [${r.rolls.join(', ')}]`).join('；')}\n${resultText}`};
