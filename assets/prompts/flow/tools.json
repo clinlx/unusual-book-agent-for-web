@@ -1,5 +1,5 @@
 {
-  "trigger_next_round": "获取本轮玩家行动。phase_plan 填恢复结果，包含 Countdowns、Pending_Triggers 数组、Forced_Checks；可传对象或 JSON 对象字符串。",
+  "trigger_next_round": "获取本轮玩家行动。phase_plan 填恢复结果，包含非空说明文本 Countdowns、Forced_Checks 和数组 Pending_Triggers；无事项时文本填无、数组填 []。可传对象或 JSON 对象字符串。",
   "append_story": "追加玩家可见正文 content 和一句话摘要 one_line_summary_of_content。正文不可改写，不重复已发布内容。",
   "end_the_round": "发布正文并保存变更后，提交 NEXT_TURN_CACHE 结束本轮；Story_Phase 必填，终局加 game_over:true。成功后停止。",
   "roll_dice": "按规则掷骰。所有参数都必须显式填写：description、roller、related_attr、is_secret、dice_dict、calculate_only、target_value、compare_mode、critical_success_range、critical_failure_range、dice_combine_mode、left_modifiers、right_modifiers。dice_dict 支持 NdM、-NdM 和 set-force:N；正式检定禁止裸整数。随机 d100 应写 \"1d100\"，固定结果 1 才写 \"set-force:1\"。critical_success_range / critical_failure_range 使用真正的 JSON 数组 [min,max]，不用时填 null，不要写字符串 \"1,14\"。无修正时 left_modifiers/right_modifiers 填 {}。calculate_only:false 时 target_value 与 compare_mode 必须有效；calculate_only:true 时二者可填 null。",
