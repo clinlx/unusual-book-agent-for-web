@@ -127,3 +127,99 @@ for (const name of ['game', 'designer']) {
     } finally { await context.close(); }
   });
 }
+
+for (const name of ['game', 'designer']) {
+  test(name + ' shortcut inversion is explained, persisted, and works in the actual composer', async () => {
+    const context = await browser.newContext();
+    try {
+      const page = await context.newPage();
+      page.setDefaultTimeout(5000);
+      let requests = 0;
+      await page.route('https://**/*', async route => {
+        if (!route.request().url().startsWith('https://shortcuts.invalid/')) return route.abort();
+        requests++;
+        await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ choices: [{ message: { content: '已接收' } }] }) });
+      });
+      await openSettings(page, name);
+      if (name === 'game') await page.locator('[data-settings-section="game"] > summary').click();
+      const checkbox = name === 'game' ? page.locator('[name="reverseSendNewline"]') : page.getByRole('checkbox', { name: '反转发送与换行' });
+      assert.equal(await checkbox.isChecked(), false);
+      const explanation = await page.locator(name === 'game' ? '#settings-form' : '.modal').innerText();
+      assert.match(explanation, /默认.*发送.*换行.*开启后.*发送.*换行/);
+      if (name === 'game') assert.equal(await page.locator('[data-action="prompts"]').count(), 0);
+      await checkbox.check();
+      if (name === 'designer') {
+        const field = text => page.locator('.modal .row').filter({ has: page.locator('label', { hasText: new RegExp('^' + text + '$') }) }).locator('input');
+        await field('API Base URL').fill('https://shortcuts.invalid/v1');
+        await field('API Key').fill('test-only');
+        await page.locator('.modal .row').filter({ has: page.locator('label', { hasText: /^流式输出$/ }) }).locator('select').selectOption('0');
+      }
+      await page.getByRole('button', { name: name === 'game' ? '保存设置' : '保存', exact: true }).click();
+      await page.reload();
+      if (name === 'designer') await readyDesigner(page);
+      assert.equal(await page.evaluate(name => name === 'game' ? GameApp.getState().settings.reverseSendNewline : __UI_STATE__.settings.reverseSendNewline, name), true);
+      if (name === 'game') {
+        await page.evaluate(async () => {
+          const zip = ZIP.makeZip([{ name: 'Player-pc/基础信息.json', content: '{"姓名":"测试"}' }, { name: 'Player-pc/背包.json', content: '[]' }]);
+          await GameApp.importSave(new File([zip], '快捷键.zip'));
+          GameApp.getState().active.status = 'waiting';
+          GameApp.setMode('play');
+        });
+        const input = page.locator('#action-input');
+        await page.waitForFunction(() => document.querySelector('#action-input') && !document.querySelector('#action-input').disabled);
+        await page.evaluate(() => {
+          window.__shortcutSubmits = 0;
+          document.querySelector('#action-form').onsubmit = event => { event.preventDefault(); event.stopPropagation(); window.__shortcutSubmits++; };
+        });
+        await input.fill('第一行'); await input.press('Control+Enter');
+        assert.equal(await input.inputValue(), '第一行\n');
+        assert.equal(await page.evaluate(() => __shortcutSubmits), 0);
+        await input.press('Enter');
+        assert.equal(await page.evaluate(() => __shortcutSubmits), 1);
+        const defaults = await page.evaluate(() => {
+          GameApp.getState().settings.promptOverrides['reference/游戏前准备.md'] = '旧覆盖';
+          GameApp.getState().settings.promptOverrides['system/host.md'] = '忽略此旧系统覆盖';
+          return { actual: GameApp.readFile('/.reference/游戏前准备.md'), expected: Prompts.get('reference/游戏前准备.md'), editable: typeof GameApp.savePrompt,
+            system: GameApp.currentContext().find(message => message.role === 'system').content, expectedSystem: Prompts.buildSystem() };
+        });
+        assert.equal(defaults.actual, defaults.expected);
+        assert.equal(defaults.editable, 'undefined');
+        assert.equal(defaults.system, defaults.expectedSystem);
+        const colors = await page.evaluate(() => {
+          const box = document.createElement('div');
+          box.innerHTML = GamePresentation.fields([{ 名称: '新增测试', 余量: 1 }], [], 'test');
+          document.body.append(box);
+          const tag = box.querySelector('.change-tag.added'), style = getComputedStyle(tag);
+          return { text: tag.textContent, radius: style.borderRadius, background: style.backgroundColor, display: style.display };
+        });
+        assert.deepEqual(colors, { text: '新增', radius: '999px', background: 'rgb(229, 240, 228)', display: 'inline-flex' });
+        await page.evaluate(() => GameApp.updateSettings({ reverseSendNewline: false }));
+        await page.waitForFunction(() => document.querySelector('.composer-bottom').textContent.includes('Ctrl / ⌘ + Enter 发送'));
+        await page.evaluate(() => {
+          window.__shortcutSubmits = 0;
+          document.querySelector('#action-form').onsubmit = event => { event.preventDefault(); event.stopPropagation(); window.__shortcutSubmits++; };
+        });
+        await input.fill('恢复默认'); await input.press('Enter');
+        assert.equal(await input.inputValue(), '恢复默认\n');
+        assert.equal(await page.evaluate(() => __shortcutSubmits), 0);
+        await input.press('Control+Enter');
+        assert.equal(await page.evaluate(() => __shortcutSubmits), 1);
+      } else {
+        const input = page.locator('#chatInput');
+        await input.fill('第一行'); await input.press('Control+Enter');
+        assert.equal(requests, 0);
+        await input.press('Enter');
+        await page.waitForFunction(() => !__UI_STATE__.running && __UI_STATE__.tree);
+        await page.waitForTimeout(100);
+        assert.equal(requests, 1);
+        await page.evaluate(() => { __UI_STATE__.settings.reverseSendNewline = false; });
+        await input.fill('恢复默认'); await input.press('Enter');
+        assert.equal(requests, 1);
+        await input.press('Control+Enter');
+        await page.waitForFunction(() => !__UI_STATE__.running);
+        await page.waitForTimeout(100);
+        assert.equal(requests, 2);
+      }
+    } finally { await context.close(); }
+  });
+}

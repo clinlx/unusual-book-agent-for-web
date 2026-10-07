@@ -110,9 +110,7 @@ function validateStructure(world) {
     }
   }
   need(path.join(root,'模组.md'));
-  const openingFiles = kind(path.join(root,'开场说明.md')) || !['开场白.md','样例开场.md'].some(name=>kind(path.join(root,name))) ? ['开场说明.md'] : ['开场白.md','样例开场.md'];
-  for(const name of openingFiles) if(need(path.join(root,name))&&[...fs.readFileSync(path.join(root,name),'utf8').trim()].length<100) report(`[内容过短] ${name} 至少需 100 字符`,path.join(root,name));
-  if(kind(path.join(root,'故事.txt'))&&!['开场原文.txt','开场剧情.txt'].some(name=>kind(path.join(root,name)))) need(path.join(root,openingFiles[0]==='开场说明.md'?'开场原文.txt':'开场剧情.txt'));
+  for(const name of ['开场说明.md','开场白.md','样例开场.md']) if(kind(path.join(root,name))&&[...fs.readFileSync(path.join(root,name),'utf8').trim()].length<100) report(`[内容过短] ${name} 至少需 100 字符`,path.join(root,name));
   for(const name of ['剧情线与进度','世界状态和世界规则','存档-索引-NPC','存档-索引-物品','存档-世界','存档-旧']) need(path.join(root,name),true);
   need(path.join(root,'剧情线与进度/主线剧情.md'));
   for(const dir of children(path.join(root,'剧情线与进度'))) for(const name of ['剧情.md','目标.json','进度.json']) need(path.join(dir,name));

@@ -44,7 +44,7 @@ const GameData=(()=>{
     try{const info=read(s,file);if(!hiddenFlag(info['.是否对玩家隐藏'])){const name=get(info,['名称','姓名','Name','name']);if(typeof name==='string'&&name.trim())return name;}}catch(_){}
     return n.type==='dir'?n.name:p.split('/').at(-2)||n.name;
   }
-  function references(s,entries){const warnings=[];for(const entry of entries||[]){if(!object(entry))continue;const p=entry.所在文件,k=entry.剧情关键词||entry.事件关键词;if(typeof p!=='string'||!p.trim())continue;const n=node(s,p);if(!n){warnings.push('[引用错误] 文件或目录不存在: '+p+'。先用 tree/search 确认实际路径，再读取模组和相关台本，修正 phase_plan 或 Cache 的引用；确需新增的后续事件先落实到文件，再登记引用，不凭不存在的引用推进剧情。');continue;}if(typeof k==='string'&&k.trim()){
+  function references(s,entries){const warnings=[];for(const entry of entries||[]){if(!object(entry))continue;const p=entry.所在文件,k=entry.剧情关键词||entry.事件关键词;if(typeof p!=='string'||!p.trim())continue;const n=node(s,p);if(!n&&!p.replace(/\\/g,'/').split('/').includes('..')&&['开场说明.md','开场白.md','样例开场.md','开场原文.txt','开场剧情.txt'].includes(p.replace(/\\/g,'/').split('/').at(-1)))continue;if(!n){warnings.push('[引用错误] 文件或目录不存在: '+p+'。先用 tree/search 确认实际路径，再读取模组和相关台本，修正 phase_plan 或 Cache 的引用；确需新增的后续事件先落实到文件，再登记引用，不凭不存在的引用推进剧情。');continue;}if(typeof k==='string'&&k.trim()){
       const contains=(n,depth=0)=>depth<=8&&(n.type==='file'?n.encoding!=='base64'&&n.content.includes(k):Object.values(n.children||{}).some(c=>contains(c,depth+1)));
       if(!contains(n))warnings.push('[关键词缺失] '+p+' 中不存在: '+k+'。先读取对应文件，使用其中真实存在的剧情/事件关键词修正引用；检查是否改名、已完成或引用了错误文件，不用猜测的名称替代。');
     }}return warnings;}

@@ -8,6 +8,7 @@ tests/*
 !tests/game-presentation.test.js
 !tests/game-ui.test.js
 !tests/game-prompts.test.js
+!tests/game.browser.cjs
 !tests/prompt-complex.test.js
 !tests/reference-details.test.js
 !tests/reference-parity.test.js

@@ -1,7 +1,7 @@
 'use strict';
 const GameApp=(()=>{
   const defaults={baseUrl:'https://api.deepseek.com/v1',apiKey:'',model:'deepseek-flash',stream:true,temperature:0.7,topP:'',frequencyPenalty:'',presencePenalty:'',seed:'',customRequestBody:'',maxContextK:240,maxOutputTokens:16384,
-    reasoningEffort:'high',maxToolLoops:60,httpTimeoutSeconds:180,maxRetries:2,worldListSource:'',manualDice:false,promptOverrides:{}};
+    reasoningEffort:'high',maxToolLoops:60,httpTimeoutSeconds:180,maxRetries:2,worldListSource:'',manualDice:false,reverseSendNewline:false,promptOverrides:{}};
   const S={saves:[],active:null,settings:{...defaults},mode:'play',running:false,importing:null,stream:{content:'',reasoning:'',tools:[],story:'',storyPublished:0},error:null,storageWarning:null,usage:null};
   const db=GameStore.create();const listeners=new Set();let controller=null,initialized=false,storage=null,lease=null;
   try{storage=globalThis.localStorage;lease=Lease.create({storage,tabId:GameCore.uid()});}catch(_){}
@@ -12,7 +12,7 @@ const GameApp=(()=>{
   function peerCheck(s){if(lease?.isHeldByOther(s.id))throw Error('该存档正在另一个页面运行，请等待其结束');}
   async function persist(){const s=active();s.updatedAt=Date.now();await db.putSave(s);S.saves=await db.list();}
   async function init(){if(initialized)return;await db.open();S.settings={...defaults,...await db.getSettings()};S.settings.promptOverrides||={};
-    S.settings.promptOverrides=Prompts.migrateOverrides(S.settings.promptOverrides);delete S.settings.promptOverrides['flow/tools.json'];await db.putSettings(S.settings);
+    await db.putSettings(S.settings);
     S.saves=await db.list();if(db.memoryMode)S.storageWarning='浏览器存储不可用，当前内容仅临时保存，请在关闭页面前导出存档。';initialized=true;emit();}
   async function importSave(file){return runImport(()=>Promise.resolve(file));}
   async function importHandoff(id,onProgress=()=>{}){
@@ -66,8 +66,8 @@ const GameApp=(()=>{
   async function deleteSave(id){idle();peerCheck({id});await db.deleteSave(id);if(S.active?.id===id)S.active=null;S.saves=await db.list();emit();}
   function exportSave(){idle();return GameImport.exportSave(active());}
   function rawRead(p){const node=VFS.resolve(active().tree,VFS.normalize(GameCore.path(p)));if(!node||node.type!=='file')throw Error('文件不存在');if(node.encoding==='base64')throw Error('该文件不能作为文本打开');return node.content;}
-  function readFile(p){const resource=Prompts.file(p,S.settings.promptOverrides);return resource===undefined?rawRead(p):resource;}
-  async function writeFile(p,text){idle();const s=active();peerCheck(s);const fp=GameCore.path(p);if(fp.startsWith('/.reference/'))throw Error('请在设置中修改提示词');
+  function readFile(p){const resource=Prompts.file(p);return resource===undefined?rawRead(p):resource;}
+  async function writeFile(p,text){idle();const s=active();peerCheck(s);const fp=GameCore.path(p);if(fp.startsWith('/.reference/'))throw Error('提示词为只读资源');
     VFS.writeFile(s.tree,fp,String(text));await persist();emit();}
   async function fileOperation(op,args={}){idle();const s=active();peerCheck(s);const t=VFS.clone(s.tree),p=GameCore.path(args.path),from=GameCore.path(args.from),to=GameCore.path(args.to);
     if([p,from,to].some(x=>x.startsWith('/.reference/')))throw Error('提示词为只读资源');
@@ -82,8 +82,8 @@ const GameApp=(()=>{
   function currentContext(){
     if(S.lastRequest&&S.lastRequestSaveId===active().id)return structuredClone(S.lastRequest.messages);
     const s=structuredClone(active()),frozen=!s.activeRound?.complete&&s.activeRound?.promptSnapshot;
-    const overrides=frozen?.overrides||S.settings.promptOverrides,flows=Prompts.flows(overrides);
-    const built=GameCore.context(s,frozen?.system||system(overrides),Math.max(1024,S.settings.maxContextK*1000-S.settings.maxOutputTokens),{cachePrompt:flows.flow_cache,summariesPrompt:flows.flow_summaries});
+    const overrides={},flows=Prompts.flows();
+    const built=GameCore.context(s,(frozen?.system&&!Object.keys(frozen.overrides||{}).length?frozen.system:system()),Math.max(1024,S.settings.maxContextK*1000-S.settings.maxOutputTokens),{cachePrompt:flows.flow_cache,summariesPrompt:flows.flow_summaries});
     for(const m of built){m.content=Prompts.migrateText(m.content);if(m.tool_calls)for(const tc of m.tool_calls)tc.function.arguments=Prompts.migrateText(tc.function.arguments);}
     return built;
   }
@@ -91,7 +91,7 @@ const GameApp=(()=>{
     idle();let s=active();if(!S.settings.apiKey.trim())throw Error('请先在设置中填写 API Key');peerCheck(s);
     if(lease?.available){const lock=lease.acquireForRun(s.id,s.id);if(!lock.ok)throw Error('该存档正在另一个页面运行');}
     S.running=true;S.error=null;controller=new AbortController();
-    const settings=structuredClone(S.settings);const overrides=settings.promptOverrides;
+    const settings=structuredClone(S.settings);const overrides={};
     let timer;const clearStream=(keepStory=false)=>{const story=keepStory?S.stream.story||'':'',storyPublished=keepStory?S.stream.storyPublished||0:0;S.stream={content:'',reasoning:'',tools:[],story,storyPublished};};
     try{
       
@@ -99,7 +99,7 @@ const GameApp=(()=>{
       if(kind!=='resume'&&pendingBatch(s))throw Error('上一轮尚有工具记录需要恢复，请先继续本回合');
       if(kind!=='resume')GameCore.beginRound(s,text,kind==='start',Prompts.roundPrompt(kind==='start',overrides),{skip:kind==='skip'});
       else if(!s.activeRound)throw Error('没有可继续的回合');
-      if(!s.activeRound.promptSnapshot)s.activeRound.promptSnapshot={overrides,system:system(overrides)};
+      if(!s.activeRound.promptSnapshot||Object.keys(s.activeRound.promptSnapshot.overrides||{}).length)s.activeRound.promptSnapshot={overrides,system:system(overrides)};
       if(!Number.isFinite(s.activeRound.requestCount))s.activeRound.requestCount=s.messages.filter(m=>m.round===s.activeRound.number&&m.role==='assistant').length;
       s.activeRound.requestLimit??=settings.maxToolLoops;
       const snapshot=s.activeRound.promptSnapshot;
@@ -123,7 +123,7 @@ const GameApp=(()=>{
         cap:Math.max(1024,settings.maxContextK*1000-settings.maxOutputTokens-GameCore.estimate(defs)),maxToolLoops:settings.maxToolLoops,
         
         
-        resource:p=>Prompts.file(p,S.settings.promptOverrides),resourceList:Prompts.referencePaths(),afterStory:flows.flow_after_story,firstRecall:flows.flow_recall,
+        resource:p=>Prompts.file(p),resourceList:Prompts.referencePaths(),afterStory:flows.flow_after_story,firstRecall:flows.flow_recall,
         resumePrompt:kind==='resume'?flows.flow_resume:'',cachePrompt:flows.flow_cache,summariesPrompt:flows.flow_summaries,transformContext:Prompts.migrateText,
         reminder:save=>!save.activeRound.triggered?flows.flow_need_trigger:!save.activeRound.published?flows.flow_no_story:flows.flow_need_end,
         onStep:async()=>{if(lease?.available&&lease.lostWhileRunning(s.id))throw Error('存档被另一个页面接管');await persist();const keepStory=!!S.stream.story&&(s.activeRound?.published||0)<=S.stream.storyPublished;clearStream(keepStory);emit();}});
@@ -159,21 +159,13 @@ const GameApp=(()=>{
   async function resolveManualDice(rolls){
     idle();const s=active();peerCheck(s);GameCore.resolveManualDice(s,rolls);await persist();emit();return s;
   }
-  const promptList=()=>Prompts.list().filter(p=>p.id!=='flow/tools.json').map(p=>({...p,overridden:Object.hasOwn(S.settings.promptOverrides,p.id)}));
-  const getPrompt=id=>Prompts.get(id,S.settings.promptOverrides);
-  async function savePrompt(id,text){if(id==='flow/tools.json'||id==='tools.json')throw Error('工具说明不允许在网页中修改');Prompts.get(id);if(typeof text!=='string'||!text.trim())throw Error('提示词不得为空');
-    if(id.endsWith('.json')){const value=JSON.parse(text);if(!value||typeof value!=='object'||Array.isArray(value))throw Error('提示词配置必须是 JSON 对象');
-      for(const [k,v]of Object.entries(JSON.parse(Prompts.get(id))))if(typeof value[k]!==typeof v||!value[k])throw Error('缺少配置字段：'+k);}
-    const settings={...S.settings,promptOverrides:{...S.settings.promptOverrides,[id]:text}};await db.putSettings(settings);S.settings=settings;emit();}
-  async function resetPrompt(id){if(id==='flow/tools.json'||id==='tools.json')throw Error('工具说明不允许在网页中修改');const overrides={...S.settings.promptOverrides};if(id){Prompts.get(id);delete overrides[id];}else for(const k of Object.keys(overrides))delete overrides[k];
-    const settings={...S.settings,promptOverrides:overrides};await db.putSettings(settings);S.settings=settings;emit();}
   async function saveDraft(text){if(!S.active)return;peerCheck(S.active);S.active.draft=String(text);await persist();}
   if(typeof window!=='undefined'){
     // Navigation inside the app is guarded by page-rendered UI, never a native unload dialog.
     window.addEventListener('storage',e=>{if(e.key?.startsWith('awl:lease:'))emit();});
   }
   return {getState:()=>S,subscribe,init,importSave,importHandoff,importLink,openSave,closeSave,renameSave,deleteSave,exportSave,send,skip,start,resume,abort,rollback,setMode,
-    readFile,writeFile,fileOperation,player,currentContext,updateSettings,promptList,getPrompt,savePrompt,resetPrompt,saveDraft,resolveManualDice,
+    readFile,writeFile,fileOperation,player,currentContext,updateSettings,saveDraft,resolveManualDice,
     testConnection:values=>GameTransport.testConnection({...S.settings,...values}),
     listModels:values=>GameTransport.listModels({...S.settings,...values})};
 })();

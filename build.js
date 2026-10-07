@@ -16,7 +16,7 @@ function collectBooks(dir,relative=''){
   }
 }
 collectBooks(path.join(root,'assets','trpg_rule_books'));
-const order=['vendor/marked.min.js','src/vfs.js','src/shared/file-write-validation.js','src/sse.js','src/zip.js','src/workspace-import.js','src/diff.js','src/md.js','src/lease.js','src/shared/api-url.js','src/shared/world-handoff.js','src/shared/transfer-dialog.js','src/shared/designer-projects.js','src/shared/back-navigation.js',
+const order=['vendor/marked.min.js','src/vfs.js','src/shared/file-write-validation.js','src/sse.js','src/zip.js','src/workspace-import.js','src/diff.js','src/md.js','src/lease.js','src/shared/api-url.js','src/shared/world-handoff.js','src/shared/transfer-dialog.js','src/shared/designer-projects.js','src/shared/back-navigation.js','src/shared/send-shortcut.js',
   'src/game-prompts.js','src/game-tools.js','src/game-data.js','src/game-history.js','src/game-presentation.js','src/game-core.js','src/game-import.js','src/game-catalog.js','src/game-store.js','src/game-transport.js','src/game-app.js','src/game-ui.js'];
 const obfuscated=JavaScriptObfuscator.obfuscate(Build.scripts(order),{
   target:'browser-no-eval',compact:true,identifierNamesGenerator:'hexadecimal',

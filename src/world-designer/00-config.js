@@ -357,6 +357,7 @@ const DEFAULT_SETTINGS = {
   reasoningEffort: 'high',
   // 留空即沿用代码里的默认系统提示词
   systemPromptOverride: '',
+  reverseSendNewline: false,
 };
 
 const TOOL_DEFS = [

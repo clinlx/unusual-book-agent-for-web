@@ -257,10 +257,11 @@ const GameCore = (() => {
         
         if(resource!==undefined){const offset=Math.max(0,Number(input.offset)||0),limit=Math.min(120000,Math.max(1,Number(input.limit)||32000));
           return {content:resource.slice(offset,offset+limit),offset,totalLength:resource.length,truncated:offset+limit<resource.length};}
+        if(!n&&fp.startsWith('/workspace/')&&['开场说明.md','开场白.md','样例开场.md','开场原文.txt','开场剧情.txt'].includes(fp.split('/').at(-1)))return {content:'',offset:0,totalLength:0,truncated:false,exists:false,optional:true};
         if(!n)throw Error('文件不存在: '+fp);
         const r=vfs.readFile(s.tree,fp,{offset:input.offset,limit:input.limit,cap:120000});round.readState[fp]=n.content;return r;
       };
-      const writable=fp=>{if(fp==='/.reference'||fp.startsWith('/.reference/')||fp==='/prompts'||fp.startsWith('/prompts/')||options.resource?.(fp)!==undefined)throw Error('提示词为只读资源，请在设置中修改');};
+      const writable=fp=>{if(fp==='/.reference'||fp.startsWith('/.reference/')||fp==='/prompts'||fp.startsWith('/prompts/')||options.resource?.(fp)!==undefined)throw Error('提示词为只读资源');};
       const readFirst=fp=>{writable(fp);const n=vfs.resolve(s.tree,vfs.normalize(fp));if(n?.type==='file'&&round.readState[fp]!==n.content)throw Error('修改前先 read_file 读取最新内容: '+fp);};
       const readSubtreeFirst=fp=>{readFirst(fp);const n=vfs.resolve(s.tree,vfs.normalize(fp));if(n?.type==='dir')for(const child of Object.values(n.children))readSubtreeFirst(fp+'/'+child.name);};
       let result;

@@ -2132,6 +2132,7 @@
     scheduleDraftSave();
   }
   function chatInputKeydown(e) {
+    if (e.isComposing || e.keyCode === 229) return;
     const input = e.currentTarget;
     // Skill 补全弹窗的键盘操作
     if (S.skillPopOpen) {
@@ -2174,7 +2175,9 @@
         return;
       }
     }
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+    const action = SendShortcut.action(e, S.settings.reverseSendNewline === true);
+    if (action === 'send') { e.preventDefault(); send(); }
+    else if (action === 'newline') { e.preventDefault(); document.execCommand('insertLineBreak'); }
   }
 
   // ---------- 临时文件：文本与图片共用持久化过期策略 ----------
@@ -5155,6 +5158,7 @@
     // 默认展开：折叠态看不出可以点开，用户容易以为这里没内容
     agentSection.append(collapsible('系统提示词', agentBody, undefined, true));
 
+    const reverseSendNewline = el('input', { type: 'checkbox', checked: s.reverseSendNewline === true, 'aria-label': '反转发送与换行' });
     const changeScope = el('select', {},
       el('option', { value: 'last', text: '仅最后一轮的改动' }),
       el('option', { value: 'accumulate', text: '累积到我处理为止' }));
@@ -5351,6 +5355,8 @@
         field('满上下文处理', overflow, ['contextOverflow', 'disabled', 'sliding', 'truncate', 'compress']),
         field('最大上下文', ctxSel), field('', ctxCustom)),
       el('div', { class: 'section' }, el('h3', { text: '界面' }),
+        field('反转发送与换行', reverseSendNewline),
+        el('div', { class: 'hint', text: '默认 Ctrl / ⌘ + Enter 发送、Enter 换行；开启后 Enter 发送、Ctrl / ⌘ + Enter 换行。' }),
         field('编辑器打开位置', editorPos),
         el('div', { class: 'hint', text: '窄屏（手机）始终在「文件」标签内打开，不受此项影响。' }),
         field('思考过程', expandThink),
@@ -5387,6 +5393,7 @@
             temperature: Number(temp.value) || 0.7,
             stream: stream.value === '1',
             imageSending: imageSending.value === '1',
+            reverseSendNewline: reverseSendNewline.checked,
             contextOverflow: overflow.value,
             maxContextK: maxK,
             editorPosition: editorPos.value,

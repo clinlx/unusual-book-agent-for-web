@@ -28,12 +28,13 @@ const GamePresentation=(()=>{
     }return result;
   }
   function fields(value,before=value,key='info'){
+    const tag=status=>{const text={added:'新增',deleted:'移除',modified:'修改',increased:'增加',decreased:'减少'}[status];return text?`<span class="change-tag ${status}">${text}</span>`:'';};
     function render(d){if(d.value===null||d.value===undefined||d.value===''||d.label.startsWith('.'))return '';const cls=d.status==='same'?'':' diff-'+d.status;
       const kind=x=>x===null?'null':Array.isArray(x)?'array':typeof x;
       if(d.oldValue!==undefined&&d.status!=='deleted'&&kind(d.oldValue)!==kind(d.value)&&(kind(d.oldValue)==='object'||kind(d.value)==='object'||kind(d.oldValue)==='array'||kind(d.value)==='array'))return `<div class="info-replaced"><small>原资料</small>${render(diff(d.oldValue,undefined,d.label,d.key+'/old'))}<small>新资料</small>${render(diff(undefined,d.value,d.label,d.key+'/new'))}</div>`;
-      if(d.children){const content=d.children.map(render).join('');if(!content)return '';if(d.key===key)return content;return `<details class="info-group${cls}" data-key="${esc(d.key)}" data-change="${esc(d.status==='same'?'':JSON.stringify(d.value))}" open><summary>${esc(d.label)}${Array.isArray(d.value)?' ['+d.value.length+']':''}</summary>${content}</details>`;}
+      if(d.children){const content=d.children.map(render).join('');if(!content)return '';if(d.key===key)return content;return `<details class="info-group${cls}" data-key="${esc(d.key)}" data-change="${esc(d.status==='same'?'':JSON.stringify(d.value))}" open><summary>${esc(d.label)}${Array.isArray(d.value)?' ['+d.value.length+']':''}${tag(d.status)}</summary>${content}</details>`;}
       const old=d.status==='modified'||d.status==='decreased'?`<del>${esc(d.oldValue)}</del> → `:'';
-      return `<div class="info-row${cls}" data-key="${esc(d.key)}"><span>${esc(d.label)}</span><strong>${old}${esc(d.value)}${d.status==='added'?'<small> 新增</small>':d.status==='deleted'?'<small> 移除</small>':''}</strong></div>`;
+      return `<div class="info-row${cls}" data-key="${esc(d.key)}"><span>${esc(d.label)}</span><strong>${old}${esc(d.value)}${tag(d.status)}</strong></div>`;
     }return render(diff(before,value,'',key));
   }
   function createReader(reader){const cache=new WeakMap();const read=s=>{try{const value=reader(s);cache.set(s,structuredClone(value));return {...value,stale:false};}catch(e){return {...structuredClone(cache.get(s)||{}),stale:true,error:e.message||String(e)};}};read.clear=s=>cache.delete(s);return read;}
@@ -129,7 +130,7 @@ surface.addEventListener('pointerup',e=>{if(!press||press.id!==e.pointerId)retur
 render(false);
 })();`;
 
-    return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'"><title>'+esc(save.name)+' · 故事存档</title><style>'+styles+'</style></head><body>'+layout+'<script>'+script.replaceAll('</script','<\\/script')+'</script></body></html>';
+    return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'"><title>'+esc(save.name)+' · 故事存档</title><style>'+styles+'.change-tag{display:inline-flex;align-items:center;padding:1px 6px;margin-left:6px;border-radius:999px;border:1px solid currentColor;font:10px/1.5 var(--sans,system-ui);font-weight:500;vertical-align:middle;white-space:nowrap}.change-tag.added,.change-tag.increased{color:#427550;background:#e5f0e4}.change-tag.deleted,.change-tag.decreased{color:#a24a43;background:#f7e3df}.change-tag.modified{color:#8a6523;background:#f4e8cc}</style></head><body>'+layout+'<script>'+script.replaceAll('</script','<\\/script')+'</script></body></html>';
   }
   return {vitals,secondary,diff,fields,createReader,metadata,realTime,historyHTML,eventContent,hasPlayHistory,exportName};
 })();

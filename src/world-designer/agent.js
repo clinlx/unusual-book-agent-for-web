@@ -207,6 +207,11 @@ const Agent = (() => {
           return { isWrite, result: ls.length ? ls.map(e => `${e.type === 'dir' ? '[目录]' : e.binary ? '[非文本文件]' : '[文件]'} ${e.name} (${e.size})`).join('\n') : '(空目录)' };
         }
         case 'read_file': {
+          const parts = _VFS.normalize(args.path);
+          if (parts[0] === 'workspace' && !_VFS.resolve(ctx.tree, parts)
+            && ['开场说明.md', '开场白.md', '样例开场.md', '开场原文.txt', '开场剧情.txt'].includes(parts.at(-1))) {
+            return { isWrite, result: '可选开场文件未提供；继续使用模组与当前世界资料。' };
+          }
           const r = _VFS.readFile(ctx.tree, args.path, { cap: readCapFor(cfg, args.path, args.limit), offset: args.offset, limit: args.limit });
           recordRead(ctx, args.path);
           return { isWrite, result: framePartialRead(r, args.path) };
