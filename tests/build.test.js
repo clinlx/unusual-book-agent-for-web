@@ -33,6 +33,15 @@ test('default build emits index.html and leaves the manually managed catalog unt
   walk();assert.deepEqual(Object.keys(books).sort(),expected.sort());
   const prompts=JSON.parse(html.match(/const BUNDLED_PROMPTS = (.*);/)[1]);
   const registry=require('../src/game-prompts').create(prompts,books);
+  for(const {id} of registry.list())assert.equal(prompts[id],fs.readFileSync(path.join(root,'assets/prompts',id),'utf8'),id);
+  const designer=fs.readFileSync(path.join(root,'dist/designer.html'),'utf8');
+  const skills=JSON.parse(designer.match(/const BUNDLED_SKILLS = (.*);/)[1]);
+  const normalize=text=>text.replace(/^\uFEFF/,'').replace(/\r\n?/g,'\n');
+  for(const [id,text] of Object.entries(skills)){
+    if(!id.endsWith('.md'))continue;
+    const source=id.startsWith('skills/game-world-builder/')?id:'assets/world-designer/'+id;
+    assert.equal(text,normalize(fs.readFileSync(path.join(root,source),'utf8')),id);
+  }
   if(expected.includes('index.md')){
     assert.match(registry.buildSystem(),/\/\.reference\/trpg_rule_books\/index.md/);
     assert.ok(registry.file('/.reference/trpg_rule_books/index.md'));

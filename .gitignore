@@ -15,6 +15,7 @@ tests/*
 !tests/integration/
 docs/*
 !docs/integration.md
+!docs/narrative-prompt-audit.md
 assets/trpg_rule_books/
 参考/
 assets/modules.json

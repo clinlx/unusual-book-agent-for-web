@@ -17,7 +17,7 @@ function checkReferences(sources) {
         if (!fence) fence = marker[1][0];
         else if (fence === marker[1][0]) fence = null;
       }
-      const definition = !fence && line.match(/^#{1,6}\s+(§[A-Z]+[1-9]\d*)\s/);
+      const definition = !fence && line.match(/^(?:#{1,6}\s+|-\s+\*\*)(§[A-Z]+[1-9]\d*)(?:\s|\*\*)/);
       if (definition) {
         assert.ok(!definitions.has(definition[1]), `duplicate ${definition[1]}: ${file}:${index + 1}`);
         definitions.set(definition[1], file);
@@ -40,6 +40,42 @@ test('prompt reference audit rejects dangling IDs and duplicate definitions', ()
   assert.equal(checkReferences({ a: '# §T1 Draft\nSee §P1', b: '## §P1 Agency\nSee §T1' }).size, 2);
 });
 
+function markdownSources(root) {
+  const files = {};
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const file = path.join(root, entry.name);
+    if (entry.isDirectory()) Object.assign(files, markdownSources(file));
+    else if (file.endsWith('.md')) files[file] = fs.readFileSync(file, 'utf8');
+  }
+  return files;
+}
+
+test('designer skills resolve IDs locally and cannot reference game prompt resources', () => {
+  for (const relative of ['skills/game-world-builder', 'assets/world-designer/skills/write-novel']) {
+    const sources = markdownSources(path.join(__dirname, '../..', relative));
+    assert.ok(checkReferences(sources).size > 0, relative);
+    for (const [file, text] of Object.entries(sources)) {
+      assert.doesNotMatch(text, /\/\.reference\/|assets\/prompts\/|system\/(?:host|round|runtime)\.md|主持人侧/, file);
+    }
+  }
+  // 相同编号可在两个独立上下文中各有含义，不能拿另一端的定义补齐缺项。
+  assert.equal(checkReferences({ designer: '# §T1 设计器自己的规则' }).size, 1);
+  assert.equal(checkReferences({ game: '# §T1 游戏自己的规则' }).size, 1);
+  assert.throws(() => checkReferences({ designer: '见 §T1' }), /unresolved §T1/);
+});
+
+test('game prompts reference only game resources and cannot read designer skill files', () => {
+  const sources = Object.fromEntries(Prompts.list().map(({ id }) => [id,
+    fs.readFileSync(path.join(__dirname, '../../assets/prompts', id), 'utf8')]));
+  for (const [id, text] of Object.entries(sources)) {
+    assert.doesNotMatch(text, /\/skills\/|world-designer|game-world-builder|write-novel|OpeningCraft\.md|WorldDataContract\.md/, id);
+  }
+  const prompts = Prompts.create(sources);
+  for (const file of ['/skills/game-world-builder/SKILL.md', '/skills/write-novel/references/prose-and-formatting.md']) {
+    assert.equal(prompts.file(file), undefined, file);
+  }
+});
+
 test('all registered game prompt IDs resolve to unique definitions and discoverable documents', () => {
   const sources = Object.fromEntries(Prompts.list().map(({ id }) => [id,
     fs.readFileSync(path.join(__dirname, '../../assets/prompts', id), 'utf8')]));
@@ -57,11 +93,23 @@ test('all registered game prompt IDs resolve to unique definitions and discovera
       assert.ok(file.startsWith('system/'), `${id} is defined in a system or reference document`);
     }
   }
-  for (const name of ['trigger_next_round', 'append_story', 'end_the_round', 'roll_dice', 'write_file', 'apply_patch']) {
-    const tool = Tools.build(prompts).find(tool => tool.function.name === name);
-    assert.match(tool.function.description, /§[A-Z]+[1-9]\d*/, `${name} exposes rule references to the model`);
-  }
   for (const file of ['start_game', 'next_round', 'after_story', 'resume', 'need_trigger', 'need_end']) {
     assert.match(sources[`flow/${file}.md`], /§[A-Z]+[1-9]\d*/, `${file} reanchors the relevant rules`);
+  }
+});
+
+test('fixed tool descriptions remain self-contained when users replace every prompt', () => {
+  const sources = Object.fromEntries(Prompts.list().map(({ id }) => [id,
+    fs.readFileSync(path.join(__dirname, '../../assets/prompts', id), 'utf8')]));
+  const prompts = Prompts.create(sources);
+  const overrides = Object.fromEntries(Prompts.list().filter(({ id }) => id !== 'flow/tools.json')
+    .map(({ id }) => [id, '自定义世界规则：使用自己的流程与文风。']));
+  const defaults = Tools.build(prompts);
+  const custom = Tools.build(prompts, overrides);
+  assert.deepEqual(custom, defaults);
+  for (const tool of custom) {
+    assert.ok(tool.function.description.trim(), tool.function.name);
+    assert.doesNotMatch(tool.function.description, /§|\/\.reference\/|\/skills\//,
+      `${tool.function.name} must not depend on editable prompt rules`);
   }
 });

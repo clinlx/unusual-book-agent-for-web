@@ -56,12 +56,18 @@ if 即兴信息影响未来的状态/互动/线索/资源/派系/分支:
     write_to_file(create_directory(new_info_name), new_info_file)
 
 if 存在 '开场说明.md' and 当前上下文缺少其样例开场内容: @read_file(path="/workspace/开场说明.md")
-# 样例开场用于全程文风校准：学习语气、视角、句段衔接与对白节奏，不重播开场情节；主持人开场白中的车卡说明不作为小说范本。
+# 样例开场用于全程文风校准，按 §T8 先排除其中的碎句与套语；不重播开场情节，车卡说明不作为小说范本。
 scene_plan = 从本轮已确定事实中编排当前处境、角色已知背景与关系、要展开的关键过程、交还玩家的决策点
+scene_plan = 应用缓存中仍相关的 Narrative_Review 纠偏动作(scene_plan)  # §T8；无该字段时跳过
+# 每条拟披露的信息先过 §N6：NPC 知道、愿意、此刻有理由、披露程度适当。未被询问不主动报调查路线。
+# scene_plan 与审校意见只供内部使用，不能写入正文或普通资料字段（§T7、§F4）。
 draft_story = 按 scene_plan 和 §T1“剧情执行与小说成稿”连贯写出这一场戏，让动作、对白、记忆与感受共同展开
 draft_story = 发布前审校并修正(draft_story, [玩家能否理解处境与因果 §T1, 关键过程是否被摘要跳过 §T1, 玩家行动授权范围 §P1、§P2、§P3、§P4, 视角与保密 §T2、§K1、§N2、§N3, 文风 §T3、§T4, 收尾 §T5])
+draft_story = 按 §T8 第一遍修订公开信息与发言依据(draft_story, scene_plan)
+draft_story = 按 §T8 第二遍逐句修订语言与场景(draft_story, §T6、§T7)
+# 碎短句、抽象名词配动作、括号批注命中即改写，再通读；检查意见不进入成品。
 # 审校可补写必要背景与过程，再删去重复；不要把成稿压成感官清单。正文发布前完成修订。
-# 文件变更按 §F1、§F3，场外人物按 §N5；已发生事实先保存，再发布正文。
+# 文件变更按 §F1、§F3、§F4，逐层检查公开字段；场外人物按 §N5。已发生事实先保存，再发布正文。
 update_all_files_change_by_story(draft_story, [create/move/edit])
 if 剧情触发器已成功触发 and 该触发器不可重复:
     标记而非删除: 该条目加 ".已触发": true，"发生权重" 置 0
@@ -83,6 +89,7 @@ assert 角色身体变化已落盘: 背包 + 基础信息(失去意识/睡眠→
 assert 过时的触发器/状态已清理，退场判定已做
 
 # 按 §O10 核对缓存字段（缺少 Schema 时先读 /.reference/游戏前准备.md）。
+# §T8：Narrative_Review 只保留确有必要的未解决纠偏，最多三条；已解决项清除，内容不向玩家发布。
 NEXT_TURN_CACHE = update_cache(所有维度字段)
 @end_the_round(NEXT_TURN_CACHE=NEXT_TURN_CACHE)
 # Story_Phase 必填：游戏前准备、游戏循环或游戏结束；整场终局另填 game_over=true。成功后停止。
