@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const VFS = require('../../src/vfs');
 const Core = require('../../src/game-core');
+const Presentation = require('../../src/game-presentation');
 
 test('player and referenced item panels preserve public facts and hide nested host notes', () => {
   const tree = VFS.createTree();
@@ -33,4 +34,28 @@ test('ordinary description fields are public even when their text is a writer no
   const data = { 说明: '此处为后续剧情埋伏笔', 信息: '文字资料 1 交付物' };
   assert.deepEqual(Core.filterVisible(data), data);
   assert.deepEqual(Core.filterVisible(data, true), data);
+});
+
+test('item placement fields are hidden in live panels and replay exports without changing saved data', () => {
+  for (const key of ['位置所属', 'Owner', 'Location', '详细放置位置', 'DetailLocation', 'detail_location']) {
+    for (const referenced of [false, true]) {
+      const tree = VFS.createTree();
+      const item = { 名称: '铜钥匙', 信息: '钥匙上刻着编号。', [key]: 'SECRET_PLACEMENT',
+        附件: [{ 名称: '吊牌', [key]: 'SECRET_NESTED_PLACEMENT' }] };
+      VFS.writeFile(tree, '/workspace/Player-pc/基础信息.json', '{"姓名":"马丁"}');
+      VFS.writeFile(tree, '/workspace/Player-pc/背包.json', JSON.stringify(referenced ? ['key'] : [item]));
+      VFS.writeFile(tree, '/workspace/存档-索引-物品/key/物品基础信息.json', JSON.stringify(item));
+      VFS.writeFile(tree, '/workspace/过往回合历史记忆/Round_1_Time_2026/玩家结束状态.json',
+        JSON.stringify({ info: { 姓名: '马丁' }, items: [item] }));
+      const save = Core.createSave('位置隐藏', tree);
+      const before = structuredClone(save.tree);
+      const view = Core.player(save);
+      assert.equal(view.items[0].名称, '铜钥匙');
+      assert.equal(view.items[0].信息, '钥匙上刻着编号。');
+      assert.doesNotMatch(JSON.stringify(view), /SECRET_/, key);
+      const html = Presentation.historyHTML(save, undefined, { info: view.info, items: [item] });
+      assert.doesNotMatch(html, /SECRET_/, 'replay: ' + key);
+      assert.deepEqual(save.tree, before, 'projection must preserve original files: ' + key);
+    }
+  }
 });

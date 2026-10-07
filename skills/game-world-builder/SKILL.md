@@ -112,7 +112,7 @@ You are a master World Architect specializing in interactive narrative game desi
         待办与目标.json  # 或 .txt：角色的待办事项与目标追踪。
 存档-索引-物品/
     <Item_Index>/  # 每个物品都有自己独一无二的文件名，即使是两个一模一样的物品，也要单独编号区分
-        物品基础信息.json  # 必填字段: 名称、信息、位置所属、详细放置位置、可见性、余量、Action字典(e.g. "点燃": "消耗火源点亮火把，获得临时黑暗视觉，获得1火焰伤害加值，5回合后触发熄灭，可以用于照明。")。
+        物品基础信息.json  # 必填字段: 名称、信息、位置所属、可见性、余量、Action字典(e.g. "点燃": "消耗火源点亮火把，获得临时黑暗视觉，获得1火焰伤害加值，5回合后触发熄灭，可以用于照明。")。
         物品日志.txt  # 状态、归属、位置、大事件的变化。（仅追加）
 存档-世界/
     世界日志.txt  # Timestamped history of major world events (Genesis, Story Start/End). （仅追加）

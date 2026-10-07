@@ -19,7 +19,7 @@ const GameData=(()=>{
   };
   function get(o,keys){if(!object(o))return undefined;const names=Array.isArray(keys)?keys:aliases[keys]||[keys];for(const key of names)if(Object.hasOwn(o,key))return o[key];const wanted=new Set(names.map(normalize));const key=Object.keys(o).find(k=>wanted.has(normalize(k)));return key===undefined?undefined:o[key];}
   const hiddenKeys=new Set(['密码','password',...['喜好/厌恶','说话习惯','原则','当前位置'].flatMap(k=>aliases[k])].map(normalize));
-  const itemKeys=new Set(['Action','Actions','Action字典','Actions字典','ActionList','触发器','Trigger','Triggers','剧情台本','StoryScript','台本','Script','脚本','场景台本','场景台本.json','发生权重','位置所属','Owner'].map(normalize));
+  const itemKeys=new Set(['Action','Actions','Action字典','Actions字典','ActionList','触发器','Trigger','Triggers','剧情台本','StoryScript','台本','Script','脚本','场景台本','场景台本.json','发生权重','位置所属','Owner','详细放置位置','DetailLocation','detail_location'].map(normalize));
   const hiddenFlag=x=>x===true||['隐藏','是','1','enable','true'].includes(String(x).trim().toLowerCase());
   function visible(x,items=false){
     if(Array.isArray(x))return x.filter(v=>!(object(v)&&hiddenFlag(v['.是否对玩家隐藏']))).map(v=>visible(v,items));
