@@ -110,7 +110,12 @@ test('current workflow keeps disclosure, equipment and two-pass review separate 
   assert.match(round, /§T12 第一遍修订[\s\S]*§T12 第二遍/);
   assert.match(host, /^\*\*§N6 剧本强制力/m);
   assert.match(runtime, /^#### §N11 NPC 发言的四道检查/m);
-  assert.match(round, /拟披露的信息先过 §N11/);
+  assert.match(round, /^scene_plan = .*§N11.*\(scene_plan\)/m,
+    'NPC disclosure review must update the plan consumed by drafting');
+  assert.match(round, /path="\/\.reference\/回合细则\.md"/,
+    'round workflow explicitly retrieves its detail document');
+  assert.ok(round.indexOf('path="/.reference/回合细则.md"') < round.indexOf('scene_plan ='),
+    'round details are retrieved before arranging and drafting the scene');
   assert.match(host, /^\*\*§C3 何时检定/m);
   assert.match(round, /^### §C6 装备与修正/m);
 });
