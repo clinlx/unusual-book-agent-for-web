@@ -46,5 +46,5 @@ test('default build emits index.html and leaves the manually managed catalog unt
     assert.match(registry.buildSystem(),/\/\.reference\/trpg_rule_books\/index.md/);
     assert.ok(registry.file('/.reference/trpg_rule_books/index.md'));
   }
-  assert.equal(registry.file('/.reference/回合细则.md'),undefined);
+  assert.equal(registry.file('/.reference/回合细则.md'),fs.readFileSync(path.join(root,'assets/prompts/reference/回合细则.md'),'utf8'));
 });

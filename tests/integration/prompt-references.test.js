@@ -17,12 +17,12 @@ function checkReferences(sources) {
         if (!fence) fence = marker[1][0];
         else if (fence === marker[1][0]) fence = null;
       }
-      const definition = !fence && line.match(/^(?:#{1,6}\s+|-\s+\*\*)(§[A-Z]+[1-9]\d*)(?:\s|\*\*)/);
+      const definition = !fence && line.match(/^(?:#{1,6}\s+|-\s+\*\*|\*\*)(§(?:0|[A-Z]+[1-9]\d*))(?:\s|\*\*)/);
       if (definition) {
         assert.ok(!definitions.has(definition[1]), `duplicate ${definition[1]}: ${file}:${index + 1}`);
         definitions.set(definition[1], file);
       }
-      for (const match of line.matchAll(/§[A-Z]+[1-9]\d*/g)) {
+      for (const match of line.matchAll(/§(?:0|[A-Z]+[1-9]\d*)/g)) {
         references.push({ id: match[0], file, line: index + 1 });
       }
     });
@@ -93,9 +93,26 @@ test('all registered game prompt IDs resolve to unique definitions and discovera
       assert.ok(file.startsWith('system/'), `${id} is defined in a system or reference document`);
     }
   }
+  for (const [file, text] of Object.entries(sources)) {
+    if (!file.endsWith('.md')) continue;
+    assert.equal([...text.matchAll(/^\s*```/gm)].length % 2, 0, `${file} has an unclosed code fence`);
+  }
   for (const file of ['start_game', 'next_round', 'after_story', 'resume', 'need_trigger', 'need_end']) {
     assert.match(sources[`flow/${file}.md`], /§[A-Z]+[1-9]\d*/, `${file} reanchors the relevant rules`);
   }
+});
+
+test('current workflow keeps disclosure, equipment and two-pass review separate from host rules', () => {
+  const read = id => fs.readFileSync(path.join(__dirname, '../../assets/prompts', id), 'utf8');
+  const host = read('system/host.md'), runtime = read('system/runtime.md'), round = read('system/round.md');
+  assert.match(host, /^\*\*§T8 露骨写作/m);
+  assert.match(runtime, /^### §T12 发布前的两遍修订/m);
+  assert.match(round, /§T12 第一遍修订[\s\S]*§T12 第二遍/);
+  assert.match(host, /^\*\*§N6 剧本强制力/m);
+  assert.match(runtime, /^#### §N11 NPC 发言的四道检查/m);
+  assert.match(round, /拟披露的信息先过 §N11/);
+  assert.match(host, /^\*\*§C3 何时检定/m);
+  assert.match(round, /^### §C6 装备与修正/m);
 });
 
 test('fixed tool descriptions remain self-contained when users replace every prompt', () => {

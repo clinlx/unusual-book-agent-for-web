@@ -5,7 +5,7 @@ test('complex prompts are fully loaded with resolvable references and tool descr
  const sources=Object.fromEntries(Prompts.list().map(({id})=>[id,fs.readFileSync(path.join(__dirname,'../assets/prompts',id),'utf8')]));
  for(const [id,text]of Object.entries(sources)){
   assert.ok(text.trim(),id);
-  assert.doesNotMatch(text,/细则[0-9A-Z]|update_story|xx\/xx\/xx/,id);
+  assert.doesNotMatch(text,/update_story|xx\/xx\/xx/,id);
   for(const match of text.matchAll(/\/\.reference\/([^\s`"，；）)\]]+?\.md)/g))if(!match[1].includes('*')&&!match[1].startsWith('trpg_rule_books/'))assert.ok(fs.existsSync(path.join(__dirname,'../assets/prompts/reference',match[1])),id+' has missing reference');
  }
  const p=Prompts.create(sources),system=p.buildSystem();
