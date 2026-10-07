@@ -873,6 +873,10 @@ const GameUI = (() => {
 
     const dims=box.display;if(dims&&profile.world>1){dims.containerWidth*=profile.world;dims.containerHeight*=profile.world;box.makeWorldBox();}
     const baseFar=box.cameraHeight?.far||box.camera.position.z,throwZ=baseFar*profile.camera,throwY=(box.display?.containerHeight||0)*profile.cameraLift;
+    // Camera pullback must include the expanded tray in the clipping volume.
+    const trayRadius=Math.hypot(dims?.containerWidth||0,dims?.containerHeight||0)+profile.scale*2;
+    box.camera.far=Math.max(box.camera.far,Math.hypot(throwZ,throwY)+trayRadius);
+    box.camera.updateProjectionMatrix();
     box.camera.position.z=throwZ;box.camera.position.y=throwY;box.camera.lookAt(0,0,0);box.renderer.render(box.scene,box.camera);
 
     if(staticOnly){
