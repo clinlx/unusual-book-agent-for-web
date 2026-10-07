@@ -103,7 +103,7 @@ const Prompts = (() => {
       referencePaths:()=>Object.keys(titles).filter(id=>id.startsWith('reference/')).map(id=>'/.reference/'+id.slice(10)).concat(Object.keys(books)),
       buildSystem:(overrides={},world='')=>['system/host.md','system/round.md','system/runtime.md'].map(id=>get(id,overrides)).concat(world).filter(Boolean).join('\n\n'),
       roundPrompt:(start,overrides={})=>get(start?'flow/start_game.md':'flow/next_round.md',overrides),
-      toolDescription:(name,overrides={})=>{const custom=JSON.parse(get('flow/tools.json',overrides)||'{}'),base=JSON.parse(get('flow/tools.json')||'{}');return own(custom,name)?custom[name]:own(base,name)?base[name]:'';}
+      toolDescription:(name,overrides={})=>{const custom=JSON.parse(get('flow/tools.json',overrides)||'{}'),base=JSON.parse(get('flow/tools.json')||'{}');return own(custom,name)&&typeof custom[name]==='string'?custom[name]:own(base,name)&&typeof base[name]==='string'?base[name]:'';}
     };
   }
   return create(typeof BUNDLED_PROMPTS!=='undefined'?BUNDLED_PROMPTS:{},typeof BUNDLED_RULE_BOOKS!=='undefined'?BUNDLED_RULE_BOOKS:{});

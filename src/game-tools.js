@@ -23,7 +23,19 @@ const GameTools=(()=>{
     mkdir:{properties:{path:str},required:['path']},delete:{properties:{path:str},required:['path']},
     move:{properties:{from:str,to:str},required:['from','to']},copy:{properties:{from:str,to:str},required:['from','to']}
   };
-  function build(prompts,overrides={}){return Object.entries(definitions).map(([name,params])=>({type:'function',function:{name,description:prompts.toolDescription(name,overrides),parameters:{type:'object',...params}}}));}
+  function build(prompts,overrides={}){
+    const read=overrides=>typeof prompts.get==='function'?JSON.parse(prompts.get('flow/tools.json',overrides)||'{}'):{};
+    const base=read().parameter_descriptions||{};
+    const custom=read(overrides).parameter_descriptions||{};
+    const description=(source,name,key)=>Object.hasOwn(source,name)&&source[name]&&Object.hasOwn(source[name],key)&&typeof source[name][key]==='string'?source[name][key]:undefined;
+    return Object.entries(definitions).map(([name,params])=>{
+      const properties=Object.fromEntries(Object.entries(params.properties).map(([key,schema])=>{
+        const text=description(custom,name,key)??description(base,name,key);
+        return [key,text===undefined?schema:{...schema,description:text}];
+      }));
+      return {type:'function',function:{name,description:prompts.toolDescription(name,overrides),parameters:{type:'object',...params,properties}}};
+    });
+  }
   return {build};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=GameTools;
