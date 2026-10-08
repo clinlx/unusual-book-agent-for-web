@@ -62,7 +62,7 @@ test('renderTranscript 头尾预览长度按配置生效', () => {
 test('planCompression 保留最近轮原文，其余按预算切段且不拆轮', () => {
   const msgs = [];
   for (let i = 0; i < 6; i++) msgs.push(...mkTurn(i, true));
-  const plan = Compress.planCompression(msgs, { keepRecentTurns: 2, inputBudgetTokens: 200 });
+  const plan = Compress.planCompression(msgs, { keepRecentResponses: 4, inputBudgetTokens: 200 });
   // 保留最近 2 轮 = 8 条
   assert.strictEqual(plan.keepRecent.length, 8);
   assert.strictEqual(plan.keepRecent[0].content.startsWith('问题4'), true);
@@ -84,7 +84,7 @@ test('run 接力压缩：多段时上一段摘要注入下一段（双请求）'
     calls.push(reqMsgs);
     return { content: '摘要#' + calls.length };
   };
-  const out = await Compress.run(msgs, { keepRecentTurns: 2, inputBudgetTokens: 200, fileTree: 'a.md' }, transport);
+  const out = await Compress.run(msgs, { keepRecentResponses: 4, inputBudgetTokens: 200, fileTree: 'a.md' }, transport);
   assert.ok(calls.length >= 2, '应发起至少两次请求');
   // 第二次请求应包含第一次的摘要，并标明它是已压缩内容
   assert.match(calls[1][1].content, /已压缩摘要/);
@@ -107,23 +107,66 @@ test('run 接力压缩：多段时上一段摘要注入下一段（双请求）'
   assert.strictEqual(out.keepRecent.length, 8);
 });
 
-test('keepRecentTurns 默认保留最近 20 轮', () => {
-  assert.strictEqual(C.COMPRESS_CONFIG.keepRecentTurns, 20);
+test('keepRecentResponses 默认保留最近 20 次 AI 返回', () => {
+  assert.strictEqual(C.COMPRESS_CONFIG.keepRecentResponses, 20);
   const msgs = [];
   for (let i = 0; i < 25; i++) msgs.push(...mkTurn(i, false));
-  const plan = Compress.planCompression(msgs, {});   // 用默认 keepRecentTurns
-  assert.strictEqual(plan.keepRecent.length, 20 * 4, '最近 20 轮 × 每轮 4 条不参与压缩');
-  assert.strictEqual(plan.compressCount, 5 * 4, '其余 5 轮参与压缩');
-  assert.strictEqual(plan.keepRecent[0].content, '问题5');
+  const plan = Compress.planCompression(msgs, {});
+  assert.strictEqual(plan.keepRecent.filter(m => m.role === 'assistant').length, 20);
+  assert.strictEqual(plan.keepRecent.length, 10 * 4, '每轮 2 次 AI 返回，保留最近 10 个用户轮次');
+  assert.strictEqual(plan.compressCount, 15 * 4);
+  assert.strictEqual(plan.keepRecent[0].content, '问题15');
 });
 
 test('run 消息太少（全在保留窗口内）返回 null', async () => {
   const msgs = [...mkTurn(0, false)];
-  const out = await Compress.run(msgs, { keepRecentTurns: 2 }, async () => ({ content: 'x' }));
+  const out = await Compress.run(msgs, { keepRecentResponses: 2 }, async () => ({ content: 'x' }));
   assert.strictEqual(out, null);
 });
 
 test('renderTemplate 值含 $ 与代码块时不被展开', () => {
   const s = C.renderTemplate('A{{v}}B', { v: 'money $& ```code```' });
   assert.strictEqual(s, 'Amoney $& ```code```B');
+});
+
+function agentTurn(id, responses, size = 1) {
+  const msgs = [{ role: 'user', msgId: id, content: '任务' + id }];
+  for (let i = 0; i < responses - 1; i++) {
+    const callId = id + '-' + i;
+    msgs.push({ role: 'assistant', content: '', tool_calls: [{ id: callId, function: { name: 'read_file', arguments: '{}' } }] },
+      { role: 'tool', tool_call_id: callId, content: '文'.repeat(size) });
+  }
+  msgs.push({ role: 'assistant', content: '完成' });
+  return msgs;
+}
+
+test('one model response with tool calls counts once, while a long user turn may be partially summarized', () => {
+  const first = agentTurn('first', 12), middle = agentTurn('middle', 12), last = agentTurn('last', 12);
+  const plan = Compress.planCompression([...first, ...middle, ...last], { retainedBudgetTokens: 10000 });
+  assert.strictEqual(plan.keepRecent.filter(m => m.role === 'assistant').length, 20);
+  assert.ok(last.every(m => plan.keepRecent.includes(m)), 'latest complete user turn is retained');
+  assert.ok(plan.keepRecent.includes(middle[0]), 'partial retained turn keeps its user instruction');
+  assert.ok(!plan.keepRecent.includes(middle[1]));
+  for (const part of [plan.keepRecent, ...plan.chunks]) for (const m of part) if (m.tool_calls)
+    for (const call of m.tool_calls) assert.ok(part.some(result => result.tool_call_id === call.id));
+});
+
+test('at least one complete user turn is retained when it exceeds twenty AI returns but fits the budget', () => {
+  const old = agentTurn('old', 2), last = agentTurn('last', 25);
+  const plan = Compress.planCompression([...old, ...last], { retainedBudgetTokens: 10000 });
+  assert.ok(last.every(m => plan.keepRecent.includes(m)));
+  assert.strictEqual(plan.keepRecent.filter(m => m.role === 'assistant').length, 25);
+  assert.strictEqual(plan.compressCount, old.length);
+});
+
+test('an oversized single user turn retains recent complete call/result batches instead of dropping every response', () => {
+  const messages = agentTurn('large', 30, 100);
+  const plan = Compress.planCompression(messages, { retainedBudgetTokens: 700, preserveUserId: 'large' });
+  assert.ok(plan.compressCount > 0);
+  assert.ok(plan.keepRecent.includes(messages[0]));
+  assert.ok(plan.keepRecent.filter(m => m.role === 'assistant').length > 1);
+  const T = require('../../src/world-designer/tokens');
+  assert.ok(T.estimateMessages(plan.keepRecent) <= 700);
+  for (const part of [plan.keepRecent, ...plan.chunks]) for (const m of part) if (m.tool_calls)
+    for (const call of m.tool_calls) assert.ok(part.some(result => result.tool_call_id === call.id));
 });

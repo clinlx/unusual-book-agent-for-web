@@ -5,7 +5,7 @@ const { root, safeJSON, scripts, compose } = require('./build-common.js');
 const { buildSnapshot } = require('./bundle-skills.js');
 const { bundleDocuments } = require('./bundle-documents.js');
 const SKILLS = ['write-novel', 'desire-analysis', 'grilling', 'game-world-builder'];
-const modules = ['00-config', 'vfs', 'tokens', 'temp-files', 'images', 'document-runtime', 'documents', 'compress',
+const modules = ['00-config', 'vfs', 'tokens', 'context-budget', 'temp-files', 'images', 'document-runtime', 'documents', 'compress',
   'sse', 'zip', 'workspace-import', 'skills', 'skill-loader', 'versioning', 'diff',
   'pending', 'md', 'db', 'storage', 'builder-tools', 'validation', 'agent', 'lease', 'resources', 'ui'];
 

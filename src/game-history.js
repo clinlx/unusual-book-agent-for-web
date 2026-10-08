@@ -62,9 +62,9 @@ const GameHistory=(()=>{
     s.importNotice='已恢复参考版的已保存剧情、回合和缓存；服务器运行中的工具调用与旧回退点不在此存档格式中。';
     return true;
   }
-  function compactReads(messages,source,currentRound){
-    const calls=new Map();for(const m of source)if((m.round||1)<currentRound)for(const c of m.tool_calls||[])if(['read_file','read_multiple_files','list_dir','tree','search'].includes(c.function?.name))calls.set(c.id,c);
-    return messages.map(m=>{const c=m.role==='tool'&&calls.get(m.tool_call_id);if(!c||String(m.content).length<2000)return m;
+  function compactReads(messages,currentRound){
+    const calls=new Map();for(const m of messages)if((m.round||1)<currentRound)for(const c of m.tool_calls||[])if(['read_file','read_multiple_files','list_dir','tree','search'].includes(c.function?.name))calls.set((m.round||1)+':'+c.id,c);
+    return messages.map(m=>{const c=m.role==='tool'&&(m.round||1)<currentRound&&calls.get((m.round||1)+':'+m.tool_call_id);if(!c||String(m.content).length<2000)return m;
       let result;try{result=JSON.parse(m.content);}catch(_){return m;}if(result.ok!==true)return m;
       return {...m,content:JSON.stringify({ok:true,archived:true,tool:c.function.name,arguments:c.function.arguments,note:'旧回合读取结果已压缩；可按原参数重新读取，回合记录位于 /workspace/过往回合历史记忆。'})};
     });

@@ -2,6 +2,7 @@
 const GameTransport=(()=>{
   const sse=typeof module!=='undefined'&&module.exports?require('./sse.js'):SSE;
   const apiUrl=typeof module!=='undefined'&&module.exports?require('./shared/api-url.js'):ApiUrl;
+  const core=typeof module!=='undefined'&&module.exports?require('./game-core.js'):GameCore;
   const tiers=new Map();
   const object=x=>!!x&&typeof x==='object'&&!Array.isArray(x);
   function customBody(settings){
@@ -18,6 +19,28 @@ const GameTransport=(()=>{
   function optionalNumber(value,min,max,label,{integer=false}={}){
     if(value===null||value===undefined||String(value).trim()==='')return null;
     const n=Number(value);if(!Number.isFinite(n)||n<min||n>max||(integer&&!Number.isInteger(n)))throw Error(label+' 超出有效范围');return n;
+  }
+  const contextHint='请在设置中调大上下文上限或降低输出上限，再点击“继续本轮”';
+  function outputReservation(body){
+    const values=['max_tokens','max_completion_tokens','max_output_tokens'].filter(k=>body[k]!=null).map(k=>{
+      const n=Number(body[k]);if(!Number.isSafeInteger(n)||n<=0)throw Error(k+' 必须是正整数');return n;
+    });
+    return Math.max(0,...values);
+  }
+  function bodyBudget(settings,body){
+    if(settings.maxContextK==null)return Infinity;
+    const cap=Number(settings.maxContextK)*1000;
+    if(!Number.isFinite(cap)||cap<=0)throw Error('上下文上限必须是正数');
+    if(body.tools!=null&&!Array.isArray(body.tools))throw Error('请求包体中的 tools 必须是数组');
+    return cap-outputReservation(body)-core.estimate(body.tools||[]);
+  }
+  function inputBudget(settings,tools=[]){
+    return bodyBudget(settings,mergeBody({tools,max_tokens:settings.maxOutputTokens||16384},customBody(settings)));
+  }
+  function assertBudget(settings,body){
+    if(!Array.isArray(body.messages))throw Error('请求包体中的 messages 必须是数组');
+    const available=bodyBudget(settings,body),used=core.estimate(body.messages);
+    if(used>available)throw Object.assign(Error('请求内容、工具定义和预留输出已超过上下文上限（估算输入 '+used+' / 可用 '+available+' tokens）：'+contextHint),{code:'CONTEXT_LIMIT'});
   }
   function create(settings,tools,hooks={}){
     const fetcher=hooks.fetch||globalThis.fetch.bind(globalThis);
@@ -43,6 +66,7 @@ const GameTransport=(()=>{
           if(topP!==null)body.top_p=topP;if(frequencyPenalty!==null)body.frequency_penalty=frequencyPenalty;if(presencePenalty!==null)body.presence_penalty=presencePenalty;if(seed!==null)body.seed=seed;
           if(tier===0){if(deepseek){body.thinking={type:effort==='none'?'disabled':'enabled'};if(effort!=='none')body.reasoning_effort=effort==='max'?'max':'high';}else body.reasoning_effort=effort;}
           body=mergeBody(body,customBody(settings));
+          assertBudget(settings,body);
           const requestStreams=!!body.stream;
           if(ctrl.signal.aborted)throw ctrl.signal.reason||Error('已中止请求');
           if(hooks.onRequest)await hooks.onRequest(body);
@@ -51,6 +75,8 @@ const GameTransport=(()=>{
           if(requestStreams)armTimeout();
           if(resp.ok){responseStreams=requestStreams;break;}
           const text=await resp.text();
+          if(/context_length_exceeded|maximum context length|context window|context length.{0,80}(exceed|limit|long)|上下文.{0,8}(超|满)/is.test(text))
+            throw Object.assign(Error('API '+resp.status+'：'+text.slice(0,500)+'\n'+contextHint),{code:'CONTEXT_LIMIT'});
           if(tier===0&&[400,422].includes(resp.status)&&/reasoning|thinking/i.test(text)){tier=1;continue;}
           if([429,500,502,503,504].includes(resp.status)&&attempt<(settings.maxRetries??2)){
             attempt++;await new Promise((resolve,reject)=>{const stop=()=>{clearTimeout(t);reject(Error('已中止请求'));};const t=setTimeout(()=>{ctrl.signal.removeEventListener('abort',stop);resolve();},Math.min(1000*attempt,3000));ctrl.signal.addEventListener('abort',stop,{once:true});});continue;
@@ -110,6 +136,6 @@ const GameTransport=(()=>{
     await create({...settings,stream:false,maxOutputTokens:64,reasoningEffort:'none',maxRetries:0,httpTimeoutSeconds:30},[],hooks)([{role:'user',content:'Reply with OK.'}]);
     return {elapsedMs:Date.now()-start};
   }
-  return {create,testConnection,listModels,mergeBody,customBody};
+  return {create,testConnection,listModels,mergeBody,customBody,inputBudget};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=GameTransport;

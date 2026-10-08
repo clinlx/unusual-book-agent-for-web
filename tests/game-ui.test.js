@@ -28,6 +28,12 @@ test('play includes player dice with a spoiler-free placeholder for secret resul
  assert.match(placeholder,/主持人进行了一次暗骰/);assert.doesNotMatch(placeholder,/SECRET_RESULT|37|dice-detail/);
  assert.match(api.eventHTML(secret,'debug'),/SECRET_RESULT/);
 });
+
+test('composer resume is a non-submit button only while the current round is interrupted',()=>{
+ const api=ui(),state={running:false,active:{status:'interrupted',activeRound:{complete:false}}};
+ assert.match(api.resumeButtonHTML(state),/type="button".*data-action="resume".*继续本轮/);
+ for(const invalid of [{...state,running:true},{running:false,active:{status:'interrupted',activeRound:{complete:true}}},{running:false,active:{status:'waiting',activeRound:{complete:false}}}])assert.equal(api.resumeButtonHTML(invalid),'');
+});
 test('DEBUG fallback retains NPC dice and events marked as unrelated to the player',()=>{
  const api=ui(),events=[{type:'dice',secret:false,playerRelated:false},{type:'tool',playerRelated:false},{type:'error'}];
  assert.equal(api.visibleEvents(events,'debug').length,events.length);

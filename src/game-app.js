@@ -83,8 +83,7 @@ const GameApp=(()=>{
     if(S.lastRequest&&S.lastRequestSaveId===active().id)return structuredClone(S.lastRequest.messages);
     const s=structuredClone(active()),frozen=!s.activeRound?.complete&&s.activeRound?.promptSnapshot;
     const overrides={},flows=Prompts.flows();
-    const built=GameCore.context(s,(frozen?.system&&!Object.keys(frozen.overrides||{}).length?frozen.system:system()),Math.max(1024,S.settings.maxContextK*1000-S.settings.maxOutputTokens),{cachePrompt:flows.flow_cache,summariesPrompt:flows.flow_summaries});
-    for(const m of built){m.content=Prompts.migrateText(m.content);if(m.tool_calls)for(const tc of m.tool_calls)tc.function.arguments=Prompts.migrateText(tc.function.arguments);}
+    const built=GameCore.context(s,(frozen?.system&&!Object.keys(frozen.overrides||{}).length?frozen.system:system()),GameTransport.inputBudget(S.settings,GameTools.build(Prompts,overrides)),{cachePrompt:flows.flow_cache,summariesPrompt:flows.flow_summaries,transformContext:Prompts.migrateText});
     return built;
   }
   async function executeRound(kind,text){
@@ -120,7 +119,7 @@ const GameApp=(()=>{
       const transport=async messages=>{clearStream();emit();try{const response=await raw(messages);if(currentRequest){currentRequest.status='completed';currentRequest.response=structuredClone(response);}return response;}catch(e){if(currentRequest){currentRequest.status='interrupted';currentRequest.error=e.message;}throw e;}};
       const flows=Prompts.flows(snapshot.overrides);
       await GameCore.run(s,transport,{signal:controller.signal,system:snapshot.system,manualDice:settings.manualDice===true,
-        cap:Math.max(1024,settings.maxContextK*1000-settings.maxOutputTokens-GameCore.estimate(defs)),maxToolLoops:settings.maxToolLoops,
+        cap:GameTransport.inputBudget(settings,defs),maxToolLoops:settings.maxToolLoops,
         
         
         resource:p=>Prompts.file(p),resourceList:Prompts.referencePaths(),afterStory:flows.flow_after_story,firstRecall:flows.flow_recall,

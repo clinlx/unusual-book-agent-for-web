@@ -26,8 +26,12 @@ for (const [name, status] of [
       { type: 'story', round: 1, content: '<img src=x onerror="window.injected=true">' },
       { type: 'dice', round: 1, secret: true, content: 'SECRET_DICE' },
       { type: 'round_end', round: 1 },
+      { type: 'story', round: 2, content: '第二回合正文' },
+      { type: 'round_end', round: 2 },
       { type: 'assistant', content: 'INTERNAL_MODEL' },
     ];
+    VFS.writeFile(save.tree, '/workspace/过往回合历史记忆/Round_1_Time_测试/玩家结束状态.json',
+      JSON.stringify(Core.player(save)));
     VFS.writeFile(tree, '/workspace/过往回合历史记忆/Round_1_Time_夜晚/玩家结束状态.json', JSON.stringify(Core.player(save)));
     const file = path.resolve(__dirname, '../artifacts/archive-' + name + '-' + randomUUID() + '.html');
     t.after(() => fs.rmSync(file, { force: true }));
@@ -41,16 +45,17 @@ for (const [name, status] of [
       page.on('request', request => { if (/^https?:/.test(request.url())) network.push(request.url()); });
       await page.route('https://**/*', route => route.abort());
       await page.goto(pathToFileURL(file).href);
-      await page.locator('#replay-next').click();
-      assert.equal(await page.locator('.history article.revealed').count(), 1);
-      await page.locator('#replay-next').click();
+      assert.equal(await page.locator('.history article.revealed').count(), 3, 'first round is revealed on entry');
       assert.match(await page.locator('.history').innerText(), /SECRET_DICE/);
-      await page.locator('#replay-next').click();
+      assert.doesNotMatch(await page.locator('.history').innerText(), /第二回合正文/);
       await page.locator('#archive-vitals .resource').first().waitFor();
       assert.equal(await page.locator('#archive-vitals .resource').count(), 3);
       assert.match(await page.locator('#archive-vitals').innerText(), /9 \/ 12/);
       assert.match(await page.locator('#archive-vitals').innerText(), /4 \/ 8/);
       assert.match(await page.locator('#archive-vitals').innerText(), /60 \/ 99/);
+      await page.locator('#replay-next').click();
+      assert.equal(await page.locator('.history article.revealed').count(), 4);
+      await page.locator('#replay-next').click();
       await page.locator('[data-mode="overview"]').click();
       assert.match(await page.locator('#archive-vitals').innerText(), /9 \/ 12/);
       assert.match(await page.locator('#status-content').innerText(), /青/);
@@ -64,9 +69,46 @@ for (const [name, status] of [
       }
       await page.locator('[data-mode="replay"]').click();
       await page.locator('#replay-prev').click();
-      assert.equal(await page.locator('.history article.revealed').count(), 2);
+      assert.equal(await page.locator('.history article.revealed').count(), 4);
       assert.deepEqual(network, []);
       assert.deepEqual(errors, []);
     } finally { await context.close(); }
   });
 }
+
+test('replay continuation hint appears at the bottom, advances once and hides at the end', async t => {
+  const tree=VFS.createTree();
+  VFS.writeFile(tree,'/workspace/Player-p/基础信息.json','{"姓名":"青"}');
+  VFS.writeFile(tree,'/workspace/Player-p/背包.json','[]');
+  const save=Core.createSave('滚动提示',tree);
+  save.events=[
+    {type:'note',round:0,content:'入场记录'},
+    {type:'story',round:1,content:'第一回合正文。\n\n'.repeat(100)},
+    {type:'round_end',round:1},
+    {type:'story',round:2,content:'第二回合正文。\n\n'.repeat(50)},
+    {type:'round_end',round:2},
+  ];
+  const file=path.resolve(__dirname,'../artifacts/archive-hint-'+randomUUID()+'.html');
+  fs.mkdirSync(path.dirname(file),{recursive:true});
+  t.after(()=>fs.rmSync(file,{force:true}));
+  fs.writeFileSync(file,Presentation.historyHTML(save,undefined,Core.player(save)));
+  const context=await browser.newContext({viewport:{width:1440,height:960}});
+  try{
+    const page=await context.newPage();page.setDefaultTimeout(5000);
+    await page.goto(pathToFileURL(file).href);
+    const history=page.locator('#archive-history'),hint=page.locator('#replay-hint');
+    assert.equal(await page.locator('article.revealed').count(),3,'entry includes notes and the entire first round');
+    assert.equal(await hint.isHidden(),true,'hint stays hidden while reading above the bottom');
+    await history.evaluate(el=>{el.scrollTop=el.scrollHeight;});
+    await hint.waitFor({state:'visible'});
+    assert.equal(await hint.innerText(),'点击以继续演绎');
+    await hint.click();
+    assert.equal(await page.locator('article.revealed').count(),4,'one click advances one node');
+    await page.locator('[data-mode="overview"]').click();
+    assert.equal(await hint.isHidden(),true);
+    await page.locator('[data-mode="replay"]').click();
+    await page.locator('#replay-next').click();
+    assert.equal(await page.locator('article.revealed').count(),5);
+    assert.equal(await hint.isHidden(),true,'no continuation prompt after the final node');
+  }finally{await context.close();}
+});

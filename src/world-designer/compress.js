@@ -4,6 +4,7 @@
 const Compress = (() => {
   const _Tokens = (typeof module !== 'undefined') ? require('./tokens.js') : Tokens;
   const _C = (typeof module !== 'undefined') ? require('./00-config.js') : { COMPRESS_CONFIG, renderTemplate };
+  const _Budget = (typeof module !== 'undefined') ? require('./context-budget.js') : ContextBudget;
 
   // 头尾预览：超过阈值才截断，中间省略但保留头尾——摘要要写出真代码片段，
   // 前提是压缩模型本来就得看到真代码，不能一上来就砍成看不出内容的短片段。
@@ -56,15 +57,41 @@ const Compress = (() => {
     return lines.join('\n');
   }
 
-  // 压缩计划：保留最近 keepRecentTurns 轮原文，其余按输入预算切段（段边界=轮次边界）
+  // 按 AI 返回次数保留后缀，工具批次不可拆开；预算允许时保留最新完整用户轮次。
   function planCompression(messages, opts) {
     const cfg = { ..._C.COMPRESS_CONFIG, ...(opts || {}) };
     const groups = _Tokens.groupTurns(messages);
-    const turnIdx = groups.map((g, i) => g.turn ? i : -1).filter(i => i >= 0);
-    const keepFrom = turnIdx.length > cfg.keepRecentTurns
-      ? turnIdx[turnIdx.length - cfg.keepRecentTurns] : (turnIdx[0] !== undefined ? turnIdx[0] : groups.length);
-    const toCompress = groups.slice(0, keepFrom).flatMap(g => g.msgs);
-    const keepRecent = groups.slice(keepFrom).flatMap(g => g.msgs);
+    const units = [], turns = [];
+    for (const g of groups) {
+      const user = g.turn ? g.msgs[0] : null;
+      if (user) turns.push({ start: units.length, msgs: g.msgs });
+      for (let i = 0; i < g.msgs.length; i++) {
+        const batch = [g.msgs[i]];
+        if (g.msgs[i].role === 'assistant' && g.msgs[i].tool_calls)
+          while (g.msgs[i + 1]?.role === 'tool') batch.push(g.msgs[++i]);
+        units.push({ msgs: batch, user });
+      }
+    }
+    const responses = units.map((u, i) => u.msgs[0].role === 'assistant' ? i : -1).filter(i => i >= 0);
+    const count = Math.max(0, Math.floor(cfg.keepRecentResponses));
+    const retainedBudget = Number.isFinite(cfg.retainedBudgetTokens) ? cfg.retainedBudgetTokens : Infinity;
+    const retainedCost = msgs => _Tokens.estimateMessages(msgs) + msgs.length * 6;
+    const latest = turns.at(-1);
+    const completeFrom = count > 0 && latest && retainedCost(latest.msgs) <= retainedBudget ? latest.start : units.length;
+    let keepFrom = count === 0 ? units.length : responses.length > count ? responses[responses.length - count]
+      : turns[0]?.start ?? units.length;
+    keepFrom = Math.min(keepFrom, completeFrom);
+    const active = cfg.preserveUserId && messages.find(m => m.role === 'user' && m.msgId === cfg.preserveUserId);
+    const suffixCost = new Array(units.length + 1).fill(0);
+    for (let i = units.length - 1; i >= 0; i--) suffixCost[i] = suffixCost[i + 1] + retainedCost(units[i].msgs);
+    const activeIndex = active ? units.findIndex(u => u.msgs.includes(active)) : -1;
+    while (keepFrom < completeFrom && suffixCost[keepFrom] + (activeIndex >= 0 && activeIndex < keepFrom ? retainedCost([active]) : 0) > retainedBudget) keepFrom++;
+    const keep = new Set(units.slice(keepFrom).flatMap(u => u.msgs));
+    if (active) keep.add(active);
+    const anchor = units[keepFrom]?.user;
+    if (anchor && !keep.has(anchor) && retainedCost([...keep, anchor]) <= retainedBudget) keep.add(anchor);
+    const keepRecent = messages.filter(m => keep.has(m));
+    const toCompress = messages.filter(m => !keep.has(m));
     if (!toCompress.length) return { chunks: [], keepRecent, compressCount: 0 };
     const budget = Math.floor((opts && opts.inputBudgetTokens) || 0);
     const chunks = budget > 0 ? _Tokens.chunkByBudget(toCompress, budget) : [toCompress];
@@ -77,9 +104,11 @@ const Compress = (() => {
     const cfg = { ..._C.COMPRESS_CONFIG, ...(opts || {}) };
     const plan = planCompression(messages, opts);
     if (!plan.chunks.length) return null;
-    const total = plan.chunks.length;
+    const transcripts = plan.chunks.map(chunk => renderTranscript(chunk, cfg));
     let summary = '';
-    for (let i = 0; i < total; i++) {
+    let i = 0;
+    while (transcripts.length) {
+      const total = i + transcripts.length;
       if (onProgress) onProgress(i + 1, total);
       const isRelay = i > 0;
       const vars = {
@@ -92,19 +121,32 @@ const Compress = (() => {
       // 第 2 段起改用接力模板：明确告知哪部分已压缩过，并要求给出压缩心得
       const sysTpl = (isRelay && cfg.relaySystemTemplate) ? cfg.relaySystemTemplate : cfg.systemTemplate;
       const sys = _C.renderTemplate(sysTpl, vars);
-      const user = _C.renderTemplate(cfg.userTemplate, {
+      const makeRequest = transcript => [{ role: 'system', content: sys }, { role: 'user', content: _C.renderTemplate(cfg.userTemplate, {
         prevSummary: summary ? cfg.prevSummaryPrefix + '\n' + summary : '',
-        transcript: renderTranscript(plan.chunks[i], cfg),
-      });
-      const resp = await transport([
-        { role: 'system', content: sys },
-        { role: 'user', content: user.trim() },
-      ]);
+        transcript,
+      }).trim() }];
+      let transcript = transcripts.shift();
+      if (cfg.requestBudgetTokens && _Budget.cost(makeRequest(transcript)) > cfg.requestBudgetTokens) {
+        let lo = 0, hi = transcript.length;
+        while (lo < hi) {
+          const mid = Math.ceil((lo + hi) / 2);
+          if (_Budget.cost(makeRequest(transcript.slice(0, mid))) <= cfg.requestBudgetTokens) lo = mid;
+          else hi = mid - 1;
+        }
+        if (lo > 0 && /[\uD800-\uDBFF]/.test(transcript[lo - 1])) lo--;
+        if (!lo) throw new Error('压缩提示词或上一段摘要已占满请求预算，请提高上下文上限或缩短压缩提示词');
+        transcripts.unshift(transcript.slice(lo));
+        transcript = transcript.slice(0, lo);
+      }
+      const resp = await transport(makeRequest(transcript));
       summary = (resp.content || '').trim();
       if (!summary) throw new Error('压缩请求返回空内容');
+      if (cfg.summaryBudgetTokens && _Tokens.estimateText(summary) > cfg.summaryBudgetTokens)
+        throw new Error('压缩摘要超过预算，已保留原始记录，请重试压缩');
+      i++;
     }
     return {
-      mark: { role: 'compressed', count: plan.compressCount, summary, chunks: total },
+      mark: { role: 'compressed', count: plan.compressCount, summary, chunks: i },
       keepRecent: plan.keepRecent,
     };
   }

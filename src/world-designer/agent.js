@@ -2,6 +2,7 @@
 const Agent = (() => {
   const _VFS = (typeof module !== 'undefined') ? require('./vfs.js') : VFS;
   const _SSE = (typeof module !== 'undefined') ? require('./sse.js') : SSE;
+  const _Budget = (typeof module !== 'undefined') ? require('./context-budget.js') : ContextBudget;
   const _Diff = (typeof module !== 'undefined') ? require('./diff.js') : Diff;
   const _BuilderTools = (typeof module !== 'undefined') ? require('./builder-tools.js') : BuilderTools;
   const _ApiUrl = (typeof module !== 'undefined') ? require('../shared/api-url.js') : ApiUrl;
@@ -342,6 +343,7 @@ const Agent = (() => {
   async function runTurn(ctx, messages, transport, hooks) {
     const h = hooks || {};
     const msgs = messages.slice();
+    const requestOnly = [];
     const newMessages = [];
     let hadWrite = false;
     // 中止检查点：仅靠 fetch 的 signal 不够——工具循环里可能连续多次调用工具，
@@ -350,6 +352,11 @@ const Agent = (() => {
     const checkAbort = () => { if (h.signal && h.signal.aborted) throw abortErr(); };
     for (let loop = 0; loop < ctx.config.maxToolLoops; loop++) {
       checkAbort();
+      if (h.prepareRequest) {
+        const prepared = await waitWithAbort(h.prepareRequest(msgs, requestOnly.slice()), h.signal);
+        msgs.splice(0, msgs.length, ...prepared);
+        checkAbort();
+      }
       const resp = await waitWithAbort(transport(msgs), h.signal);
       checkAbort();
       const asst = { role: 'assistant', content: resp.content || '' };
@@ -409,7 +416,11 @@ const Agent = (() => {
       }
       // Finish the full tool batch before injecting an image-only user message.
       // This adapter is request-local: neither base64 nor synthetic user turns are persisted.
-      if (imageParts.length) msgs.push({ role: 'user', content: imageParts });
+      if (imageParts.length) {
+        const imageMessage = { role: 'user', content: imageParts };
+        Object.defineProperty(imageMessage, 'afterToolCallId', { value: asst.tool_calls.at(-1).id });
+        msgs.push(imageMessage); requestOnly.push(imageMessage);
+      }
     }
     const final = { role: 'assistant', content: '(已达最大工具调用次数 ' + ctx.config.maxToolLoops + '，本轮终止)' };
     newMessages.push(final);
@@ -460,12 +471,15 @@ const Agent = (() => {
       for (;;) {
         const body = {
           model: settings.model,
-          messages: callbacks && callbacks.prepareMessages ? callbacks.prepareMessages(messages) : messages,
+          messages: _Budget.project(callbacks && callbacks.prepareMessages ? callbacks.prepareMessages(messages) : messages),
           temperature: Number(settings.temperature),
           stream: !!settings.stream,
         };
         applyThinkingFields(body, settings.reasoningEffort, tier);
         if (toolDefs && toolDefs.length) body.tools = toolDefs; // 空 tools（压缩场景）不设该字段
+        if (settings.maxOutputTokens) body.max_tokens = settings.maxOutputTokens;
+        const cap = Number(settings.maxContextK) * 1000;
+        if (cap > 0) _Budget.fit(body.messages, cap, toolDefs || []);
         const imageCount = body.messages.reduce((n, m) => n + (Array.isArray(m.content)
           ? m.content.filter(p => p.type === 'image_url').length : 0), 0);
         if (imageCount > 600) throw new Error('单次请求图片超过 600 张，请减少图片后重试');
@@ -482,7 +496,9 @@ const Agent = (() => {
         const text = await resp.text().catch(() => '');
         // 思考字段不被认（OpenAI/Azure 风格的 400）→ 减字段重试，其余错误照常抛
         if (tier < 2 && isThinkFieldError(resp.status, text)) { tier++; continue; }
-        throw new Error('API 错误 ' + resp.status + ': ' + text.slice(0, 300));
+        const error = new Error('API 错误 ' + resp.status + ': ' + text.slice(0, 300));
+        if (_Budget.isLimitError(error)) { error.code = 'CONTEXT_LIMIT'; error.message += '\n' + _Budget.HINT; }
+        throw error;
       }
       _thinkTiers.set(tierKey, tier);
       if (!settings.stream) {

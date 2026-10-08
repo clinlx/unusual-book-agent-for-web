@@ -15,6 +15,8 @@ const Tokens = (() => {
     // 图片 token 由模型及分辨率决定；使用保守占位估算，不能按 base64 字符数计费。
     let n = Array.isArray(m.content) ? m.content.reduce((sum, p) =>
       sum + (p.type === 'image_url' ? 1024 : estimateText(p.text || '')), 0) : estimateText(m.content || '');
+    n += estimateText(m.reasoning_content || '');
+    if (m.role === 'compressed') n += estimateText(m.summary || '');
     if (m.tool_calls) for (const tc of m.tool_calls)
       n += estimateText((tc.function && tc.function.name) || '') + estimateText((tc.function && tc.function.arguments) || '');
     return n;

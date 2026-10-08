@@ -1,5 +1,5 @@
 'use strict';
-/* ui.js —— 唯一操作 DOM 的模块。依赖全局：VFS, Tokens, Compress, SSE, ZIP, Skills, SkillLoader,
+/* ui.js —— 唯一操作 DOM 的模块。依赖全局：VFS, Tokens, ContextBudget, Compress, SSE, ZIP, Skills, SkillLoader,
    Versioning, MD, DB, Agent, AGENT_CONFIG, SEED_FILES, BUILTIN_SKILLS, COMPRESS_CONFIG,
    LONG_INPUT_TEMPLATE, DEFAULT_SETTINGS, DesignerResources, buildSystemPrompt, renderTemplate, validateCustomContextK */
 (() => {
@@ -18,6 +18,7 @@
     validationPending: false,
     validationDirty: false,     // 工作区发生改动后，下一次经过状态按钮时再检查一次
     repairSending: false,
+    continuing: false,
     storageBusy: false,
     activeTmpPaths: new Set(),  // 正在运行的轮次需要的临时文件，容量清理时暂时保留
     readState: new Map(),       // 写保护：path → 读取时 mtime（每项目重置）
@@ -597,9 +598,6 @@
       btn.title = selfRunning ? '中止' : '发送';
       btn.innerHTML = '';
       btn.append(icon(selfRunning ? 'stop' : 'send'));
-      // 按点击那一刻的状态决定行为，而不是绑定时的状态：轮次收尾有若干异步步骤，
-      // 绑定时还在运行、点击时已经结束，照旧执行中止就会误报「正在中止」。
-      btn.onclick = sendOrAbort;
     }
   }
   function sendOrAbort() {
@@ -1389,10 +1387,15 @@
       if (m.displayOnly)
         for (let i = before; i < box.childElementCount; i++) box.children[i].classList.add('folded');
     });
-    if (S.lastError && S.lastError.sessionId === sess.id) {
+    if (sess.contextInterrupted && !(S.running && S.runningSession === sess.id)) {
+      box.append(el('div', { class: 'error-card' },
+        el('div', { text: sess.contextInterrupted.message }),
+        el('button', { text: '压缩上下文', disabled: S.continuing, onclick: ctxMenu }),
+        el('button', { class: 'primary', text: '继续', disabled: S.continuing, onclick: () => continueInterrupted(sess) })));
+    } else if (S.lastError && S.lastError.sessionId === sess.id) {
       box.append(el('div', { class: 'error-card' },
         el('div', { text: S.lastError.message }),
-        el('button', { text: '重试', onclick: S.lastError.retry })));
+        el('button', { text: S.lastError.actionLabel || '重试', onclick: S.lastError.retry })));
     }
     // 收起的提问停在对话末尾等待作答（Agent 仍挂起）
     if (S.pendingAsk && S.pendingAsk.minimized && S.pendingAsk.sessionId === sess.id)
@@ -2299,24 +2302,38 @@
   }
 
   // ---------- 发送轮次 ----------
-  async function send(repair = null) {
+  async function continueInterrupted(sess) {
+    if (S.continuing || S.running || cur.session() !== sess) return;
+    S.continuing = true;
+    renderChat();
+    try { await send(null, true); }
+    finally { S.continuing = false; renderChat(); }
+  }
+  async function send(repair = null, resume = false) {
+    if (S.continuing && !resume) return;
     if (S.storageBusy) return toast('正在清理项目数据，请稍后发送');
     if (S.repairSending && !repair) return;
     if (S.handoffBusy) return toast('请先完成世界交接');
     const input = $('#chatInput');
+    const sess = cur.session();
+    if (!sess || (resume && !sess.contextInterrupted)) return;
+    const resumeRecord = resume ? { ...sess.contextInterrupted } : null;
+    if (resume) {
+      await ensureFullHistory(sess);
+      if (cur.session() !== sess || S.running) return;
+    }
+    const resumingUser = resume ? sess.messages.find(m => m.msgId === resumeRecord.userMsgId) : null;
     if (!S.running && S.tree && !lease.isHeldByOther(S.projectId)) {
       const cleanup = TempFiles.sweep(S.tree, tmpOptions());
       if (cleanup.changed) saveTree().catch(e => toast('临时文件保存失败：' + e.message));
     }
-    let text = repair ? repair.text : inputText(input).trim();
-    const images = repair ? [] : inputImages(input);
-    if (!repair && input.querySelector('.image-attachment[data-pending="1"]')) { toast('图片读取中，请稍候再发送'); return; }
-    if ((!text && !images.length) || S.running) return;
-    if (images.length && !S.settings.imageSending) { toast('请将“视觉模型”设为“是”，或移除输入框中的图片'); return; }
-    if (images.some(ref => !Images.resolve(S.tree, ref.path)?.image)) { toast('图片已过期或无法预览，请移除后重新粘贴'); return; }
-    const sess = cur.session();
-    if (!sess) return;
-    const chips = repair ? [] : inputChips(input);
+    let text = resume ? '' : repair ? repair.text : inputText(input).trim();
+    const images = resume ? (resumingUser?.attachments || []) : repair ? [] : inputImages(input);
+    if (!resume && !repair && input.querySelector('.image-attachment[data-pending="1"]')) { toast('图片读取中，请稍候再发送'); return; }
+    if ((!resume && !text && !images.length) || S.running) return;
+    if (!resume && images.length && !S.settings.imageSending) { toast('请将“视觉模型”设为“是”，或移除输入框中的图片'); return; }
+    if (!resume && images.some(ref => !Images.resolve(S.tree, ref.path)?.image)) { toast('图片已过期或无法预览，请移除后重新粘贴'); return; }
+    const chips = resume || repair ? [] : inputChips(input);
     const goalChip = chips.find(c => c.kind === 'feature' && c.name === 'goal');
     const skillChips = chips.filter(c => c.kind === 'skill');
 
@@ -2340,7 +2357,7 @@
     hideSkillPop();
 
     // 超长输入 → 暂存 /tmp/{uuid}.txt，注入改为「头尾预览 + 文件引用」的固定格式
-    let stashPath = null;
+    let stashPath = resume ? resumingUser?.stashPath || null : null;
     const rawText = text;
     if (text.length >= AGENT_CONFIG.longInputChars) {
       try { stashPath = await stashLongInput(text); }
@@ -2363,16 +2380,26 @@
     // 预检和随后的压缩/裁剪都必须看到完整历史，先补全再算
     if (sess.__partial === 'cap') await ensureFullHistory(sess);
     const capTokens = S.settings.maxContextK * 1000;
-    if (Tokens.estimateMessages(requestMessages(sess)) > capTokens) {
-      if (S.settings.contextOverflow === 'disabled') {
-        toast('上下文已满：请手动压缩或新开会话'); return;
-      }
+    const initialTools = Agent.toolDefinitions(cur.allSkills(), { imageSending: S.settings.imageSending });
+    const draftMessage = { role: 'user', content: text, msgId: 'pending-input', attachments: images };
+    const draftCost = () => ContextBudget.cost(resume ? requestMessages(sess, resumeRecord.userMsgId)
+      : requestMessages({ ...sess, messages: [...sess.messages, draftMessage] }, draftMessage.msgId), initialTools);
+    if (draftCost() > capTokens) {
       if (S.settings.contextOverflow === 'compress') {
-        await compressNow(false);   // 压缩后继续本轮；sliding/truncate 交给下方 applyOverflowPolicy
+        const reserve = resume ? 0 : ContextBudget.cost(requestMessages({ ...sess, messages: [draftMessage] }, draftMessage.msgId))
+          - ContextBudget.cost(requestMessages({ ...sess, messages: [] }));
+        await compressNow(false, reserve);
+      }
+      if (draftCost() > capTokens && !['sliding', 'truncate'].includes(S.settings.contextOverflow)) {
+        const message = ContextBudget.limitError(draftCost(), capTokens).message;
+        toast(message);
+        await pushSystemError(sess, message, ContextBudget.HINT);
+        renderCtxBadge();
+        return;
       }
     }
 
-    if (!repair) {
+    if (!resume && !repair) {
       clearInput(input);
       flushDraft();                      // 内容已发出，草稿随之清空
       S.histIdx = -1; S.promptDraft = '';
@@ -2413,15 +2440,15 @@
       toast(kind === 'session'
         ? '⚠ 其他窗口正在运行此会话，请稍候或到该窗口操作。'
         : '⚠ 项目「' + projName + '」正被其他窗口执行（VFS 写保护），请稍候。');
-      if (!repair) {
+      if (!resume && !repair) {
         setInputText(input, rawText);
         for (const src of images) input.append(imageAttachment(src));
         scheduleDraftSave();
       }
       return;
     }
-    let preTree;                                       // 本轮开始前的 workspace 状态
-    const projectId = S.projectId, userIdx = sess.messages.length;
+    let preTree, sentUserId;                           // 本轮开始前的 workspace 状态
+    const projectId = S.projectId, userIdx = resume && resumingUser ? sess.messages.indexOf(resumingUser) : sess.messages.length;
     const readPaths = new Set(images.map(ref => ref.path));
     if (stashPath) readPaths.add(stashPath);
     let roundAged = false;
@@ -2429,13 +2456,17 @@
       setLockRun(sess.id, true);
       preTree = VFS.clone(getWorkspaceNode());
       // msgId 是稳定标识：快照靠它定位轮次，删除其他轮次后仍能对上
-      const userMsg = { role: 'user', content: text, msgId: uid() };
-      if (repair) userMsg.validationReport = { count: repair.errorCount };
-      if (images.length) userMsg.attachments = images;
-      if (goalSetKind) { userMsg.goalSet = goalSetKind; userMsg.goalText = goalCmd; }
-      // 注入给 AI 的是折叠模板；界面与「撤回回填」仍用原始全文
-      if (stashPath) { userMsg.stashPath = stashPath; userMsg.fullLength = rawText.length; userMsg.displayContent = rawText; }
-      sess.messages.push(userMsg);
+      const userMsg = resume ? resumingUser || { msgId: resumeRecord.userMsgId } : { role: 'user', content: text, msgId: uid() };
+      delete sess.contextInterrupted;
+      sentUserId = userMsg.msgId;
+      if (!resume) {
+        if (repair) userMsg.validationReport = { count: repair.errorCount };
+        if (images.length) userMsg.attachments = images;
+        if (goalSetKind) { userMsg.goalSet = goalSetKind; userMsg.goalText = goalCmd; }
+        // 注入给 AI 的是折叠模板；界面与「撤回回填」仍用原始全文
+        if (stashPath) { userMsg.stashPath = stashPath; userMsg.fullLength = rawText.length; userMsg.displayContent = rawText; }
+        sess.messages.push(userMsg);
+      }
 
       // Skill 手动触发：伪造成一次 run_skill 工具调用写进历史。
       // 用 system 消息注入有两个毛病：语义不对（Skill 是本次流程，不是助手人设），
@@ -2443,7 +2474,7 @@
       // 历史里，后续轮次也看得到，模型不会「下一轮就忘了流程」。
       // 气泡优先；没有气泡时兼容手打的 /skill名 前缀。
       const typedSkill = text.match(/^\/([a-z0-9-]+)/);
-      const wanted = skillChips.length ? skillChips.map(c => c.name)
+      const wanted = resume ? [] : skillChips.length ? skillChips.map(c => c.name)
         : (typedSkill ? [typedSkill[1]] : []);
       for (const nm of wanted) {
         const manualSkill = cur.allSkills().find(s => s.name === nm);
@@ -2498,7 +2529,8 @@
         S.streamSession = sess.id;      // 流式内容归属本会话，切走后不画到别处
         S.streamBuf = '';
         S.reasonBuf = '';
-        const transport = Agent.createHttpTransport(S.settings, Agent.toolDefinitions(cur.allSkills(), { imageSending: S.settings.imageSending }), {
+        const toolDefs = Agent.toolDefinitions(cur.allSkills(), { imageSending: S.settings.imageSending });
+        const transport = Agent.createHttpTransport(S.settings, toolDefs, {
           prepareMessages: messages => S.settings.imageSending ? messages : messages.map(m => Array.isArray(m.content)
             ? { ...m, content: Tokens.contentText(m.content) + '\n[图片发送已关闭]' } : m),
           onDelta: t => renderStreamDelta(t),
@@ -2523,13 +2555,39 @@
           },
           signal: S.abort.signal,
         });
-        let msgs = requestMessages(sess, goalRound === 0 ? userMsg.msgId : null);
-        msgs = applyOverflowPolicy(msgs, capTokens);
+        const msgs = requestMessages(sess, goalRound === 0 ? userMsg.msgId : null);
         const turnNo = ++S.turnCounter;
         S.validationPending = true;
         await saveTree(); // Pending content cannot retain an importable green checkpoint.
         const out = await Agent.runTurn(ctx, msgs, transport, {
           signal: S.abort.signal,
+          prepareRequest: async (_messages, requestOnly) => {
+            const activeUser = [...sess.messages].reverse().find(m => m.role === 'user' && !m.displayOnly);
+            const activeId = activeUser && activeUser.msgId;
+            const assemble = () => {
+              const messages = requestMessages(sess, activeId);
+              for (const image of requestOnly) {
+                const after = messages.findLastIndex(m => m.role === 'tool' && m.tool_call_id === image.afterToolCallId);
+                const outgoing = S.settings.imageSending ? image : { role: 'user', content: Tokens.contentText(image.content) + '\n[图片发送已关闭]' };
+                if (after < 0) messages.push(outgoing);
+                else messages.splice(after + 1, 0, outgoing);
+              }
+              return messages;
+            };
+            if (S.settings.contextOverflow === 'compress' && ContextBudget.cost(assemble(), toolDefs) > capTokens) {
+              try {
+                await performCompression(sess, { signal: S.abort.signal, preserveUserId: activeId,
+                  reserveTokens: ContextBudget.cost(requestOnly), toolDefs });
+              } catch (error) {
+                if (error.name === 'AbortError') throw error;
+                const stopped = ContextBudget.limitError(ContextBudget.cost(assemble(), toolDefs), capTokens);
+                stopped.message = '自动压缩失败：' + error.message + '\n' + stopped.message;
+                throw stopped;
+              }
+            }
+            renderCtxBadge();
+            return ContextBudget.fit(assemble(), capTokens, toolDefs, S.settings.contextOverflow);
+          },
           // 逐条落库并渲染：先把消息写进会话，再清流式气泡，中间没有空档
           onMessage: m => {
             S.streamingTools = null;   // 参数已收齐，交给执行阶段的卡片
@@ -2540,7 +2598,7 @@
             sess.messages.push(m);
             const saved = saveSession(sess);
             clearStreamBubble();
-            if (S.sessionId === sess.id) renderChat();
+            if (S.sessionId === sess.id) { renderChat(); renderCtxBadge(); }
             return saved;
           },
           onGoalEvent: ev => { const saved = persistGoal(sess); renderChat(); return saved; },
@@ -2589,9 +2647,17 @@
         await saveSession(sess);
       } else {
         // 挂到状态上由 renderChat 渲染，否则 finally 的 renderChat() 会清掉直接 append 的卡片
-        S.lastError = { sessionId: sess.id, message: e.message, retry: () => {
+        if (ContextBudget.isLimitError(e) || resume) {
+          sess.contextInterrupted = { userMsgId: [...sess.messages].reverse().find(m => m.role === 'user' && !m.displayOnly)?.msgId || sentUserId,
+            message: e.message, at: Date.now() };
+        }
+        S.lastError = ContextBudget.isLimitError(e) || resume
+          ? { sessionId: sess.id, message: e.message.includes(ContextBudget.HINT) ? e.message : e.message + '\n' + ContextBudget.HINT,
+            actionLabel: '压缩上下文', retry: () => ctxMenu() }
+          : { sessionId: sess.id, message: e.message, retry: () => {
           S.lastError = null;
-          sess.messages.splice(userIdx); markSessionDirty(sess);
+          const retryFrom = sess.messages.findIndex(m => m.msgId === sentUserId && !m.displayOnly);
+          if (retryFrom >= 0) { sess.messages.splice(retryFrom); markSessionDirty(sess); }
           if (repair) { renderChat(); send(repair); return; }
           setInputText(input, rawText);
           for (const src of images) input.append(imageAttachment(src));
@@ -2925,13 +2991,6 @@
     for (const [k, v] of Object.entries(m)) if (!LOCAL_MSG_FIELDS.includes(k)) out[k] = v;
     return out;
   }
-  function applyOverflowPolicy(msgs, capTokens) {
-    if (Tokens.estimateMessages(msgs) <= capTokens) return msgs;
-    // 裁剪在净化之后发生，可能重新切出半截调用，故裁完再净化一次
-    if (S.settings.contextOverflow === 'sliding') return Tokens.sanitizeMessages(Tokens.slidingWindow(msgs, capTokens));
-    if (S.settings.contextOverflow === 'truncate') return Tokens.sanitizeMessages(Tokens.truncateOldest(msgs, capTokens));
-    return msgs; // compress 模式在 send 前置检查触发 compressNow；disabled 已在入口拦截
-  }
 
   // ---------- 删除 / 撤回 / 工作目录回滚 ----------
   // 本轮范围：userIdx 起到下一条 user 消息前（系统错误不算轮次边界，但会被一并带走）
@@ -2945,6 +3004,7 @@
     const sess = cur.session();
     if (!await confirmDialog('删除本轮问答', '删除这条提问与对应的 AI 回复？后续对话保留，文件不受影响。', true)) return;
     const end = turnEnd(sess, userIdx);
+    if (sess.messages.slice(userIdx, end).some(m => m.msgId && m.msgId === sess.contextInterrupted?.userMsgId)) delete sess.contextInterrupted;
     sess.messages.splice(userIdx, end - userIdx);
     markSessionDirty(sess);
     await saveSession(sess);
@@ -2972,6 +3032,7 @@
       catch (_) { /* 临时文件已被清理，退回用界面文本 */ }
     }
     sess.messages.splice(userIdx);
+    if (sess.contextInterrupted && !sess.messages.some(m => m.msgId === sess.contextInterrupted.userMsgId)) delete sess.contextInterrupted;
     restoreOrphanedFold(sess);
     markSessionDirty(sess);
     await saveSession(sess);
@@ -3032,9 +3093,10 @@
     if (!b) return;
     const sess = cur.session();
     if (!sess) { b.textContent = ''; return; }
-    const used = Tokens.estimateMessages(requestMessages(sess));
+    const used = ContextBudget.cost(requestMessages(sess), Agent.toolDefinitions(cur.allSkills(), { imageSending: S.settings.imageSending }));
     const cap = S.settings.maxContextK * 1000;
-    b.textContent = (used >= 1000 ? (used / 1000).toFixed(1) + 'k' : used) + ' / ' + S.settings.maxContextK + 'k';
+    b.title = used >= S.settings.maxContextK * 1000 ? '上下文已满：' + ContextBudget.HINT : '上下文占用估算 / 上限';
+    b.textContent = (sess.__partial === 'cap' ? '≥ ' : '') + (used >= 1000 ? (used / 1000).toFixed(1) + 'k' : used) + ' / ' + S.settings.maxContextK + 'k';
     b.className = used > cap * 0.8 ? 'warn' : '';
     b.id = 'ctxBadge';
   }
@@ -3043,59 +3105,56 @@
       '将把较早的对话历史交给模型总结为一条摘要，之后只发送摘要。\n原始消息在界面上保留，可以随时回看。', false)) return;
     await compressNow(true);
   }
-  async function compressNow(interactive) {
+  async function performCompression(sess, { interactive = false, signal, preserveUserId, reserveTokens = 0, toolDefs } = {}) {
+    await ensureFullHistory(sess);
+    toolDefs = toolDefs || Agent.toolDefinitions(cur.allSkills(), { imageSending: S.settings.imageSending });
+    const cap = S.settings.maxContextK * 1000;
+    const fixed = ContextBudget.cost(requestMessages({ ...sess, messages: [] }), toolDefs);
+    const available = cap - fixed - reserveTokens - 64;
+    if (available < 512) throw ContextBudget.limitError(fixed + reserveTokens, cap);
+    const summaryBudget = Math.min(3000, Math.floor(available * 0.2));
+    const transport = Agent.createHttpTransport({ ...S.settings, stream: false, maxOutputTokens: summaryBudget }, [], { signal });
+    const compressible = sess.messages.filter(m => m.role !== 'system-error' && !m.displayOnly);
+    const out = await Compress.run(compressible, {
+      retainedBudgetTokens: available - summaryBudget,
+      preserveUserId,
+      inputBudgetTokens: Math.floor(cap * COMPRESS_CONFIG.inputBudgetRatio),
+      requestBudgetTokens: cap - summaryBudget - 64,
+      summaryBudgetTokens: summaryBudget,
+      maxWords: Math.min(COMPRESS_CONFIG.maxWords, summaryBudget),
+      fileTree: VFS.overview(S.tree).slice(0, Math.floor(cap * 0.05)),
+    }, transport, (i, total) => {
+      if (interactive && total > 1) toast(`压缩中 ${i}/${total} 段…`);
+    });
+    if (!out) { if (interactive) toast('当前历史已在保留范围内，无需压缩'); return false; }
+    if (signal && signal.aborted) throw Object.assign(new Error('已中止'), { name: 'AbortError' });
+    const candidate = ContextBudget.fold(sess.messages, out);
+    ContextBudget.requireReduction(requestMessages(sess), requestMessages({ ...sess, messages: candidate }), toolDefs);
+    sess.messages = candidate;
+    if (sess.contextInterrupted && ContextBudget.cost(requestMessages(sess), toolDefs) <= cap)
+      sess.contextInterrupted.message = '本轮已中断，可点击继续执行。';
+    markSessionDirty(sess);
+    await saveSession(sess);
+    if (S.lastError && S.lastError.sessionId === sess.id && S.lastError.actionLabel === '压缩上下文') S.lastError = null;
+    if (interactive) toast(out.mark.chunks > 1 ? `压缩完成（${out.mark.chunks} 段接力）` : '压缩完成');
+    return true;
+  }
+  async function compressNow(interactive, reserveTokens = 0) {
     const sess = cur.session();
-    if (!sess || S.running) return;
+    if (!sess || S.running) return false;
     const acquired = lease.acquireForRun(S.projectId, sess.id);
     if (!acquired.ok) {
       const r = lease.blockedReason(S.projectId, sess.id) || acquired.conflict;
-      const kind = (r && r.kind) || 'project';
-      toast(kind === 'session'
-        ? '⚠ 其他窗口正在运行此会话，无法压缩。'
-        : '⚠ 项目正被其他窗口执行（VFS 写保护），无法压缩。');
-      return;
+      toast(r && r.kind === 'session' ? '⚠ 其他窗口正在运行此会话，无法压缩。' : '⚠ 项目正被其他窗口执行（VFS 写保护），无法压缩。');
+      return false;
     }
     setLockRun(sess.id, true);
     try {
-      // 压缩要重排整个数组（折叠原文 + 插摘要），必须先把库里未载入的部分补回来，
-      // 否则重排结果只覆盖尾部，落库时会把更早的历史顺序打乱
-      await ensureFullHistory(sess);
-      const transport = Agent.createHttpTransport({ ...S.settings, stream: false }, [], { signal: S.abort.signal });
-      // 输入预算：上下文上限 × 比例。贴着上限时单次请求自身就可能超限，
-      // 分段接力（先压前半，其结论并入后半的第二次请求）保证每次请求都在预算内。
-      const capTokens = S.settings.maxContextK * 1000;
-      const budget = Math.max(2000, Math.floor(capTokens * COMPRESS_CONFIG.inputBudgetRatio));
-      // 系统错误不参与压缩（它们本就不进上下文）；已折叠的原文同理——
-      // 它们不再发送，不占上下文预算，再压一遍只会重复劳动
-      const compressible = sess.messages.filter(m => m.role !== 'system-error' && !m.displayOnly);
-      const displayOnlyOld = sess.messages.filter(m => m.displayOnly);
-      const sysErrors = sess.messages.filter(m => m.role === 'system-error');
-      const out = await Compress.run(compressible, {
-        inputBudgetTokens: budget,
-        fileTree: VFS.overview(S.tree),
-      }, transport, (i, total) => {
-        if (interactive && total > 1) toast(`压缩中 ${i}/${total} 段…`);
-      });
-      if (!out) { if (interactive) toast('消息太少，无需压缩'); return; }
-      if (S.abort.signal.aborted) throw Object.assign(new Error('已中止'), { name: 'AbortError' });
-      // 压缩不销毁原文：被压掉的消息标记 displayOnly，界面照常显示、请求时过滤掉。
-      // 摘要插在被折叠区段的末尾（即边界线上），读下来就是「一段历史 → 它的摘要 → 最近对话」。
-      const folded = new Set(out.keepRecent);
-      const kept = [];
-      for (const m of compressible) {
-        if (folded.has(m)) continue;                 // 保留原文的最近若干轮，位置不动
-        kept.push(m.displayOnly ? m : { ...m, displayOnly: true });
-      }
-      // 保证任意时刻只有一条“活的”压缩标记：万一旧标记恰好落在“最近若干轮”窗口内
-      // 而没被折叠掉（两次压缩间隔太短、轮数不够 keepRecentTurns 时会发生），
-      // 也要强制折起，否则界面会同时出现新旧两条分隔线，且发送时会重复注入摘要。
-      const keepRecent = out.keepRecent.map(m => m.role === 'compressed' ? { ...m, displayOnly: true } : m);
-      sess.messages = [...displayOnlyOld, ...kept, out.mark, ...keepRecent, ...sysErrors];
-      markSessionDirty(sess);
-      await saveSession(sess);
-      if (interactive) toast(out.mark.chunks > 1 ? `压缩完成（${out.mark.chunks} 段接力）` : '压缩完成');
+      return await performCompression(sess, { interactive, signal: S.abort.signal, reserveTokens });
     } catch (e) {
-      if (interactive) toast(e.name === 'AbortError' ? '压缩已中止' : '压缩失败: ' + e.message);
+      const full = ContextBudget.cost(requestMessages(sess), Agent.toolDefinitions(cur.allSkills(), { imageSending: S.settings.imageSending })) >= S.settings.maxContextK * 1000;
+      toast(e.name === 'AbortError' ? '压缩已中止' : '压缩失败: ' + e.message + (full && !e.message.includes(ContextBudget.HINT) ? '\n' + ContextBudget.HINT : ''));
+      return false;
     } finally {
       setLockRun(sess.id, false);
       renderChat(); renderCtxBadge();
@@ -5221,10 +5280,10 @@
       el('option', { value: 'compress', text: '自动压缩' }));
     overflow.value = s.contextOverflow;
     const ctxSel = el('select', {},
-      ...[128, 256, 512, 1024].map(k => el('option', { value: String(k), text: k >= 1024 ? '1m' : k + 'k' })),
+      ...[128, 240, 256, 512, 1024].map(k => el('option', { value: String(k), text: k >= 1024 ? '1m' : k + 'k' })),
       el('option', { value: 'custom', text: '自定义…' }));
     const ctxCustom = el('input', { type: 'number', placeholder: '单位 k，1–10000', style: 'display:none' });
-    if ([128, 256, 512, 1024].includes(s.maxContextK)) ctxSel.value = String(s.maxContextK);
+    if ([128, 240, 256, 512, 1024].includes(s.maxContextK)) ctxSel.value = String(s.maxContextK);
     else { ctxSel.value = 'custom'; ctxCustom.style.display = ''; ctxCustom.value = String(s.maxContextK); }
     ctxSel.onchange = () => { ctxCustom.style.display = ctxSel.value === 'custom' ? '' : 'none'; };
 

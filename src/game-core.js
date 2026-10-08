@@ -473,16 +473,19 @@ const GameCore = (() => {
         const cache=boundaryCache(from);
         if(cache&&Object.keys(cache).length)head.push({role:'user',content:(opts.cachePrompt||'[NEXT_TURN_CACHE]')+'\n'+JSON.stringify(cache)});
       }
-      const msgs=s.messages.filter(m=>(m.round||1)>=from).map(m=>{
+      const source=s.messages.filter(m=>(m.round||1)>=from);
+      const msgs=(compact?history.compactReads(source,current):source).map(m=>{
         const out={role:m.role,content:m.content||''};
         for(const k of ['tool_calls','tool_call_id','reasoning_content'])if(m[k]!==undefined)out[k]=copy(m[k]);return out;
-      });const built=[...head,...msgs];return compact?history.compactReads(built,s.messages,current):built;
+      });const sent=[...head,...msgs];
+      if(opts.transformContext)for(const m of sent){m.content=opts.transformContext(m.content);if(m.tool_calls)for(const tc of m.tool_calls)tc.function.arguments=opts.transformContext(tc.function.arguments);}
+      return sent;
     }
     let sent=build();
     if(estimate(sent)>cap){compact=true;sent=build();}
     if(estimate(sent)>cap&&rounds.length>1){from=rounds[Math.floor(rounds.length/2)];sent=build();
       while(estimate(sent)>cap&&from<current){const next=rounds.find(r=>r>from);if(next===undefined)break;from=next;sent=build();}}
-    if(estimate(sent)>cap)throw Error('系统提示词与当前回合已超过上下文上限，请调大上限或缩短提示词');
+    if(estimate(sent)>cap)throw Object.assign(Error('系统提示词与当前回合已超过上下文上限，请在设置中调大上下文上限或降低输出上限，再点击“继续本轮”；也可回退本回合后减少输入或读取内容。'),{code:'CONTEXT_LIMIT'});
     s.contextFromRound=from;return sent;
   }
   async function run(s,transport,opts={}) {
@@ -526,8 +529,7 @@ const GameCore = (() => {
       if(s.activeRound.complete){s.status=s.cache.game_over===true?'ended':'waiting';await step();return;}
       if(opts.resumePrompt){s.messages.push({role:'user',content:opts.resumePrompt,round:s.activeRound.number});await step();}
       for(let loop=0;loop<(opts.maxToolLoops||60);loop++){
-        abort();const messages=context(s,opts.system||'',opts.cap||240000,opts);
-        if(opts.transformContext)for(const m of messages){m.content=opts.transformContext(m.content);if(m.tool_calls)for(const tc of m.tool_calls)tc.function.arguments=opts.transformContext(tc.function.arguments);}
+        abort();const messages=context(s,opts.system||'',opts.cap??240000,opts);
         await step();
         const resp=await transport(messages);abort();
         const m={role:'assistant',content:resp.content||'',round:s.activeRound.number};

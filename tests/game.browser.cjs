@@ -114,9 +114,9 @@ const call=(name,args,id)=>({id,type:'function',function:{name,arguments:JSON.st
     await page.locator('[data-action="play"]').click();
     const resumeSaveId=await page.evaluate(()=>GameApp.getState().active.id);
     await page.evaluate(()=>{window.onbeforeunload=null;});await page.reload();
-    await page.locator(`[data-action="open-save"][data-id="${resumeSaveId}"]`).click();await page.locator('[data-action="resume"]').waitFor();
-    await page.locator('[data-action="resume"]').click();await page.waitForFunction(()=>!GameApp.getState().running&&GameApp.getState().active.round===3);
-    await page.locator('[data-action="resume"]').waitFor({state:'detached'});
+    await page.locator(`[data-action="open-save"][data-id="${resumeSaveId}"]`).click();await page.locator('#action-form [data-action="resume"]').waitFor();
+    await page.locator('#action-form [data-action="resume"]').click();await page.waitForFunction(()=>!GameApp.getState().running&&GameApp.getState().active.round===3);
+    await page.locator('#action-form [data-action="resume"]').waitFor({state:'detached'});
     assert.equal(reqs,3);assert.equal(await page.evaluate(()=>GameApp.getState().active.events.filter(e=>e.type==='story'&&e.content==='远处传来一声汽笛。').length),1);
     await page.evaluate(()=>GameApp.rollback());assert.equal(await page.evaluate(()=>GameApp.getState().active.round),2);
     // An incomplete manual JSON edit must leave DEBUG available for repair.

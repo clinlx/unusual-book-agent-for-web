@@ -184,7 +184,7 @@ const LONG_INPUT_TEMPLATE = [
 //          {{chunkIndex}}/{{chunkTotal}} 当前段序号与总段数。
 const COMPRESS_CONFIG = {
   maxWords: 1500,                // 软上限：防止摘要在多次接力压缩后无限膨胀，装不下时按 systemTemplate 里的优先级取舍
-  keepRecentTurns: 20,           // 压缩时保留最近 N 轮对话原文（不参与压缩）
+  keepRecentResponses: 20,       // 优先保留最近 N 次 AI 返回；预算允许时至少保留一个完整用户轮次
   inputBudgetRatio: 0.45,        // 单次压缩请求的输入预算 = 上下文上限 × 该比例（超出则分段接力）
   // 转录里单条工具结果/工具调用内容（write_file 的 content、apply_patch 的 old_str/new_str）
   // 超过此长度才截断；截断后保留头尾各若干字，中间省略——摘要要写出真代码片段，
@@ -341,7 +341,7 @@ const DEFAULT_SETTINGS = {
   //   compress  把早期对话交给模型总结成摘要（不可恢复）
   // 前三种只影响发给模型的内容，本地对话记录完整保留。
   contextOverflow: 'disabled',
-  maxContextK: 128,              // 128 | 256 | 512 | 1024 | 自定义正整数
+  maxContextK: 240,              // 128 | 240 | 256 | 512 | 1024 | 自定义正整数
   editorPosition: 'right',       // right | center | left | float（窄屏忽略此项）
   panes: null,                   // 桌面三栏宽度 [左, 右]（px），null = 用默认值
   // 变更追踪范围：last=只显示最后一轮的改动（默认）；accumulate=累积到手动接受为止
