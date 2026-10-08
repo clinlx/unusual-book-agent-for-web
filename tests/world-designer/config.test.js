@@ -91,7 +91,7 @@ test('LONG_INPUT_TEMPLATE 渲染出头尾预览与文件引用', () => {
 
 test('DEFAULT_SETTINGS 默认值符合规格', () => {
   assert.strictEqual(C.DEFAULT_SETTINGS.contextOverflow, 'disabled');
-  assert.strictEqual(C.DEFAULT_SETTINGS.maxContextK, 240);
+  assert.strictEqual(C.DEFAULT_SETTINGS.maxContextK, 256);
   assert.strictEqual(C.DEFAULT_SETTINGS.stream, true);
 });
 

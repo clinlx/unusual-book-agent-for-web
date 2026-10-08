@@ -8,6 +8,35 @@ const Agent=require('../../src/world-designer/agent');
 const VFS=require('../../src/world-designer/vfs');
 const C=require('../../src/world-designer/00-config');
 
+test('preset context limits reserve 16k only after occupancy exceeds half',()=>{
+  for(const maxContextK of [128,256,512,1024]){
+    const settings={maxContextK,contextLimitMode:'preset'},half=maxContextK*500;
+    assert.equal(Budget.occupied(settings,half),half);
+    assert.equal(Budget.occupied(settings,half+1),half+1+16000);
+    assert.equal(Budget.limit(settings,half+1),maxContextK*1000-16000);
+  }
+  assert.equal(Budget.occupied({maxContextK:256},240000),256000);
+});
+
+test('custom limits keep their exact budget even when their value matches a preset',()=>{
+  for(const maxContextK of [32,240,256,512]){
+    const settings={maxContextK,contextLimitMode:'custom'};
+    assert.equal(Budget.occupied(settings,maxContextK*750),maxContextK*750);
+    assert.equal(Budget.limit(settings,maxContextK*750),maxContextK*1000);
+  }
+  assert.equal(Budget.occupied({maxContextK:240},200000),200000);
+});
+
+test('HTTP budget enforces preset reserve while allowing the same custom limit',async t=>{
+  let requests=0;
+  t.mock.method(globalThis,'fetch',async()=>{requests++;return {ok:true,json:async()=>({choices:[{message:{content:'完成'}}]})};});
+  const messages=[{role:'user',content:'文'.repeat(240001)}];
+  await assert.rejects(Agent.createHttpTransport({baseUrl:'https://test.invalid/v1',maxContextK:256,contextLimitMode:'preset'},[],{})(messages),e=>e.code==='CONTEXT_LIMIT');
+  assert.equal(requests,0);
+  await Agent.createHttpTransport({baseUrl:'https://test.invalid/v1',maxContextK:256,contextLimitMode:'custom'},[],{})(messages);
+  assert.equal(requests,1);
+});
+
 test('request accounting includes reasoning, summary and tool definitions but excludes local file diffs',()=>{
   const messages=[{role:'user',content:'继续'}, {role:'assistant',content:'',reasoning_content:'思'.repeat(100),tool_calls:[{id:'a',function:{name:'write_file',arguments:'{}'}}]},
     {role:'tool',tool_call_id:'a',content:'成功',change:{before:'旧'.repeat(10000),after:'新'.repeat(10000)}}];

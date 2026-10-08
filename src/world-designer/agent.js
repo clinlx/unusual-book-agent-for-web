@@ -479,7 +479,7 @@ const Agent = (() => {
         if (toolDefs && toolDefs.length) body.tools = toolDefs; // 空 tools（压缩场景）不设该字段
         if (settings.maxOutputTokens) body.max_tokens = settings.maxOutputTokens;
         const cap = Number(settings.maxContextK) * 1000;
-        if (cap > 0) _Budget.fit(body.messages, cap, toolDefs || []);
+        if (cap > 0) _Budget.fitConfigured(body.messages, settings, toolDefs || []);
         const imageCount = body.messages.reduce((n, m) => n + (Array.isArray(m.content)
           ? m.content.filter(p => p.type === 'image_url').length : 0), 0);
         if (imageCount > 600) throw new Error('单次请求图片超过 600 张，请减少图片后重试');

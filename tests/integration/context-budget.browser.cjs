@@ -52,17 +52,58 @@ async function state(page) {
   });
 }
 
-test('designer starts at 240k, exposes its preset, and preserves a saved context limit', async t => {
+test('designer starts at 256k, removes the 240k preset, and preserves a saved context limit', async t => {
   const { page } = await setup(t, () => ({ content: '完成' }));
   await page.reload(); await ready(page);
-  assert.equal(await page.evaluate(() => __UI_STATE__.settings.maxContextK), 240);
-  assert.match(await page.locator('#ctxBadge').innerText(), /240k$/);
+  assert.equal(await page.evaluate(() => __UI_STATE__.settings.maxContextK), 256);
+  assert.match(await page.locator('#ctxBadge').innerText(), /256k$/);
   await page.getByRole('button', { name: '设置', exact: true }).click();
   const limit = page.locator('.modal .row').filter({ has: page.locator('label', { hasText: /^最大上下文$/ }) }).locator('select');
-  assert.equal(await limit.inputValue(), '240');
+  assert.equal(await limit.inputValue(), '256');
+  assert.equal(await limit.locator('option[value="240"]').count(),0);
   await page.evaluate(async () => { __UI_STATE__.settings.maxContextK = 128; await DB.put('config', { id: 'settings', value: __UI_STATE__.settings }); });
   await page.reload(); await ready(page);
   assert.equal(await page.evaluate(() => __UI_STATE__.settings.maxContextK), 128);
+});
+
+test('preset occupancy includes reserve after half while custom 256k stays exact after save and reload', async t => {
+  const {page}=await setup(t,()=>({content:'完成'}));
+  await page.evaluate(()=>{
+    Object.assign(__UI_STATE__.settings,{maxContextK:256,contextLimitMode:'preset'});
+    const sess=__UI_STATE__.sessions.find(s=>s.id===__UI_STATE__.sessionId);
+    sess.messages=[{role:'user',content:'任务',msgId:'u'},{role:'assistant',content:'文'.repeat(130000)}];
+    sess.__dirtyAll=true;__UI__.renderAll();
+  });
+  const raw=(await state(page)).cost;
+  assert.match(await page.locator('#ctxBadge').innerText(),new RegExp('^'+((raw+16000)/1000).toFixed(1).replace('.','\\.')+'k / 256k$'));
+  await page.getByRole('button',{name:'设置',exact:true}).click();
+  const selector=page.locator('.modal .row').filter({has:page.locator('label',{hasText:/^最大上下文$/})}).locator('select');
+  await selector.selectOption('custom');
+  await page.locator('input[placeholder="单位 k，1–10000"]').fill('256');
+  await page.locator('.modal .foot .primary').click();
+  await page.waitForFunction(()=>__UI_STATE__.settings.contextLimitMode==='custom');
+  assert.match(await page.locator('#ctxBadge').innerText(),new RegExp('^'+(raw/1000).toFixed(1).replace('.','\\.')+'k / 256k$'));
+  await page.reload();await ready(page);
+  assert.equal(await page.evaluate(()=>__UI_STATE__.settings.contextLimitMode),'custom');
+  assert.equal(await page.evaluate(()=>ContextBudget.occupied(__UI_STATE__.settings,140000)),140000);
+  await page.getByRole('button',{name:'设置',exact:true}).click();
+  assert.equal(await selector.inputValue(),'custom');
+  assert.equal(await page.locator('input[placeholder="单位 k，1–10000"]').inputValue(),'256');
+});
+
+test('saved 240k values without a preset source and explicit custom values keep their exact limit',async t=>{
+  const {page}=await setup(t,()=>({content:'完成'}));
+  await page.evaluate(async()=>{
+    const value={...__UI_STATE__.settings,maxContextK:240};delete value.contextLimitMode;
+    await DB.put('config',{id:'settings',value});
+  });
+  await page.reload();await ready(page);
+  assert.equal(await page.evaluate(()=>__UI_STATE__.settings.maxContextK),240);
+  assert.equal(await page.evaluate(()=>ContextBudget.mode(__UI_STATE__.settings)),'custom');
+  await page.evaluate(async()=>DB.put('config',{id:'settings',value:{...__UI_STATE__.settings,maxContextK:240,contextLimitMode:'custom'}}));
+  await page.reload();await ready(page);
+  assert.equal(await page.evaluate(()=>__UI_STATE__.settings.maxContextK),240);
+  assert.equal(await page.evaluate(()=>ContextBudget.occupied(__UI_STATE__.settings,200000)),200000);
 });
 
 test('manual compression handles one huge turn, retains originals, and remains compact after reload', async t => {
@@ -74,6 +115,7 @@ test('manual compression handles one huge turn, retains originals, and remains c
   });
   const before = await state(page); assert.ok(before.cost > 32000);
   await manualCompress(page);
+  assert.equal(await page.locator('.toast').filter({hasText:/^压缩完成/}).last().innerText(),'压缩完成');
   const compressed = await state(page);
   assert.ok(compressed.cost < 32000); assert.ok(compressed.cost < before.cost);
   assert.equal(compressed.raw[1].content.length, 60000); assert.equal(compressed.raw[1].displayOnly, true);
@@ -234,8 +276,12 @@ test('context interruption resumes from the bubble after compression and reload 
   const continueButton = page.locator('#chatScroll').getByRole('button', { name: '继续', exact: true });
   await continueButton.waitFor({ state: 'visible' });
   await manualCompress(page);
+  assert.equal(await page.locator('#chatScroll').getByRole('button',{name:'压缩上下文',exact:true}).isDisabled(),true);
+  assert.match(await page.locator('#chatScroll').getByRole('button',{name:'压缩上下文',exact:true}).evaluate(button=>getComputedStyle(button).filter),/grayscale/);
   await page.reload(); await ready(page);
   await continueButton.waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#chatScroll').getByRole('button',{name:'压缩上下文',exact:true}).isDisabled(),true);
+  assert.equal(await continueButton.isDisabled(),false);
   await page.locator('#chatInput').fill('留给下一轮的草稿');
   const userCount = await page.evaluate(async () => (await DB.getMessages(__UI_STATE__.sessionId)).filter(m => m.role === 'user').length);
   await continueButton.click();

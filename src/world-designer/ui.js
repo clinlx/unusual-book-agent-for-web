@@ -407,7 +407,7 @@
         const r = await DB.getMessagesTailWhile(sess.id, (m, n) => {
           if (m.role === 'compressed' && !m.displayOnly) { stop = 'compressed'; return false; }
           acc += Tokens.estimateMessage(m);
-          if (acc > capTokens && n >= CHAT_PAGE) { stop = 'cap'; return false; }
+          if (ContextBudget.occupied(S.settings, acc) > capTokens && n >= CHAT_PAGE) { stop = 'cap'; return false; }
           return true;                                  // 超上限也至少留够一屏
         });
         sess.messages = r.messages;
@@ -1390,7 +1390,7 @@
     if (sess.contextInterrupted && !(S.running && S.runningSession === sess.id)) {
       box.append(el('div', { class: 'error-card' },
         el('div', { text: sess.contextInterrupted.message }),
-        el('button', { text: '压缩上下文', disabled: S.continuing, onclick: ctxMenu }),
+        el('button', { text: '压缩上下文', disabled: S.continuing || sess.contextInterrupted.compressed, onclick: ctxMenu }),
         el('button', { class: 'primary', text: '继续', disabled: S.continuing, onclick: () => continueInterrupted(sess) })));
     } else if (S.lastError && S.lastError.sessionId === sess.id) {
       box.append(el('div', { class: 'error-card' },
@@ -2382,8 +2382,8 @@
     const capTokens = S.settings.maxContextK * 1000;
     const initialTools = Agent.toolDefinitions(cur.allSkills(), { imageSending: S.settings.imageSending });
     const draftMessage = { role: 'user', content: text, msgId: 'pending-input', attachments: images };
-    const draftCost = () => ContextBudget.cost(resume ? requestMessages(sess, resumeRecord.userMsgId)
-      : requestMessages({ ...sess, messages: [...sess.messages, draftMessage] }, draftMessage.msgId), initialTools);
+    const draftCost = () => ContextBudget.occupied(S.settings, ContextBudget.cost(resume ? requestMessages(sess, resumeRecord.userMsgId)
+      : requestMessages({ ...sess, messages: [...sess.messages, draftMessage] }, draftMessage.msgId), initialTools));
     if (draftCost() > capTokens) {
       if (S.settings.contextOverflow === 'compress') {
         const reserve = resume ? 0 : ContextBudget.cost(requestMessages({ ...sess, messages: [draftMessage] }, draftMessage.msgId))
@@ -2574,19 +2574,19 @@
               }
               return messages;
             };
-            if (S.settings.contextOverflow === 'compress' && ContextBudget.cost(assemble(), toolDefs) > capTokens) {
+            if (S.settings.contextOverflow === 'compress' && ContextBudget.occupied(S.settings, ContextBudget.cost(assemble(), toolDefs)) > capTokens) {
               try {
                 await performCompression(sess, { signal: S.abort.signal, preserveUserId: activeId,
                   reserveTokens: ContextBudget.cost(requestOnly), toolDefs });
               } catch (error) {
                 if (error.name === 'AbortError') throw error;
-                const stopped = ContextBudget.limitError(ContextBudget.cost(assemble(), toolDefs), capTokens);
+                const stopped = ContextBudget.limitError(ContextBudget.occupied(S.settings, ContextBudget.cost(assemble(), toolDefs)), capTokens);
                 stopped.message = '自动压缩失败：' + error.message + '\n' + stopped.message;
                 throw stopped;
               }
             }
             renderCtxBadge();
-            return ContextBudget.fit(assemble(), capTokens, toolDefs, S.settings.contextOverflow);
+            return ContextBudget.fitConfigured(assemble(), S.settings, toolDefs, S.settings.contextOverflow);
           },
           // 逐条落库并渲染：先把消息写进会话，再清流式气泡，中间没有空档
           onMessage: m => {
@@ -3093,7 +3093,7 @@
     if (!b) return;
     const sess = cur.session();
     if (!sess) { b.textContent = ''; return; }
-    const used = ContextBudget.cost(requestMessages(sess), Agent.toolDefinitions(cur.allSkills(), { imageSending: S.settings.imageSending }));
+    const used = ContextBudget.occupied(S.settings, ContextBudget.cost(requestMessages(sess), Agent.toolDefinitions(cur.allSkills(), { imageSending: S.settings.imageSending })));
     const cap = S.settings.maxContextK * 1000;
     b.title = used >= S.settings.maxContextK * 1000 ? '上下文已满：' + ContextBudget.HINT : '上下文占用估算 / 上限';
     b.textContent = (sess.__partial === 'cap' ? '≥ ' : '') + (used >= 1000 ? (used / 1000).toFixed(1) + 'k' : used) + ' / ' + S.settings.maxContextK + 'k';
@@ -3108,7 +3108,7 @@
   async function performCompression(sess, { interactive = false, signal, preserveUserId, reserveTokens = 0, toolDefs } = {}) {
     await ensureFullHistory(sess);
     toolDefs = toolDefs || Agent.toolDefinitions(cur.allSkills(), { imageSending: S.settings.imageSending });
-    const cap = S.settings.maxContextK * 1000;
+    const cap = ContextBudget.limit(S.settings, ContextBudget.cost(requestMessages(sess), toolDefs));
     const fixed = ContextBudget.cost(requestMessages({ ...sess, messages: [] }), toolDefs);
     const available = cap - fixed - reserveTokens - 64;
     if (available < 512) throw ContextBudget.limitError(fixed + reserveTokens, cap);
@@ -3131,12 +3131,15 @@
     const candidate = ContextBudget.fold(sess.messages, out);
     ContextBudget.requireReduction(requestMessages(sess), requestMessages({ ...sess, messages: candidate }), toolDefs);
     sess.messages = candidate;
-    if (sess.contextInterrupted && ContextBudget.cost(requestMessages(sess), toolDefs) <= cap)
-      sess.contextInterrupted.message = '本轮已中断，可点击继续执行。';
+    if (sess.contextInterrupted) {
+      sess.contextInterrupted.compressed = true;
+      if (ContextBudget.occupied(S.settings, ContextBudget.cost(requestMessages(sess), toolDefs)) <= S.settings.maxContextK * 1000)
+        sess.contextInterrupted.message = '本轮已中断，可点击继续执行。';
+    }
     markSessionDirty(sess);
     await saveSession(sess);
     if (S.lastError && S.lastError.sessionId === sess.id && S.lastError.actionLabel === '压缩上下文') S.lastError = null;
-    if (interactive) toast(out.mark.chunks > 1 ? `压缩完成（${out.mark.chunks} 段接力）` : '压缩完成');
+    if (interactive) toast('压缩完成');
     return true;
   }
   async function compressNow(interactive, reserveTokens = 0) {
@@ -3152,7 +3155,7 @@
     try {
       return await performCompression(sess, { interactive, signal: S.abort.signal, reserveTokens });
     } catch (e) {
-      const full = ContextBudget.cost(requestMessages(sess), Agent.toolDefinitions(cur.allSkills(), { imageSending: S.settings.imageSending })) >= S.settings.maxContextK * 1000;
+      const full = ContextBudget.occupied(S.settings, ContextBudget.cost(requestMessages(sess), Agent.toolDefinitions(cur.allSkills(), { imageSending: S.settings.imageSending }))) >= S.settings.maxContextK * 1000;
       toast(e.name === 'AbortError' ? '压缩已中止' : '压缩失败: ' + e.message + (full && !e.message.includes(ContextBudget.HINT) ? '\n' + ContextBudget.HINT : ''));
       return false;
     } finally {
@@ -5280,10 +5283,10 @@
       el('option', { value: 'compress', text: '自动压缩' }));
     overflow.value = s.contextOverflow;
     const ctxSel = el('select', {},
-      ...[128, 240, 256, 512, 1024].map(k => el('option', { value: String(k), text: k >= 1024 ? '1m' : k + 'k' })),
+      ...ContextBudget.PRESETS.map(k => el('option', { value: String(k), text: k >= 1024 ? '1m' : k + 'k' })),
       el('option', { value: 'custom', text: '自定义…' }));
     const ctxCustom = el('input', { type: 'number', placeholder: '单位 k，1–10000', style: 'display:none' });
-    if ([128, 240, 256, 512, 1024].includes(s.maxContextK)) ctxSel.value = String(s.maxContextK);
+    if (ContextBudget.mode(s) === 'preset') ctxSel.value = String(s.maxContextK);
     else { ctxSel.value = 'custom'; ctxCustom.style.display = ''; ctxCustom.value = String(s.maxContextK); }
     ctxSel.onchange = () => { ctxCustom.style.display = ctxSel.value === 'custom' ? '' : 'none'; };
 
@@ -5455,6 +5458,7 @@
             reverseSendNewline: reverseSendNewline.checked,
             contextOverflow: overflow.value,
             maxContextK: maxK,
+            contextLimitMode: ctxSel.value === 'custom' ? 'custom' : 'preset',
             editorPosition: editorPos.value,
             changeScope: changeScope.value,
             reasoningDisplay: expandThink.value,

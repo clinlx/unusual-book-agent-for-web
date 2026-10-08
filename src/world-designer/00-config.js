@@ -341,7 +341,8 @@ const DEFAULT_SETTINGS = {
   //   compress  把早期对话交给模型总结成摘要（不可恢复）
   // 前三种只影响发给模型的内容，本地对话记录完整保留。
   contextOverflow: 'disabled',
-  maxContextK: 240,              // 128 | 240 | 256 | 512 | 1024 | 自定义正整数
+  maxContextK: 256,              // 128 | 256 | 512 | 1024 | 自定义正整数
+  contextLimitMode: 'preset',
   editorPosition: 'right',       // right | center | left | float（窄屏忽略此项）
   panes: null,                   // 桌面三栏宽度 [左, 右]（px），null = 用默认值
   // 变更追踪范围：last=只显示最后一轮的改动（默认）；accumulate=累积到手动接受为止

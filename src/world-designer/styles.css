@@ -278,6 +278,7 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--blue); outl
 }
 .error-card button { margin-top: 8px; background: var(--red); color: #fff; font-size: 13px; }
 .error-card button + button { margin-left: 8px; }
+.error-card button:disabled { filter: grayscale(1); }
 
 /* 输入区 */
 #inputBar {
