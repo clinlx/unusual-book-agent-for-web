@@ -62,3 +62,27 @@ test('image file outputs preserve PNG bytes and previews and do not partially ov
   const node = VFS.resolve(f.tree, VFS.normalize(saved.pages[0].path));
   assert.deepEqual([...VFS.fileBytes(node)], [1, 2, 3]); assert.equal(node.image.dataUrl, 'data:image/png;base64,AQID');
 });
+
+for(const type of ['pdf','docx'])test(type+' text beyond 16k returns a bounded preview and saves the complete extraction',async()=>{
+  const f=fixture(),text='文'.repeat(16001),info=type==='pdf'?{start_page:1,end_page:20,total_pages:30,next_page:21}:{};
+  VFS.writeFile(f.tree,'/workspace/large.'+type,'UEs=',{encoding:'base64'});
+  const runtime={[type]:async()=>({text,info})};
+  const out=await f.parse({path:'/workspace/large.'+type},{runtime}),result=JSON.parse(out.result);
+  assert.equal(result.output,'file');assert.equal(result.requested_output,'return');assert.equal(result.auto_saved,true);
+  assert.equal(result.text,'文'.repeat(8000));assert.equal(result.offset,0);assert.equal(result.next_offset,8000);assert.equal(result.truncated,true);assert.equal(result.total_characters,16001);assert.match(result.path,/^\/tmp\/.+\.txt$/);
+  assert.match(result.note,/16000[\s\S]*read_file/);assert.equal(out.isWrite,true);
+  assert.ok(out.result.length<10000);assert.equal(VFS.readFile(f.tree,result.path,{cap:Infinity}).content,text);
+  assert.equal(VFS.resolve(f.tree,VFS.normalize(result.path)).tmp.idleTurns,0);
+  if(type==='pdf')assert.equal(result.next_page,21);
+  const again=JSON.parse((await f.parse({path:'/workspace/large.'+type},{runtime})).result);
+  assert.notEqual(again.path,result.path);assert.equal(VFS.readFile(f.tree,result.path,{cap:Infinity}).content,text);
+});
+
+test('16k boundary stays directly readable, while explicit file mode retains its chosen location',async()=>{
+  const f=fixture();f.runtime.docx=async()=>({text:'文'.repeat(16000),info:{}});
+  const direct=JSON.parse((await f.parse()).result);assert.equal(direct.output,'return');assert.equal(direct.text.length,16000);
+  f.runtime.docx=async()=>({text:'文'.repeat(16001),info:{}});
+  const saved=JSON.parse((await f.parse({output:'file',output_path:'/workspace/long.txt'})).result);
+  assert.equal(saved.path,'/workspace/long.txt');assert.equal(saved.auto_saved,undefined);assert.match(saved.note,/read_file/);
+  assert.equal(VFS.readFile(f.tree,saved.path,{cap:Infinity}).content.length,16001);
+});

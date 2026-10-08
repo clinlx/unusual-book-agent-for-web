@@ -362,7 +362,7 @@ const DEFAULT_SETTINGS = {
 };
 
 const TOOL_DEFS = [
-  { type: 'function', function: { name: 'parse_document', description: '解析 /workspace/ 或 /tmp/ 中的 PDF、DOCX，仅支持这两种文档。format=text 提取纯文字（不做 OCR），format=images 生成页图。output=return 直接返回文字或真实图片（图片需开启多模态）；output=file 保存文字到 output_path，或保存图片到 output_dir。PDF 页码从 1 开始；DOCX 图片按浏览器排版分页，可能与 Word 不同。每次默认最多 20 页文字或 5 页图片，按 next_page 继续。DOCX 文字不支持页码，可用 offset/limit 分段返回。保存不覆盖已有文件。', parameters: { type: 'object', properties: {
+  { type: 'function', function: { name: 'parse_document', description: '解析 /workspace/ 或 /tmp/ 中的 PDF、DOCX，仅支持这两种文档。format=text 提取纯文字（不做 OCR），format=images 生成页图。output=return 直接返回文字或真实图片（图片需开启多模态）；output=file 保存文字到 output_path，或保存图片到 output_dir。PDF 页码从 1 开始；DOCX 图片按浏览器排版分页，可能与 Word 不同。每次默认最多 20 页文字或 5 页图片，按 next_page 继续。DOCX 文字不支持页码。解析文本超过 16000 字符时，output=return 会自动将完整文本保存到 /tmp/ 临时文件，并返回最多前 8000 字符预览（limit 较小时按 limit），以及路径、长度和 next_offset；预览从开头开始，其余内容使用 read_file 按返回的 next_offset 和 limit 分段读取。较短文字可用 offset/limit 直接返回。保存不覆盖已有文件。', parameters: { type: 'object', properties: {
     path: { type: 'string', description: 'PDF 或 DOCX 文件完整路径' },
     format: { type: 'string', enum: ['text', 'images'] },
     output: { type: 'string', enum: ['return', 'file'] },
@@ -371,7 +371,7 @@ const TOOL_DEFS = [
     start_page: { type: 'integer', description: '起始页码，默认 1' },
     end_page: { type: 'integer', description: '结束页码，文字最多 100 页、图片最多 5 页' },
     offset: { type: 'integer', description: '直接返回文字的起始字符位置，默认 0' },
-    limit: { type: 'integer', description: '直接返回文字的最大字符数，默认 32000，上限 120000' },
+    limit: { type: 'integer', description: '直接返回文字的最大字符数，默认 16000，上限 120000；解析文本超过 16000 字符时自动保存为临时文件，直接预览最多前 8000 字符' },
   }, required: ['path', 'format', 'output'], additionalProperties: false } } },
   { type: 'function', function: { name: 'view_image', description: '查看 /workspace/ 或 /tmp/ 图片，返回真实图片供视觉理解。先看整图；小字或长截图可按原图像素坐标传 crop 放大局部。临时图片可能过期。', parameters: { type: 'object', properties: {
     path: { type: 'string', description: '图片文件完整路径' },

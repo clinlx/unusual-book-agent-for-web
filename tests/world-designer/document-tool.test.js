@@ -11,6 +11,7 @@ test('document tool exposes supported formats and both delivery modes without a 
   assert.match(tool.function.description, /PDF.*DOCX|DOCX.*PDF/);
   assert.deepEqual(tool.function.parameters.properties.format.enum, ['text', 'images']);
   assert.deepEqual(tool.function.parameters.properties.output.enum, ['return', 'file']);
+  assert.match(tool.function.description,/16000.*临时文件/);
 });
 
 test('non-visual models retain document parsing with an explicit restriction on returning images', () => {
@@ -61,4 +62,18 @@ test('document parse failures are tool errors and do not count as successful wri
     return { content: '解析失败' };
   });
   assert.equal(out.hadWrite, false);
+});
+
+test('automatic text fallback counts as a write and keeps the next AI request limited to a preview and file metadata',async()=>{
+  const VFS=require('../../src/world-designer/vfs'),Documents=require('../../src/world-designer/documents');
+  const tree=VFS.createTree();VFS.writeFile(tree,'/workspace/large.docx','UEs=',{encoding:'base64'});
+  const ctx={tree,config:C.AGENT_CONFIG,parseDocument:args=>Documents.parse(tree,args,{runtime:{docx:async()=>({text:'文'.repeat(25000),info:{}})}})};
+  let requests=0;
+  const out=await Agent.runTurn(ctx,[{role:'user',content:'解析长文档'}],async msgs=>{
+    if(++requests===1)return {tool_calls:[call({path:'/workspace/large.docx',format:'text',output:'return'})]};
+    const result=JSON.parse(msgs.at(-1).content);assert.equal(result.output,'file');assert.equal(result.text.length,8000);assert.equal(result.next_offset,8000);
+    assert.match(result.note,/read_file/);assert.equal(VFS.readFile(tree,result.path,{cap:Infinity}).content.length,25000);
+    assert.ok(JSON.stringify(msgs).length<10000);return {content:'将按需分段读取'};
+  });
+  assert.equal(out.hadWrite,true);assert.equal(requests,2);
 });

@@ -4,12 +4,17 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { chromium } = require('playwright');
+const JSZip = require('jszip');
 const ready = require('./designer-ready.cjs');
 const { pdfDocument, docxDocument } = require('./document-fixtures.cjs');
 const root = path.resolve(__dirname, '../..');
 fs.mkdirSync(path.join(root, 'tests/artifacts'), { recursive: true });
 (async () => {
   const fixtures = { 'a.pdf': pdfDocument().toString('base64'), 'scan.pdf': pdfDocument(true).toString('base64'), 'a.docx': (await docxDocument()).toString('base64'), 'long.docx': (await docxDocument(true)).toString('base64') };
+  const largeDoc = await JSZip.loadAsync(await docxDocument());
+  const largeXml = await largeDoc.file('word/document.xml').async('string');
+  largeDoc.file('word/document.xml',largeXml.replace('第二页 DOCX PAGE TWO END','长文内容。'.repeat(5000)+'LONG TEXT TAIL'));
+  fixtures['large.docx']=(await largeDoc.generateAsync({type:'nodebuffer'})).toString('base64');
   let browser;
   try {
     browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL || 'msedge', headless: true });
@@ -138,6 +143,17 @@ fs.mkdirSync(path.join(root, 'tests/artifacts'), { recursive: true });
     const imagesOnly = await send('非视觉模型保存页图', { args: { path: '/workspace/a.pdf', format: 'images', output: 'file', output_dir: '/workspace/nonvisual-pages' } });
     assert.equal(JSON.parse(imagesOnly[1].messages.at(-1).content).pages.length, 2);
     assert.equal(imagesOnly[1].messages.some(m => Array.isArray(m.content)), false);
+    const largeCalls=await send('解析长文档并按需阅读',{args:{path:'/workspace/large.docx',format:'text',output:'return',offset:10,limit:100}});
+    const largeResult=JSON.parse(largeCalls[1].messages.at(-1).content);
+    assert.equal(largeResult.output,'file');assert.equal(largeResult.auto_saved,true);assert.equal(largeResult.text.length,100);
+    assert.equal(largeResult.offset,0);assert.equal(largeResult.next_offset,100);
+    assert.ok(largeResult.total_characters>16000);assert.match(largeResult.path,/^\/tmp\//);assert.match(largeResult.note,/read_file/);
+    assert.ok(!JSON.stringify(largeCalls[1]).includes('长文内容。'.repeat(100)),'the full extraction never enters the model request');
+    const partial=await send('分段读取解析文本',{name:'read_file',args:{path:largeResult.path,offset:largeResult.next_offset,limit:100}});
+    assert.ok(partial[1].messages.at(-1).content.length<1000);
+    await page.reload();await ready(page);
+    const preserved=await page.evaluate(path=>VFS.readFile(__UI_STATE__.tree,path,{cap:Infinity}).content,largeResult.path);
+    assert.equal(preserved.length,largeResult.total_characters);assert.match(preserved,/LONG TEXT TAIL/);
     await page.evaluate(async data => {
       const files = Object.entries(data).filter(([name]) => name !== 'long.docx').map(([name, content]) => new File([Uint8Array.from(atob(content), c => c.charCodeAt(0))], 'upload-' + name));
       await __UI__.importDroppedFiles(files, '/workspace');

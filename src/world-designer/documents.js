@@ -3,6 +3,16 @@ const Documents = (() => {
   const vfs = typeof module !== 'undefined' && module.exports ? require('./vfs') : VFS;
   const images = typeof module !== 'undefined' && module.exports ? require('./images') : Images;
   const fileValidation = typeof module !== 'undefined' && module.exports ? require('../shared/file-write-validation') : FileWriteValidation;
+  const tempFiles = typeof module !== 'undefined' && module.exports ? require('./temp-files') : TempFiles;
+  const TEXT_RETURN_LIMIT = 16000;
+  let tempSequence = 0;
+  function temporaryTextPath(tree) {
+    const id = globalThis.crypto?.randomUUID?.() || Date.now().toString(36);
+    let path;
+    do { path = '/tmp/document-' + id + '-' + (++tempSequence) + '.txt'; }
+    while (vfs.resolve(tree, vfs.normalize(path)));
+    return path;
+  }
   const runtime = () => typeof DocumentRuntime !== 'undefined' ? DocumentRuntime : null;
   const supported = name => /\.(pdf|docx)$/i.test(name);
   function safePath(value) {
@@ -33,7 +43,7 @@ const Documents = (() => {
       if (args.offset !== undefined || args.limit !== undefined) throw Error('offset/limit 仅用于直接返回文字');
     }
     if (args.format === 'images' && (args.offset !== undefined || args.limit !== undefined)) throw Error('图片模式不能使用 offset/limit');
-    const offset = args.offset ?? 0, limit = args.limit ?? 32000;
+    const offset = args.offset ?? 0, limit = args.limit ?? TEXT_RETURN_LIMIT;
     if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 120000) throw Error('offset/limit 无效，limit 上限 120000');
     const content = source.content, encoding = source.encoding;
     const check = () => {
@@ -53,14 +63,25 @@ const Documents = (() => {
       const text = parsed.text;
       result.total_characters = text.length;
       if (!text.trim()) result.note = '没有可提取的文字；扫描件请使用 images 模式查看。';
-      if (args.output === 'return') {
+      const tooLong = text.length > TEXT_RETURN_LIMIT;
+      if (tooLong && args.output === 'return') {
+        target = temporaryTextPath(tree);
+        const preview = text.slice(0, Math.min(limit, TEXT_RETURN_LIMIT / 2));
+        Object.assign(result, { output: 'file', requested_output: 'return', auto_saved: true,
+          text: preview, offset: 0, truncated: true, next_offset: preview.length });
+      }
+      if (result.output === 'return') {
         Object.assign(result, { text: text.slice(offset, offset + limit), offset, truncated: offset + limit < text.length,
           next_offset: offset + limit < text.length ? offset + limit : null });
       } else {
         if (vfs.resolve(tree, vfs.normalize(target))) throw Error('输出文件已存在，请选择其他路径: ' + target);
         vfs.writeFile(tree, target, text, {validateContent:fileValidation.validate}); result.path = target;
+        tempFiles.touch(tree, target);
+        if (tooLong) result.note = [result.note, '本次解析文本超过 ' + TEXT_RETURN_LIMIT + ' 字符，' +
+          (result.auto_saved ? '完整文本已自动保存到临时文件，本次仅返回前 ' + result.text.length + ' 字符预览。' : '已保存到文件，未直接返回文字。') +
+          '请使用 read_file 读取 ' + target + '，从 offset=' + (result.next_offset || 0) + ' 继续按需分段读取，建议每段 limit=8000。'].filter(Boolean).join('\n');
       }
-      return { result: JSON.stringify(result) };
+      return { result: JSON.stringify(result), isWrite: result.output === 'file' };
     }
     result.pages = parsed.images.map(image => ({ page: image.page, width: image.width, height: image.height }));
     if (args.output === 'return') return { result: JSON.stringify(result), images: parsed.images };
