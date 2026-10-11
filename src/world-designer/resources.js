@@ -9,6 +9,12 @@ const DesignerResources = (() => {
       .sort((a, b) => Number(b.required) - Number(a.required));
   }
   const active = (skills, disabled = new Set()) => installed(skills).filter(skill => skill.required || !disabled.has(skill.name));
+  function worldBuilderDownload(snapshot){
+    const prefix='skills/game-world-builder/';
+    if(!snapshot?.[prefix+'SKILL.md'])throw Error('World Builder 技能尚未加载');
+    return Object.entries(snapshot).filter(([path])=>path.startsWith(prefix)&&!path.slice(prefix.length).split('/').some(p=>!p||p==='.'||p==='..'))
+      .map(([path,text])=>({name:'game-world-builder/'+path.slice(prefix.length),text}));
+  }
 
   async function load({ href, fetchFn, snapshot, standalone = false }) {
     async function read(get, origin) {
@@ -41,6 +47,6 @@ const DesignerResources = (() => {
     }
     return read(loader.createBundleFetcher(snapshot), 'bundled');
   }
-  return { names, load, installed, active, isRequired };
+  return { names, load, installed, active, isRequired, worldBuilderDownload };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = DesignerResources;

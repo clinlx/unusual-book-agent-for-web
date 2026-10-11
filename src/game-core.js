@@ -4,6 +4,7 @@ const GameCore = (() => {
   const vfs = typeof module !== 'undefined' && module.exports ? require('./vfs.js') : VFS;
   const data = typeof module !== 'undefined' && module.exports ? require('./game-data.js') : GameData;
   const history = typeof module !== 'undefined' && module.exports ? require('./game-history.js') : GameHistory;
+  const inputs = typeof module !== 'undefined' && module.exports ? require('./game-input-history.js') : GameInputs;
   const fileValidation = typeof module !== 'undefined' && module.exports ? require('./shared/file-write-validation.js') : FileWriteValidation;
   const writeOptions = {cap:120000,validateContent:fileValidation.validate};
   const copy = x => structuredClone(x);
@@ -65,7 +66,7 @@ const GameCore = (() => {
     const playerPath=validateTree(tree);
     return {id:uid(),name:String(name||'未命名存档'),createdAt:Date.now(),updatedAt:Date.now(),playerPath,
       tree:copy(tree),requestHistory:[],messages:[],events:[],round:0,cache:{},summaries:[],status:'new',
-      snapshots:[],lastChanges:[],activeRound:null,contextFromRound:1,draft:''};
+      snapshots:[],lastChanges:[],activeRound:null,contextFromRound:1,draft:'',draftRound:1,draftVersion:0,inputHistory:[]};
   }
   function emit(s,type,payload={}) {
     const e={id:uid(),type,round:s.activeRound?.number||s.round,at:Date.now(),worldTime:data.worldTime(s),...payload};s.events.push(e);return e;
@@ -77,14 +78,18 @@ const GameCore = (() => {
     if(!isStart&&!flags.alive)throw Error('角色已死亡，无法提交行动；可以回溯或查看历史');
     if(!isStart&&!flags.enabled&&!options.skip)throw Error('角色失去意识，无法主动行动；可以等待局势发展');
     const actionText=options.skip?(flags.enabled?'本回合不采取主动行动，等待局势发展。':'失去意识，无法主动行动，等待局势发展。'):String(text||'');
+    const roundId=uid(),inputRound=s.round+1,boundDraft=s.draftRound==null||s.draftRound===inputRound?s.draft||'':'';
     s.snapshots.push({tree:copy(s.tree),messageCount:s.messages.length,eventCount:s.events.length,round:s.round,
       worldTime:data.worldTime(s),at:Date.now(),
-      cache:copy(s.cache),summaryCount:s.summaries.length,status:s.status,contextFromRound:s.contextFromRound,lastChanges:copy(s.lastChanges),draft:isStart?s.draft:String(text||s.draft||'')});
+      cache:copy(s.cache),summaryCount:s.summaries.length,status:s.status,contextFromRound:s.contextFromRound,lastChanges:copy(s.lastChanges),
+      draft:isStart||options.skip?boundDraft:String(text||''),draftRound:inputRound,inputRoundId:roundId});
     pruneRollback(s);
-    s.activeRound={id:uid(),number:s.round+1,action:actionText,starting:isStart,triggered:isStart,published:0,initialWorldTime:data.consensusTime(s),
+    if(!options.skip&&String(text||'').trim())inputs.record(s,inputRound,roundId,text);
+    inputs.advance(s);
+    s.activeRound={id:roundId,number:inputRound,action:actionText,starting:isStart,triggered:isStart,published:0,initialWorldTime:data.consensusTime(s),
       requestCount:0,readState:{},receipts:{},complete:false,summary:[]};
-    s.status='running';s.error=null;s.lastChanges=[];s.draft='';
-    if(!isStart)emit(s,'player',{content:actionText,name:'player_action',args:{action:actionText},skip:!!options.skip});
+    s.status='running';s.error=null;s.lastChanges=[];s.draft='';s.draftRound=inputRound;
+    if(!isStart)emit(s,'player',{content:actionText,name:'player_action',args:{action:actionText},skip:!!options.skip,roundId});
     s.messages.push({role:'user',content:String(prompt),round:s.activeRound.number});
     return s.activeRound;
   }
@@ -103,9 +108,10 @@ const GameCore = (() => {
   }
   function rollback(s) {
     pruneRollback(s);const snap=s.snapshots.pop();if(!snap)throw Error('没有可回退的回合');
+    const input=inputs.retract(s,snap.round+1,snap.inputRoundId);
     s.tree=copy(snap.tree);s.messages.length=snap.messageCount;s.events.length=snap.eventCount;
     s.round=snap.round;s.cache=copy(snap.cache);s.summaries.length=snap.summaryCount;s.status=snap.status;
-    s.draft=snap.draft??s.activeRound?.action??'';
+    s.draft=input?.text??(snap.draftRound==null||snap.draftRound===snap.round+1?snap.draft||'':'');s.draftRound=snap.round+1;inputs.advance(s);
     s.contextFromRound=snap.contextFromRound;s.lastChanges=copy(snap.lastChanges);s.activeRound=null;s.error=null;
     const previous=s.snapshots.at(-1);
     if(previous&&!previous.tree){previous.tree=restoreTreeDelta(s.tree,previous.reverseDelta);delete previous.reverseDelta;}

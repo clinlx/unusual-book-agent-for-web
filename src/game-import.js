@@ -5,6 +5,7 @@ const GameImport=(()=>{
   const importer=typeof module!=='undefined'&&module.exports?require('./workspace-import.js'):WorkspaceImport;
   const core=typeof module!=='undefined'&&module.exports?require('./game-core.js'):GameCore;
   const history=typeof module!=='undefined'&&module.exports?require('./game-history.js'):GameHistory;
+  const inputs=typeof module!=='undefined'&&module.exports?require('./game-input-history.js'):GameInputs;
   const MANIFEST='.trpg-save.json';
   function toBase64(bytes){
     let out='';
@@ -37,13 +38,14 @@ const GameImport=(()=>{
       if(!Array.isArray(st.messages)||!Array.isArray(st.events)||!Number.isSafeInteger(st.round)||st.round<0)throw Error('存档历史格式不正确');
       const unsafeKey=(k,v)=>{if(['__proto__','prototype','constructor'].includes(k))throw Error('存档包含不安全字段');return v;};
       JSON.parse(JSON.stringify(st),unsafeKey);
-      for(const key of ['name','round','cache','messages','events','summaries','status','snapshots','activeRound','contextFromRound','lastChanges','draft','error','requestHistory','historyArchiveVersion','importNotice','pendingManualDice'])
+      for(const key of ['name','round','cache','messages','events','summaries','status','snapshots','activeRound','contextFromRound','lastChanges','draft','draftRound','draftVersion','inputHistory','error','requestHistory','historyArchiveVersion','importNotice','pendingManualDice'])
         if(st[key]!==undefined)s[key]=structuredClone(st[key]);
       if(s.activeRound&&!s.activeRound.complete)s.status='interrupted';
+      if(st.draftRound===undefined)s.draftRound=inputs.targetRound(s);
       s.playerPath=core.validateTree(s.tree);
     }else history.restoreReference(s);
     if(coverBytes)s.cover={mime:'image/png',data:toBase64(coverBytes)};
-    history.backfill(s);core.pruneRollback(s);return s;
+    inputs.ensure(s);history.backfill(s);core.pruneRollback(s);return s;
   }
   function exportSave(s){
     core.pruneRollback(s);

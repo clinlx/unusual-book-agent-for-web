@@ -5353,6 +5353,10 @@
         const required = DesignerResources.isRequired(sk.name);
         const fileCount = Object.keys(sk.files || {}).length;
         const actions = el('div', { class: 'sk-actions' });
+        if(required)actions.append(el('button',{text:'下载',title:'下载 World Builder 技能 ZIP',onclick:()=>{
+          try{downloadBlob(ZIP.makeZip(DesignerResources.worldBuilderDownload(BUNDLED_SKILLS)),'game-world-builder.zip');}
+          catch(error){toast(error.message);}
+        }}));
         // 特殊技能常驻，其他技能关闭后卸载提示词、工具和附件。
         actions.append(el('button', {
           class: 'sk-toggle' + (off ? '' : ' on'),

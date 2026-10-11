@@ -58,7 +58,10 @@ const GameApp=(()=>{
     await db.putSave(s);
   }
   async function openSave(id){idle();const s=await db.getSave(id);if(!s)throw Error('存档不存在');
-    peerCheck(s);const repairedDice=GameCore.repairManualDiceEvents(s),backfilled=GameHistory.backfill(s);if(repairedDice||backfilled)await db.putSave(s);
+    peerCheck(s);
+    const inputBindingMissing=!Array.isArray(s.inputHistory)||s.draftRound==null;
+    GameInputs.ensure(s);s.draftRound??=GameInputs.targetRound(s);if(inputBindingMissing)await db.putSave(s);
+    const repairedDice=GameCore.repairManualDiceEvents(s),backfilled=GameHistory.backfill(s);if(repairedDice||backfilled)await db.putSave(s);
     if(s.activeRound?.complete&&pendingBatch(s)){peerCheck(s);await settleCompletedBatch(s);}
     if(s.activeRound&&(!s.activeRound.complete||pendingBatch(s)))s.status='interrupted';S.active=s;restoreLastRequest(s);S.mode='play';S.error=s.error||null;emit();return s;}
   function closeSave(){idle();S.active=null;S.error=null;emit();}
@@ -158,7 +161,7 @@ const GameApp=(()=>{
   async function resolveManualDice(rolls){
     idle();const s=active();peerCheck(s);GameCore.resolveManualDice(s,rolls);await persist();emit();return s;
   }
-  async function saveDraft(text){if(!S.active)return;peerCheck(S.active);S.active.draft=String(text);await persist();}
+  async function saveDraft(text,binding){if(!S.active)return;peerCheck(S.active);if(!GameInputs.setDraft(S.active,text,binding))return;await persist();}
   if(typeof window!=='undefined'){
     // Navigation inside the app is guarded by page-rendered UI, never a native unload dialog.
     window.addEventListener('storage',e=>{if(e.key?.startsWith('awl:lease:'))emit();});
