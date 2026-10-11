@@ -1,6 +1,6 @@
 'use strict';
 const GameApp=(()=>{
-  const S={client:true,active:null,room:null,settings:{reverseSendNewline:false},mode:'play',running:false,saves:[],stream:{},error:null};
+  const S={client:true,active:null,home:false,room:null,settings:{reverseSendNewline:false},mode:'play',running:false,saves:[],stream:{},error:null};
   const listeners=new Set(),pending=new Map(),recoveryRequests=new Set();let transport=null,memberId=null,stop=null,closedRoomId=null,bridgeSession=null,joinGeneration=0,cache=MultiplayerSync.createClient();
   const local=GameLocalInputs.create(localStorage);
   const emit=()=>{for(const fn of listeners)fn(S);};
@@ -78,7 +78,7 @@ const GameApp=(()=>{
   async function attach(t,id){disconnect();transport=t;memberId=id;closedRoomId=null;cache=MultiplayerSync.createClient();const attachedCache=cache;recoveryRequests.clear();S.active=null;S.room=null;stop=t.onClient(id,packet=>{if(transport!==t||memberId!==id||cache!==attachedCache)return;return receive(packet);});await sync();}
   function stopNetwork(){joinGeneration++;const previous=bridgeSession;bridgeSession=null;previous?.close();disconnect();}
   async function joinRoom(value){
-    const invitation=BridgeTransport.parseInvitation(value);stopNetwork();const generation=joinGeneration;
+    const invitation=BridgeTransport.parseInvitation(value);stopNetwork();S.home=false;const generation=joinGeneration;
     S.network={status:'connecting',message:'正在连接房间'};S.error=null;emit();
     try{
       const session=await BridgeTransport.createClient({invitation,onState:async info=>{
@@ -100,6 +100,6 @@ const GameApp=(()=>{
     player:()=>({info:S.active?.info||{},items:S.active?.items||[],name:S.active?.playerName}),exportView:()=>cache.getState()?.view,
     saveDraft:async(text,binding,options={})=>{if(S.active&&GameInputs.setDraft(S.active,options.private?'':text,binding)){S.active.privateDraft=options.private?String(text):String(options.privateContent||'');store();}},
     updateSettings:async values=>{S.settings={reverseSendNewline:values.reverseSendNewline===true};localStorage.setItem('trpg-client-settings',JSON.stringify(S.settings));emit();},
-    setMode:()=>{},closeSave:()=>{stopNetwork();S.active=null;S.room=null;S.network=null;emit();}
+    setMode:()=>{},returnHome:()=>{S.home=true;emit();},returnToGame:()=>{if(S.active){S.home=false;emit();}},closeSave:()=>{stopNetwork();S.active=null;S.home=false;S.room=null;S.network=null;emit();}
   };
 })();

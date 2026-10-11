@@ -31,7 +31,7 @@ const html=Build.compose('src/template.html','src/game.css',scripts).replace('/*
 fs.mkdirSync(path.join(root,'dist'),{recursive:true});
 fs.writeFileSync(path.join(root,'dist','index.html'),html);
 const clientOrder=['vendor/room-bridge.js','src/bridge-transport.js','src/connection-status.js','vendor/marked.min.js','src/diff.js','src/md.js','src/shared/back-navigation.js','src/shared/send-shortcut.js','src/game-data.js','src/game-input-history.js','src/game-local-inputs.js','src/game-presentation.js','src/multiplayer-sync.js','src/client-app.js','src/game-ui.js'];
-const clientHtml=Build.compose('src/template.html','src/game.css',dice3d+'\n'+Build.scripts(clientOrder)).replace('异闻手记 · 单人跑团','异闻手记 · 联机玩家');
+const clientHtml=Build.compose('src/template.html','src/game.css',dice3d+'\n;const BUNDLED_GAME_ICON = '+safeJSON(read('assets/icons/game.svg'))+';\n'+Build.scripts(clientOrder)).replace('异闻手记 · 单人跑团','异闻手记 · 联机玩家').replace('/*__FAVICON__*/',Build.svgDataUri('assets/icons/game.svg'));
 fs.writeFileSync(path.join(root,'dist','client.html'),clientHtml);
 
 fs.copyFileSync(path.join(root,'assets/robots.txt'),path.join(root,'dist/robots.txt'));

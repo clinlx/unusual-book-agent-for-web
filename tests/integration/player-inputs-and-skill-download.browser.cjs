@@ -14,7 +14,7 @@ before(async()=>{
   browser=await chromium.launch({channel:process.env.BROWSER_CHANNEL||'msedge',headless:true});
 });
 after(async()=>{await browser?.close();if(server)await new Promise(r=>server.close(r));});
-test('ten round-labelled inputs can be recalled without rollback, and delayed drafts cannot cross rolled-back rounds',async t=>{
+test('ten inputs are recorded silently and delayed drafts cannot cross rolled-back rounds',async t=>{
   const context=await browser.newContext();t.after(()=>context.close());const page=await context.newPage();page.setDefaultTimeout(6000);
   const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.route('https://**/*',r=>r.abort());
   await page.goto(origin+'/index.html');await page.locator('[data-action="import"]').waitFor();
@@ -25,12 +25,9 @@ test('ten round-labelled inputs can be recalled without rollback, and delayed dr
     for(let i=1;i<=12;i++){GameCore.beginRound(s,'行动'+i);s.round=s.activeRound.number;s.activeRound.complete=true;s.status='waiting';}
     await GameApp.saveDraft('');
   });
-  await page.locator('[data-action="input-history"]').click();
-  assert.equal(await page.locator('.input-record').count(),10);
-  assert.match(await page.locator('.input-record').first().innerText(),/第 12 回合/);
-  await page.locator('[data-action="recall-input"][data-round="5"]').click();
-  assert.equal(await page.locator('#action-input').inputValue(),'行动5');
-  assert.equal(await page.evaluate(()=>GameApp.getState().active.round),12);
+  assert.equal(await page.locator('[data-action="input-history"]').count(),0);
+  const records=await page.evaluate(()=>GameInputs.ensure(GameApp.getState().active));
+  assert.equal(records.length,10);assert.equal(records.at(-1).round,12);assert.equal(records.at(-1).text,'行动12');
   await page.locator('#action-input').fill('即将过期的草稿');
   await page.evaluate(()=>GameApp.rollback());
   await page.waitForFunction(()=>document.querySelector('#action-input').value==='行动12');
@@ -40,9 +37,11 @@ test('ten round-labelled inputs can be recalled without rollback, and delayed dr
   await page.waitForFunction(()=>GameApp.getState().active.draft==='行动11');
   await page.reload();await page.locator('[data-action="open-save"]').click();
   await page.waitForFunction(()=>document.querySelector('#action-input')?.value==='行动11');
-  await page.locator('[data-action="input-history"]').click();
-  assert.equal(await page.locator('.input-record').count(),10);
-  assert.match(await page.locator('.input-record').first().innerText(),/第 12 回合.*已回退/);
+  assert.equal(await page.locator('[data-action="input-history"]').count(),0);
+  const restored=await page.evaluate(()=>GameInputs.ensure(GameApp.getState().active));
+  assert.equal(restored.length,10);assert.equal(restored.at(-1).round,12);assert.equal(restored.at(-1).status,'retracted');
+  await page.locator('.home-button').click();await page.locator('[data-action="open-save"]').click();
+  await page.locator('.brand-home').click();await page.locator('[data-action="open-save"]').waitFor();
   assert.deepEqual(errors,[]);
 });
 test('designer settings downloads only the complete World Builder skill ZIP',async t=>{

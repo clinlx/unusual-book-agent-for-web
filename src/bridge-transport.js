@@ -117,10 +117,10 @@ const BridgeTransport=(()=>{
     notice(onState,'connected');return {transport,roomId,invite:id=>change(id,false),revoke:id=>change(id,true),close,get closed(){return closed;}};
   }
   async function createClient({invitation:value,onState,sdk=SDK,reconnectDelays=[500,1000,2000,5000,10000]}={}){
-    const invite=parseInvitation(value),fragments=createFragments(VIEW_BYTES),incoming=deliveries(VIEW_BYTES);let connection=null,detach=null,closed=false,retryTimer=null,attempt=0,opening=null;
+    const invite=parseInvitation(value),fragments=createFragments(VIEW_BYTES),incoming=deliveries(VIEW_BYTES);let connection=null,detach=null,closed=false,retryTimer=null,attempt=0,opening=null,closing=Promise.resolve();
     const hash=await sdk.contractHash(MANIFEST);
     const retryable=cause=>cause?.retryable===true||cause?.code==='AlreadyConnected';
-    function stop(cause){if(closed)return;closed=true;clearTimeout(retryTimer);retryTimer=null;const old=connection;connection=null;detach?.();incoming.close();fragments.clear();old?.close();notice(onState,'closed',cause);}
+    function stop(cause){if(closed)return closing;closed=true;clearTimeout(retryTimer);retryTimer=null;const old=connection;connection=null;detach?.();incoming.close();fragments.clear();old?.close();closing=old?.closed||Promise.resolve();notice(onState,'closed',cause);return closing;}
     function retry(cause){
       if(closed)return;if(!retryable(cause)){stop(cause);return;}
       notice(onState,'reconnecting',cause);clearTimeout(retryTimer);
@@ -151,6 +151,10 @@ const BridgeTransport=(()=>{
     try{await open();}catch(cause){stop(cause);throw cause;}
     return {transport,memberId:invite.memberId,reconnect,close:()=>stop(),get closed(){return closed;},get connected(){return !!connection&&!closed;}};
   }
-  return {MANIFEST,validateServerUrl,encodeInvitation,parseInvitation,createHost,createClient};
+  async function probeInvitation(value,options={}){
+    const invite=parseInvitation(value),session=await createClient({...options,invitation:invite});
+    await session.close();return invite;
+  }
+  return {MANIFEST,validateServerUrl,encodeInvitation,parseInvitation,probeInvitation,createHost,createClient};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=BridgeTransport;

@@ -83,7 +83,7 @@ const call = (name, args, id) => ({ id, type: 'function', function: { name, argu
     assert.equal(await page.locator('a[data-page-switch]').count(), 0, 'the play page has no designer entry');
     await page.locator('[data-action="debug"]').click();
     assert.equal(await page.locator('a[data-page-switch]').count(), 0, 'debugging an active save also has no designer entry');
-    await page.locator('[data-action="home"]').click();
+    await page.locator('.home-button').click();
     await page.locator('a[data-page-switch]').click();
     await waitDesigner();
     assert.equal(await page.title(), '世界设计者');
@@ -132,7 +132,7 @@ const call = (name, args, id) => ({ id, type: 'function', function: { name, argu
     await page.locator('[data-action="open-save"]').click();
     await page.waitForFunction(() => !!GameApp.getState().active);
     assert.equal(await page.evaluate(() => GameApp.getState().active.draft), '保留跑团输入');
-    await page.locator('[data-action="home"]').click();
+    await page.locator('.home-button').click();
     await page.locator('a[data-page-switch]').click();
     await waitDesigner();
     assert.equal(await page.evaluate(() => __UI_STATE__.settings.model), 'designer-test');

@@ -17,6 +17,14 @@ test('opening saves stays offline; explicit real room creates private invitation
  const link=await f.app.createInvitation('b');assert.equal(link,invitation.link);assert.match(link,/client.html#join=/);assert.ok(!JSON.stringify(f.app.getState().active).includes('PRIVATE-TOKEN'));
  await f.app.closeRoom();assert.equal(f.closed,true);assert.equal(f.app.multiplayerState().online,false);
 });
+
+test('home retains the live room and reopening the same save keeps its identity and connection',async t=>{
+ const f=await ready(t);await f.app.setInvitationSlot('b','player');const before=f.app.multiplayerState(),save=f.app.getState().active;
+ f.app.returnHome();assert.equal(f.app.getState().home,true);assert.equal(f.closed,false);assert.equal(f.app.getState().active,save);
+ assert.equal(f.app.multiplayerState().roomId,before.roomId);assert.equal(f.app.multiplayerState().online,true);
+ await f.app.openSave(save.id);assert.equal(f.app.getState().home,false);assert.equal(f.calls,1);assert.equal(f.closed,false);
+ assert.equal(f.app.getState().active,save);assert.equal(f.app.multiplayerState().roomId,before.roomId);
+});
 test('failed network room creation returns to offline without phantom online room',async t=>{
  const f=setup(t);await f.app.init();await f.app.openSave(f.save.id);if(f.app.multiplayerState().status==='selecting')await f.app.configureSlots('a');assert.equal(typeof f.app.openOnlineRoom,'undefined');
  // Configuration rejects before connecting or setting online.

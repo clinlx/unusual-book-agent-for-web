@@ -2,7 +2,7 @@
 const GameApp=(()=>{
   const defaults={baseUrl:'https://api.deepseek.com/v1',apiKey:'',model:'deepseek-flash',stream:true,temperature:0.7,topP:'',frequencyPenalty:'',presencePenalty:'',seed:'',customRequestBody:'',maxContextK:240,maxOutputTokens:16384,
     reasoningEffort:'high',maxToolLoops:60,httpTimeoutSeconds:180,maxRetries:2,worldListSource:'',bridgeUrl:'wss://mc.birdry.cn:8443/',manualDice:false,autoAdvanceUnconscious:true,reverseSendNewline:false,promptOverrides:{}};
-  const S={saves:[],active:null,settings:{...defaults},mode:'play',running:false,importing:null,stream:{content:'',reasoning:'',tools:[],story:'',storyPublished:0},error:null,storageWarning:null,usage:null};
+  const S={saves:[],active:null,home:false,switching:false,settings:{...defaults},mode:'play',running:false,importing:null,stream:{content:'',reasoning:'',tools:[],story:'',storyPublished:0},error:null,storageWarning:null,usage:null};
   const db=GameStore.create();const listeners=new Set();let controller=null,initialized=false,storage=null,lease=null;
   let hostSession=null,syncHost=null,roomTransport=null,transportStop=null,publishedSave=null,localInputOwner='',bridgeSession=null,bridgeGeneration=0,invitationQueue=Promise.resolve();
   const invitationTask=fn=>{const job=invitationQueue.then(fn);invitationQueue=job.catch(()=>{});return job;};
@@ -178,9 +178,10 @@ const GameApp=(()=>{
     S.saves=await db.list();if(db.memoryMode)S.storageWarning='浏览器存储不可用，当前内容仅临时保存，请在关闭页面前导出存档。';initialized=true;emit();}
   async function importSave(file){return runImport(()=>Promise.resolve(file));}
   async function importHandoff(id,onProgress=()=>{}){
-    idle();
     const target=WorldHandoff.saveId(id),bridge=WorldHandoff.create();
+    if(S.active?.id===target){returnToGame();return S.active;}
     if(db.memoryMode)throw Error('存档数据库不可用，请导出 ZIP 后重试；世界尚未导入');
+    await finishSession();
     S.importing={phase:'prepare',received:0,total:null};S.error=null;emit();
     try{
       onProgress('正在读取世界…');
@@ -207,7 +208,7 @@ const GameApp=(()=>{
   }
   async function importLink(link,name){GameCatalog.url(link);return runImport(async()=>{const file=await GameCatalog.download(link,{onProgress:p=>{S.importing={...p,phase:'download'};emit();}});if(name)file.name=name+'.zip';return file;});}
   async function runImport(source){
-    idle();S.active=null;S.error=null;S.importing={phase:'prepare',received:0,total:null};emit();
+    await finishSession();S.active=null;S.home=false;S.error=null;S.importing={phase:'prepare',received:0,total:null};emit();
     try{const file=await source();S.importing={...S.importing,phase:'extract'};emit();
       const s=await GameImport.importSave(file);GameCore.repairManualDiceEvents(s);await settleCompletedBatch(s);await db.putSave(s);S.saves=await db.list();S.active=s;restoreLastRequest(s);S.mode='play';await setupHost(s);return s;
     }catch(e){S.error=e.message||'导入失败';throw e;}finally{S.importing=null;emit();}
@@ -219,14 +220,34 @@ const GameApp=(()=>{
     await GameCore.run(s,async()=>{throw Error('已结束的回合不能继续请求模型');});
     await db.putSave(s);
   }
-  async function openSave(id){idle();const s=await db.getSave(id);if(!s)throw Error('存档不存在');
+  function returnHome(){S.home=true;emit();}
+  function returnToGame(){if(S.active){S.home=false;emit();}}
+  async function leaveForClient(){await finishSession();S.active=null;S.home=true;S.error=null;emit();}
+  async function finishSession(){
+    if(S.importing||S.switching)throw Error('请等待存档切换或导入完成');
+    if(!S.active)return;
+    S.switching=true;
+    const session=hostSession,previous=session?.state(),transport=roomTransport;
+    try{
+      session?.dispose();abort();
+      if(previous?.online)for(const id of Object.keys(previous.members))if(id!=='host')try{await transport?.sendToClient(id,{type:'room.closed',roomId:previous.roomId});}catch(_){}
+      stopBridge();await session?.waitForIdle();
+      if(S.active.multiplayer){S.active.multiplayer.online=false;S.active.multiplayer.roomId=null;for(const [id,m]of Object.entries(S.active.multiplayer.members||{}))m.connected=id==='host';}
+      saveLocalInputs();await persist();hostSession=null;syncHost=null;S.room=null;
+    }finally{S.switching=false;}
+  }
+  async function openSave(id){
+    if(S.importing||S.switching)throw Error('请等待存档切换或导入完成');
+    if(S.active?.id===id){returnToGame();return S.active;}
+    const s=await db.getSave(id);if(!s)throw Error('存档不存在');
     peerCheck(s);
     const inputBindingMissing=!Array.isArray(s.inputHistory)||s.draftRound==null;
     GameInputs.ensure(s);s.draftRound??=GameInputs.targetRound(s);if(inputBindingMissing)await db.putSave(s);
     const repairedDice=GameCore.repairManualDiceEvents(s),backfilled=GameHistory.backfill(s);if(repairedDice||backfilled)await db.putSave(s);
     if(s.activeRound?.complete&&pendingBatch(s)){peerCheck(s);await settleCompletedBatch(s);}
-    if(s.activeRound&&(!s.activeRound.complete||pendingBatch(s)))s.status='interrupted';S.active=s;restoreLastRequest(s);S.mode='play';S.error=s.error||null;await setupHost(s);emit();return s;}
-  function closeSave(){idle();stopBridge();hostSession?.dispose();hostSession=null;S.room=null;S.active=null;S.error=null;emit();}
+    await finishSession();
+    if(s.activeRound&&(!s.activeRound.complete||pendingBatch(s)))s.status='interrupted';S.active=s;S.home=false;restoreLastRequest(s);S.mode='play';S.error=s.error||null;await setupHost(s);emit();return s;}
+  function closeSave(){idle();stopBridge();hostSession?.dispose();hostSession=null;S.room=null;S.active=null;S.home=false;S.error=null;emit();}
   async function renameSave(id,name){idle();const s=id===S.active?.id?S.active:await db.getSave(id);if(!s)throw Error('存档不存在');peerCheck(s);s.name=String(name).trim()||s.name;await db.putSave(s);S.saves=await db.list();emit();}
   async function deleteSave(id){idle();peerCheck({id});await db.deleteSave(id);if(S.active?.id===id){stopBridge();hostSession?.dispose();hostSession=null;S.active=null;}S.saves=await db.list();emit();}
   function exportSave(){idle();return GameImport.exportSave(active());}
@@ -335,7 +356,7 @@ const GameApp=(()=>{
     // Navigation inside the app is guarded by page-rendered UI, never a native unload dialog.
     window.addEventListener('storage',e=>{if(e.key?.startsWith('awl:lease:'))emit();});
   }
-  return {getState:()=>S,subscribe,init,importSave,importHandoff,importLink,openSave,closeSave,renameSave,deleteSave,exportSave,send,skip,start,resume,abort,rollback,setMode,
+  return {getState:()=>S,subscribe,init,importSave,importHandoff,importLink,openSave,closeSave,returnHome,returnToGame,leaveForClient,renameSave,deleteSave,exportSave,send,skip,start,resume,abort,rollback,setMode,
     configureSlots,setInvitationSlot,openRoom,createInvitation,revokeInvitation,closeRoom,multiplayerState,roomCommand,requestRollback,decideHostRollback,exportView,attachMultiplayerTransport,
     addMember:id=>hostSession.addMember(id),setMemberConnected:(id,connected)=>hostSession.setConnected(id,connected),assignMember:(id,actor)=>hostSession.assign(id,actor),dispatchMember:(id,command)=>hostSession.handle(id,command),multiplayerSync:(id,request)=>syncHost.sync(id,request),
     readFile,writeFile,fileOperation,player,currentContext,updateSettings,saveDraft,resolveManualDice,cancelAction,

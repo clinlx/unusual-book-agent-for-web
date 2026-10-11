@@ -81,9 +81,18 @@ test('host and isolated clients use authoritative rounds, private projections, r
   for(const text of [guestText,ownText])for(const secret of ['房主内部草稿','隐藏卡片','隐藏物品','位置所属'])assert.ok(!text.includes(secret),secret);
   for(const width of [1440,390]){
     await host.setViewportSize({width,height:960});await own.setViewportSize({width,height:960});
-    for(const selector of ['.inventory','.character','#history .story','#action-input']){
+    for(const selector of ['.inventory','.character','#history .story','#action-input','.home-navigation']){
       const h=await panelSnapshot(host,selector),c=await panelSnapshot(own,selector);assert.deepEqual(c,h,`${selector} matches at ${width}px`);
     }
+  }
+  for(const page of [host,own]){
+    assert.equal(await page.locator('[data-action="input-history"]').count(),0);
+    await page.locator('[data-action="room-panel"]').click();
+    assert.equal(await page.locator('.slot-card').count(),await page.evaluate(()=>GameApp.getState().active.slots.length));
+    assert.equal(await page.locator('.slot-card [data-action="player-profile"]').count(),2);
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    await page.screenshot({path:'tests/artifacts/slot-cards-'+(page===host?'host':'client')+'-390.png'});
+    await page.locator('[data-action="close-modal"]').click();
   }
   const baseline=await panelSnapshot(own,'.inventory');await own.addStyleTag({content:'.inventory{font-size:31px!important}'});assert.notDeepEqual(await panelSnapshot(own,'.inventory'),baseline,'the comparison detects one-sided CSS drift');
   const target=await host.evaluate(()=>{const s=GameApp.getState().active.snapshots.at(-1);return {targetRound:s.round,targetRoundId:s.inputRoundId};});
@@ -104,5 +113,7 @@ test('host and isolated clients use authoritative rounds, private projections, r
   await assert.rejects(host.evaluate(()=>GameApp.configureSlots('b')),/房主|槽位|角色/);
   assert.equal(await host.evaluate(()=>GameApp.getState().active.actorId),'a');
   assert.deepEqual(await host.evaluate(()=>{const s=GameApp.getState().active;return {draft:s.draft,privateDraft:s.privateDraft,inputHistory:s.inputHistory};}),originalInputs);
+  await own.locator('.home-button').click();await own.locator('#join-room-form').waitFor();
+  await guest.locator('.brand-home').click();await guest.locator('#join-room-form').waitFor();
   assert.equal(modelRequests,2);assert.deepEqual(sockets,[]);assert.deepEqual(errors,[]);
 });

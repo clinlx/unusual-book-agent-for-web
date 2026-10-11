@@ -17,6 +17,12 @@ function fakeSDK(){
  return {sdk:{...SDK,BridgeConnection:Connection},connections,setInitial:messages=>{initial=messages;}};
 }
 const tick=()=>new Promise(r=>setTimeout(r,20));
+test('invitation probing authenticates before returning and closes its temporary connection',async t=>{
+ const f=fakeSDK(),host=await Bridge.createHost({url:'ws://localhost',roomId:'room',sdk:f.sdk});t.after(()=>host.close());const invitation=await host.invite('guest');
+ const parsed=await Bridge.probeInvitation(Bridge.encodeInvitation(invitation),{sdk:f.sdk});assert.deepEqual(parsed,invitation);assert.equal(f.connections[1].isClosed,true);assert.equal(f.connections[1].listeners.size,0);
+ const count=f.connections.length;await assert.rejects(Bridge.probeInvitation('invalid',{sdk:f.sdk}));assert.equal(f.connections.length,count);
+ const rejected={...f.sdk,BridgeConnection:{connect:async()=>{throw new SDK.BridgeError('Unauthorized');}}};await assert.rejects(Bridge.probeInvitation(invitation,{sdk:rejected}),{code:'Unauthorized'});
+});
 test('invitations validate local-only plaintext endpoints and never carry host credentials',async t=>{
  const f=fakeSDK(),host=await Bridge.createHost({url:'ws://127.0.0.1:8080',roomId:'room',sdk:f.sdk});t.after(()=>host.close());
  const invitation=await host.invite('guest'),code=Bridge.encodeInvitation(invitation);

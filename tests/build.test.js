@@ -10,6 +10,12 @@ test('default build emits index.html and leaves the manually managed catalog unt
   const catalogBefore=fs.existsSync(catalogPath)?fs.readFileSync(catalogPath):null;
   execFileSync(process.execPath,['build.js'],{cwd:root,stdio:'pipe'});
   const html=fs.readFileSync(path.join(root,'dist/index.html'),'utf8');
+  for(const page of ['index','client']){
+    const output=fs.readFileSync(path.join(root,'dist',page+'.html'),'utf8');
+    assert.match(output,/const BUNDLED_GAME_ICON = /,page+' includes the shared application icon');
+    assert.equal(JSON.parse(output.match(/const BUNDLED_GAME_ICON = (.*);/)[1]),fs.readFileSync(path.join(root,'assets/icons/game.svg'),'utf8'));
+    assert.doesNotMatch(output,/\/\*__FAVICON__\*\//,page+' includes its standalone browser icon');
+  }
   assert.doesNotMatch(html,/BUNDLED_MODULES/);
   assert.deepEqual(fs.existsSync(catalogPath)?fs.readFileSync(catalogPath):null,catalogBefore);
   assert.ok(fs.existsSync(path.join(root,'dist/designer.html')),'generate standalone designer page');
