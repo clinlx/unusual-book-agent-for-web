@@ -1108,7 +1108,16 @@ const GameUI = (() => {
     if(name==='slot-request'){await GameApp.roomCommand('slot.claim.request',{actorId:el.dataset.actor});toast('已向房主请求切换角色');return;}
     if(name==='slot-decide'){await GameApp.roomCommand('slot.claim.decide',{claimId:el.dataset.claim,decision:el.dataset.decision});return roomModal();}
     if(name==='show-vote'){shownMultiplayerDialog='';modalRoot.innerHTML='';return multiplayerDialogs();}
-    if(name==='slot-mode'){const kind=document.getElementById('slot-mode-'+el.dataset.actor).value;if(kind==='ai'&&slotRows().find(s=>s.id===el.dataset.actor)?.occupied&&!await appConfirm('将此角色转为 NPC？该玩家会断开连接，原加入密钥随即失效。',{title:'转为 NPC',confirmLabel:'转为 NPC'}))return;await GameApp.setInvitationSlot(el.dataset.actor,kind);return roomModal();}
+    if(name==='slot-mode'){
+      const actorId=el.dataset.actor,kind=document.getElementById('slot-mode-'+actorId).value,slot=slotRows().find(s=>s.id===actorId);
+      if(kind==='ai'&&slot?.occupied&&!await appConfirm('将此角色转为 NPC？该玩家会断开连接，原加入密钥随即失效。',{title:'转为 NPC',confirmLabel:'转为 NPC'}))return;
+      if(kind==='player'&&state.active.round>=3&&slot&&!slot.occupied&&!state.network?.invites?.some(i=>i.actorId===actorId)&&GameData.validateCharacterInfo(state.active,slot.path).length){
+        const save=state.active;
+        if(!await appConfirm('该角色卡存在格式错误，中途加入可能出现异常。建议新开游戏，在车卡流程中重新车卡。\n\n如果一定要继续，建议先在调试模式中手动编辑 '+slot.path+'/基础信息.json，并填写正确的格式。否则可能出现无法预料的错误。',{title:'角色卡格式警告',confirmLabel:'我知道了'}))return;
+        if(state.active!==save||state.home)return;
+      }
+      await GameApp.setInvitationSlot(actorId,kind);return roomModal();
+    }
     if(name==='rollback-decide'){await GameApp.roomCommand('rollback.decide',{voteId:el.dataset.vote,decision:el.dataset.decision});modalRoot.innerHTML='';multiplayerDialogs();return;}
     if(name==='rollback-vote'){await GameApp.roomCommand('rollback.vote',{voteId:el.dataset.vote,approve:el.dataset.approve==='true'});modalRoot.innerHTML='';return;}
     if(name==='host-skip'){await GameApp.roomCommand('action.hostSkip',{memberId:el.dataset.member});return roomModal();}
