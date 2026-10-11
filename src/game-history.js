@@ -47,7 +47,7 @@ const GameHistory=(()=>{
       const hidden=e.is_private&&String(e.target_player||'').replace(/^Player-/,'')!==playerId;
       return {id:'reference-'+i,type:['story','player','dice','note','round_end'].includes(type)?type:'note',content:String(e.content||''),
         round:roundNumber(e.round_count??e.round),at:e.at??(e.timestamp>0?e.timestamp*1000:undefined),worldTime:e.world_time??e.worldTime??'',
-        secret:!!(e.is_secret||e.secret||hidden),skip:!!(e.is_skip||e.skip),speaker:e.role,privateContent:e.private_content||'',
+        audience:e.is_private?(e.target_player?[String(e.target_player).replace(/^Player-/,'')]:'host'):(e.audience||'public'),actorId:e.actorId||String(e.role||'').replace(/^Player-/,''),secret:!!(e.is_secret||e.secret),skip:!!(e.is_skip||e.skip),speaker:e.role,privateContent:e.private_content||'',
         data:e.dice_data||e.data};
     });
     const summaries=exists('SummaryHistory.json')?read('SummaryHistory.json','array'):dirs.map(n=>{const p='过往回合历史记忆/'+n.name+'/回合总结.txt';return {round:Number(n.name.match(/^Round_(\d+)/)[1]),content:D.node(s,p)?.content||''};});

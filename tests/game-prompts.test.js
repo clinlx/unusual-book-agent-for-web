@@ -77,7 +77,10 @@ test('source package preserves essential hosting protocol with numbered referenc
   assert.match(system, /暗骰/);
   assert.match(system, /Player-\*/);
   for (const text of Object.values(sources)) {
-    assert.doesNotMatch(text, /private_update_story|update_story|check_skill_enable|\btoken\b|所有玩家|各个玩家|Player-pn/);
+    assert.doesNotMatch(text, /\bupdate_story\b|check_skill_enable|\btoken\b|Player-pn/);
+    assert.doesNotMatch(text, /只有一个\s*`?Player|唯一玩家目录|多角色存档由导入校验拒绝/);
   }
+  assert.match(system,/private_append_story/);
+  assert.match(system,/AIPC[\s\S]*DISABLE/);
   for (const id of ['reference/游戏前准备.md', 'reference/游戏结束.md', '游戏目录树属性规则.md', ...['A','B','C','D'].map(x => `Prompt/KeyWords/安全性-${x}.md`)]) assert.ok(hosted.file('/.reference/'+id.split('/').pop()));
 });

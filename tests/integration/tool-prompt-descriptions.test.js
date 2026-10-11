@@ -11,7 +11,10 @@ test('tool building still accepts a description-only prompt provider', () => {
   const tools = Tools.build({ toolDescription: name => name });
   assert.equal(tools.find(tool => tool.function.name === 'append_story').function.description, 'append_story');
   assert.deepEqual(tools.find(tool => tool.function.name === 'append_story').function.parameters.required,
-    ['content', 'one_line_summary_of_content']);
+    ['one_line_summary_of_content']);
+  const story=tools.find(tool => tool.function.name === 'append_story').function.parameters;
+  assert.equal(story.properties.content.type,'string');
+  assert.equal(story.properties.skip_output.type,'boolean');
 });
 
 test('parameter prompts reach the HTTP request without altering tool contracts', async () => {

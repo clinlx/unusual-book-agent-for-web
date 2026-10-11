@@ -1,7 +1,7 @@
 'use strict';
 // File schemas and player-visible projections. This module never changes world files.
 const GameData=(()=>{
-  const V=typeof module!=='undefined'&&module.exports?require('./vfs.js'):VFS;
+  const V=typeof module!=='undefined'&&module.exports?require('./vfs.js'):(typeof VFS!=='undefined'?VFS:null);
   const object=x=>!!x&&typeof x==='object'&&!Array.isArray(x);
   const normalize=x=>String(x).replace(/[_\s-]/g,'').toLowerCase();
   const aliases={
@@ -26,7 +26,7 @@ const GameData=(()=>{
     if(!object(x))return x;
     const out={};for(const [k,v]of Object.entries(x))if(!k.startsWith('.')&&!hiddenKeys.has(normalize(k))&&!(items&&itemKeys.has(normalize(k))))out[k]=visible(v,items);return out;
   }
-  function node(s,p){const parts=String(p).replace(/\\/g,'/').split('/').filter(Boolean);if(parts.includes('..'))return null;if(parts[0]!=='workspace')parts.unshift('workspace');return V.resolve(s.tree,parts);}
+  function node(s,p){if(!s?.tree||!V)return null;const parts=String(p).replace(/\\/g,'/').split('/').filter(Boolean);if(parts.includes('..'))return null;if(parts[0]!=='workspace')parts.unshift('workspace');return V.resolve(s.tree,parts);}
   function read(s,p){const n=node(s,p);if(!n||n.type!=='file'||n.encoding==='base64')throw Error(p+' 不是可读取的 JSON 文件');return JSON.parse(n.content.replace(/^\uFEFF/,''));}
   function itemPath(id){let p=String(id).replace(/\\/g,'/').replace(/^\/?workspace\//,'').replace(/\/$/,'');if(!p.startsWith('存档-索引-物品/'))p='存档-索引-物品/'+p;return p.endsWith('.json')?p:p+'/物品基础信息.json';}
   function timeValue(o){const v=get(o,['Game_World_Time','世界时间','WorldTime','world_time','GameTime','当前时间']);return typeof v==='string'||typeof v==='number'?String(v):'';}
@@ -72,7 +72,7 @@ const GameData=(()=>{
       complex(o,'主动技能',{名称:['名称','SkillName','ActionID','Name','SkillID'],描述:['描述','FlavorText','Effect','description','Desc','EffectText'],修正:['修正','Modifier','CombatMod'],消耗:['消耗','Cost','Resources'],冷却:['冷却','Cooldown','CD'],当前冷却状态:['当前冷却状态','CooldownStatus'],范围:['范围','Range','Area'],前置条件:['前置条件','Requirements','Pre'],'.隐藏效果':['.隐藏效果','.HiddenEffect']},p);
       const attire=get(o,'穿戴');if(attire!==undefined&&!object(attire))warnings.push('[穿戴格式] '+p+' 应按部位保存物品引用');else if(attire){for(const [part,id]of Object.entries(attire)){if(['身体','全身','全体','整体','衣物','衣着','穿着','穿戴'].includes(part))warnings.push('[穿戴部位] '+p+': '+part+' 过于笼统');if(typeof id==='string'&&!node(s,itemPath(id)))warnings.push('[穿戴引用] '+p+': '+id+' 的物品资料不存在');}}
     };
-    character(s.playerPath);
+    for(const n of Object.values(node(s,'/workspace')?.children||{}))if(n.type==='dir'&&/^(Player|AIPC|KPC)-.+/.test(n.name))character('/workspace/'+n.name);
     if(need('剧情线与进度','dir')){need('剧情线与进度/主线剧情.md');for(const n of Object.values(node(s,'剧情线与进度').children))if(n.type==='dir')for(const f of ['剧情.md','目标.json','进度.json'])need('剧情线与进度/'+n.name+'/'+f);}
     if(need('世界状态和世界规则','dir')){need('世界状态和世界规则/世界规则.md');need('世界状态和世界规则/掷骰规则.md');const o=json('世界状态和世界规则/世界共识.json','object');if(o&&get(o,['世界时间','WorldTime'])===undefined)warnings.push('[字段缺失] 世界共识: 世界时间');}
     if(need('存档-索引-NPC','dir'))for(const n of Object.values(node(s,'存档-索引-NPC').children))if(n.type==='dir')character('存档-索引-NPC/'+n.name);

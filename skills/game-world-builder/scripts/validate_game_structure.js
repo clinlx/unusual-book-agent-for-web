@@ -78,7 +78,7 @@ function validateStructure(world) {
     fields(get(data,S.CHARACTER_INFO_VARIANTS.状态)||{},S.STATUS_VARIANTS,context+'/状态',file);
   }
   const locations=new Map();
-  const owner=value=>String(value).trim().replace(/\\/g,'/').replace(/^\/?workspace\//,'').replace(/\/$/,'').toLowerCase().replace(/^(player|kpc|npc)-/,'');
+  const owner=value=>String(value).trim().replace(/\\/g,'/').replace(/^\/?workspace\//,'').replace(/\/$/,'').toLowerCase().replace(/^(player|aipc|disable|kpc|npc)-/,'');
   function locate(value,owners,context,file) {
     const target=typeof value==='string'?reference(value,'存档-索引-物品'):null;
     if(!target) {report(`[引用错误] ${context}: 物品 ${JSON.stringify(value)} 不存在`,file);return;}
@@ -117,10 +117,17 @@ function validateStructure(world) {
   for(const name of ['世界规则.md','掷骰规则.md','检定与触发器索引.md']) need(path.join(root,'世界状态和世界规则',name));
   const consensus=json(path.join(root,'世界状态和世界规则/世界共识.json'),'object');
   if(consensus) fields(consensus,{世界时间:['世界时间','WorldTime']},'世界共识',path.join(root,'世界状态和世界规则/世界共识.json'));
-  const players=children(root).filter(p=>path.basename(p).startsWith('Player-'));
-  if(players.length!==1) report(`[玩家数量错误] 必须且只能包含一个 Player-* 玩家目录，当前 ${players.length} 个`);
-  if(players.some(p=>path.basename(p)==='Player-')) report('[玩家ID错误] Player- 后必须有非空 ID',path.join(root,'Player-'));
-  [...players,...children(root).filter(p=>path.basename(p).startsWith('KPC-')),...children(path.join(root,'存档-索引-NPC'))].forEach(character);
+  const roles=children(root).filter(p=>/^(Player|AIPC|DISABLE|KPC)-/.test(path.basename(p)));
+  const players=roles.filter(p=>!path.basename(p).startsWith('KPC-')),ids=new Set();
+  if(!players.length) report('[玩家数量错误] 至少需要一个 Player-/AIPC-/DISABLE- 可选角色槽位');
+  for(const dir of roles){
+    const name=path.basename(dir),id=name.slice(name.indexOf('-')+1);
+    if(!id.trim()||id!==id.trim()) report('[玩家ID错误] 角色目录后必须有非空且无首尾空白的 ID',dir);
+    if(name.startsWith('KPC-'))continue;
+    if(ids.has(id))report('[角色ID冲突] Player/AIPC/DISABLE 不可使用相同 ID：'+id,dir);
+    ids.add(id);
+  }
+  [...roles,...children(path.join(root,'存档-索引-NPC'))].forEach(character);
   need(path.join(root,'存档-世界/世界日志.txt'));
   for(const file of parsed.keys()) if(rel(file).startsWith('存档-世界/')&&path.basename(file)==='场景信息.json') {
     const dir=path.dirname(file);json(file,'object');

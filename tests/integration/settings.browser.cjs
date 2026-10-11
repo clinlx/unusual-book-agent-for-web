@@ -160,7 +160,7 @@ for (const name of ['game', 'designer']) {
       assert.equal(await page.evaluate(name => name === 'game' ? GameApp.getState().settings.reverseSendNewline : __UI_STATE__.settings.reverseSendNewline, name), true);
       if (name === 'game') {
         await page.evaluate(async () => {
-          const zip = ZIP.makeZip([{ name: 'Player-pc/基础信息.json', content: '{"姓名":"测试"}' }, { name: 'Player-pc/背包.json', content: '[]' }]);
+          const zip = ZIP.makeZip([{ name: 'Player-pc/基础信息.json', text: '{"姓名":"测试"}' }, { name: 'Player-pc/背包.json', text: '[]' }]);
           await GameApp.importSave(new File([zip], '快捷键.zip'));
           GameApp.getState().active.status = 'waiting';
           GameApp.setMode('play');

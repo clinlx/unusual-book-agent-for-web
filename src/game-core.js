@@ -5,6 +5,7 @@ const GameCore = (() => {
   const data = typeof module !== 'undefined' && module.exports ? require('./game-data.js') : GameData;
   const history = typeof module !== 'undefined' && module.exports ? require('./game-history.js') : GameHistory;
   const inputs = typeof module !== 'undefined' && module.exports ? require('./game-input-history.js') : GameInputs;
+  const slots = typeof module !== 'undefined' && module.exports ? require('./game-slots.js') : GameSlots;
   const fileValidation = typeof module !== 'undefined' && module.exports ? require('./shared/file-write-validation.js') : FileWriteValidation;
   const writeOptions = {cap:120000,validateContent:fileValidation.validate};
   const copy = x => structuredClone(x);
@@ -55,17 +56,17 @@ const GameCore = (() => {
     if(raw==='/.reference'||raw.startsWith('/.reference/')||raw==='/prompts'||raw.startsWith('/prompts/'))return raw;
     return raw.startsWith('/workspace/')?raw:'/workspace/'+raw.replace(/^\//,'');
   }
-  function validateTree(t) {
+  function validateTree(t,preferred) {
     const root=vfs.resolve(t,['workspace']);
     if(!root||root.type!=='dir')throw Error('ZIP 中没有有效的工作目录');
-    const players=Object.values(root.children).filter(n=>n.type==='dir'&&/^Player-.+/.test(n.name));
-    if(players.length!==1)throw Error('存档必须包含且只包含一个 Player-* 玩家目录，请整理压缩包后重新导入。');
-    return '/workspace/'+players[0].name;
+    const players=slots.scan(t).filter(n=>n.kind!=='kpc');
+    if(!players.length)throw Error('存档必须包含至少一个 Player/AIPC/DISABLE 玩家槽位');
+    return players.find(n=>n.path===preferred)?.path||players.find(n=>n.kind==='player')?.path||players[0].path;
   }
   function createSave(name,tree) {
-    const playerPath=validateTree(tree);
+    const playerPath=validateTree(tree),actors=slots.scan(tree).filter(n=>n.kind!=='kpc');
     return {id:uid(),name:String(name||'未命名存档'),createdAt:Date.now(),updatedAt:Date.now(),playerPath,
-      tree:copy(tree),requestHistory:[],messages:[],events:[],round:0,cache:{},summaries:[],status:'new',
+      actorId:actors.find(x=>x.path===playerPath).id,slots:actors,slotsConfigured:actors.length===1,tree:copy(tree),requestHistory:[],messages:[],events:[],round:0,cache:{},summaries:[],status:'new',
       snapshots:[],lastChanges:[],activeRound:null,contextFromRound:1,draft:'',draftRound:1,draftVersion:0,inputHistory:[]};
   }
   function emit(s,type,payload={}) {
@@ -75,21 +76,22 @@ const GameCore = (() => {
     if(s.activeRound&&!s.activeRound.complete)throw Error('当前回合尚未结束，请继续或回退本回合');
     if(s.status==='ended')throw Error('游戏已结束，可回退至上一回合');
     const flags=data.actorState(readJson(s,s.playerPath+'/基础信息.json',{}));
-    if(!isStart&&!flags.alive)throw Error('角色已死亡，无法提交行动；可以回溯或查看历史');
-    if(!isStart&&!flags.enabled&&!options.skip)throw Error('角色失去意识，无法主动行动；可以等待局势发展');
+    if(!options.actions&&!isStart&&!flags.alive)throw Error('角色已死亡，无法提交行动；可以回溯或查看历史');
+    if(!options.actions&&!isStart&&!flags.enabled&&!options.skip)throw Error('角色失去意识，无法主动行动；可以等待局势发展');
     const actionText=options.skip?(flags.enabled?'本回合不采取主动行动，等待局势发展。':'失去意识，无法主动行动，等待局势发展。'):String(text||'');
-    const roundId=uid(),inputRound=s.round+1,boundDraft=s.draftRound==null||s.draftRound===inputRound?s.draft||'':'';
-    s.snapshots.push({tree:copy(s.tree),messageCount:s.messages.length,eventCount:s.events.length,round:s.round,
+    const roundId=options.roundId||uid(),inputRound=s.round+1,boundDraft=s.draftRound==null||s.draftRound===inputRound?s.draft||'':'';
+    s.snapshots.push({tree:copy(s.tree),slots:copy(s.slots||[]),actorId:s.actorId,playerPath:s.playerPath,messageCount:s.messages.length,eventCount:s.events.length,round:s.round,
       worldTime:data.worldTime(s),at:Date.now(),
       cache:copy(s.cache),summaryCount:s.summaries.length,status:s.status,contextFromRound:s.contextFromRound,lastChanges:copy(s.lastChanges),
       draft:isStart||options.skip?boundDraft:String(text||''),draftRound:inputRound,inputRoundId:roundId});
     pruneRollback(s);
     if(!options.skip&&String(text||'').trim())inputs.record(s,inputRound,roundId,text);
     inputs.advance(s);
-    s.activeRound={id:roundId,number:inputRound,action:actionText,starting:isStart,triggered:isStart,published:0,initialWorldTime:data.consensusTime(s),
+    s.activeRound={id:roundId,number:inputRound,actions:copy(options.actions||[]),action:actionText,starting:isStart,triggered:isStart,published:0,initialWorldTime:data.consensusTime(s),
+      participantIds:s.multiplayer?.members?Object.values(s.multiplayer.members).map(m=>m.actorId).filter(Boolean):null,
       requestCount:0,readState:{},receipts:{},complete:false,summary:[]};
     s.status='running';s.error=null;s.lastChanges=[];s.draft='';s.draftRound=inputRound;
-    if(!isStart)emit(s,'player',{content:actionText,name:'player_action',args:{action:actionText},skip:!!options.skip,roundId});
+    if(!isStart){if(options.actions){for(const action of options.actions)emit(s,'player',{actorId:action.actorId,content:action.content||(action.skip?'等待局势发展。':''),privateContent:action.privateContent||'',audience:'public',skip:!!action.skip,roundId});}else emit(s,'player',{actorId:s.actorId,content:actionText,name:'player_action',args:{action:actionText},skip:!!options.skip,roundId});}
     s.messages.push({role:'user',content:String(prompt),round:s.activeRound.number});
     return s.activeRound;
   }
@@ -115,7 +117,7 @@ const GameCore = (() => {
     s.contextFromRound=snap.contextFromRound;s.lastChanges=copy(snap.lastChanges);s.activeRound=null;s.error=null;
     const previous=s.snapshots.at(-1);
     if(previous&&!previous.tree){previous.tree=restoreTreeDelta(s.tree,previous.reverseDelta);delete previous.reverseDelta;}
-    s.playerPath=validateTree(s.tree);s.updatedAt=Date.now();
+    s.slots=snap.slots||s.slots;s.actorId=snap.actorId||s.actorId;slots.ensure(s);s.playerPath=validateTree(s.tree,snap.playerPath||s.playerPath);s.updatedAt=Date.now();
   }
   const hiddenFlag = data.hiddenFlag;
   function filterVisible(x,items=false) {
@@ -144,21 +146,55 @@ const GameCore = (() => {
     return {info,items,name:data.get(info,'姓名')||s.playerPath.split('/').pop()};
   }
   const actorKey=v=>String(v||'').trim().toLowerCase().replace(/[\s·._-]+/g,'');
-  function dicePlayerRelated(s,a={}){
-    const directory=s.playerPath.split('/').pop();
-    const roller=actorKey(a.roller),p=player(s,'info'),name=actorKey(p.name),id=actorKey(directory),shortId=actorKey(directory.replace(/^Player-/i,''));
-    if(!roller)return false;
-    if(['玩家','玩家角色','主角','你','player','pc'].includes(roller))return true;
-    if(roller===name||roller===id||roller===shortId)return true;
-    if(name.length>=2&&roller.includes(name))return true;
-    return false;
+  function diceActors(s){
+    const all=slots.scan(s.tree).filter(x=>x.kind!=='disabled');
+    const npcs=vfs.resolve(s.tree,['workspace','存档-索引-NPC']);
+    for(const node of Object.values(npcs?.children||{}))if(node.type==='dir')all.push({id:node.name,path:'/workspace/存档-索引-NPC/'+node.name,kind:'npc'});
+    return all;
   }
+  function resolveDiceActor(s,value,playersOnly=false){
+    const raw=String(value||'').trim().replace(/\\/g,'/').replace(/\/$/,''),key=actorKey(raw),all=diceActors(s).filter(x=>!playersOnly||x.kind==='player');
+    if(!playersOnly&&raw==='<|GM|>')return {id:'<|GM|>',kind:'gm'};
+    let found=all.filter(x=>x.path===raw||x.path.replace('/workspace/','')===raw||x.path.split('/').pop()===raw);
+    if(!found.length)found=all.filter(x=>x.id===raw);
+    if(!found.length&&['玩家','玩家角色','主角','你','player','pc'].includes(key))found=all.filter(x=>x.kind==='player');
+    if(!found.length)found=all.filter(x=>{try{return actorKey(data.get(readJson(s,x.path+'/基础信息.json',{}),'姓名'))===key;}catch(_){return false;}});
+    if(found.length!==1)throw Error((playersOnly?'私密信息接收者必须是现有 Player，':'roller 角色')+'不存在或有歧义，请使用实际角色目录或唯一 ID');
+    const info=readJson(s,found[0].path+'/基础信息.json',null);if(!object(info))throw Error('角色基础信息不存在或无效：'+found[0].path);
+    return found[0];
+  }
+  function dicePlayerRelated(s,a={}){try{return resolveDiceActor(s,a.roller).kind==='player';}catch(_){return false;}}
   const diceSecret=a=>a?.is_secret===true||String(a?.related_attr||'').trim()==='心理学';
-  function diceEventPlayerRelated(s,e){
-    if(typeof e?.playerRelated==='boolean')return e.playerRelated;
-    return dicePlayerRelated(s,e?.diceArgs||e||{});
+  const recipient=(s,id)=>resolveDiceActor(s,id,true);
+  function diceIdentity(s,a){
+    if(a.is_private!==undefined&&typeof a.is_private!=='boolean')throw Error('is_private 必须是 true 或 false');
+    if(a.target_player!==undefined&&typeof a.target_player!=='string')throw Error('target_player 必须是 Player ID 字符串');
+    const roller=resolveDiceActor(s,a.roller),isPrivate=a.is_private===true;
+    if(!isPrivate&&String(a.target_player||'').trim())throw Error('target_player 仅在 is_private:true 时使用');
+    const target=isPrivate&&(roller.kind!=='gm'||String(a.target_player||'').trim())?recipient(s,a.target_player||a.roller):null;
+    return {rollerId:roller.id,rollerKind:roller.kind,private:isPrivate,targetPlayer:target?.id||null,
+      audience:roller.kind==='gm'?[]:isPrivate?[target.id]:'public',secret:diceSecret(a),playerRelated:roller.kind!=='gm'&&(roller.kind==='player'||isPrivate)};
   }
-  const visibleEvents=(s,mode)=>mode==='debug'?s.events:s.events.filter(e=>e.type==='dice'?diceEventPlayerRelated(s,e):!e.secret&&['player','story','round_end','note'].includes(e.type));
+  function diceEventAccess(s,e,actorId){
+    const args=e.diceArgs||{},roller=e.roller||args.roller||'',isPrivate=e.private===true||args.is_private===true||Array.isArray(e.audience)&&e.audience.length>0;
+    let kind=e.rollerKind,id=e.rollerId,target=e.targetPlayer;
+    if(roller==='<|GM|>')kind='gm';
+    if(!kind)try{const resolved=resolveDiceActor(s,roller);kind=resolved.kind;id=resolved.id;}catch(_){kind=e.playerRelated===true||!roller&&e.playerRelated!==false?'player':'unknown';}
+    if(isPrivate&&!target)try{target=recipient(s,args.target_player||roller).id;}catch(_){if(Array.isArray(e.audience)&&e.audience.length===1)target=e.audience[0];}
+    const audience=e.audience===undefined?(isPrivate?target?[target]:[]:'public'):e.audience;
+    const granted=audience==='public'||Array.isArray(audience)&&audience.includes(actorId);
+    const visible=kind!=='gm'&&granted&&(!isPrivate||target===actorId)&&(kind==='player'||isPrivate);
+    return {visible,rollerId:id,rollerKind:kind,private:isPrivate,targetPlayer:target||null,audience,playerRelated:kind!=='gm'&&(kind==='player'||isPrivate),secret:e.secret===true||diceSecret(args)||String(e.relatedAttr||'').trim()==='心理学'};
+  }
+  const visibleEvents=(s,mode)=>mode==='debug'?s.events:s.events.filter(e=>{
+    const id=s.actorId||s.playerPath?.split('/').pop().replace(/^Player-/,'');
+    if(e.type==='dice')return diceEventAccess(s,e,id).visible;
+    if(e.type==='player'&&e.actorId!==id&&e.privateContent&&!String(e.content||'').trim()&&!e.skip)return false;
+    if(e.audience!==undefined&&e.audience!=='public'&&(!Array.isArray(e.audience)||!e.audience.includes(id)))return false;
+    return !e.secret&&['player','story','round_end','note'].includes(e.type);
+  }).map(e=>{const x=copy(e),id=s.actorId||s.playerPath?.split('/').pop().replace(/^Player-/,'');if(x.actorId!==id)delete x.privateContent;
+    if(x.type==='dice'){const {visible,...access}=diceEventAccess(s,e,id);Object.assign(x,access);if(x.secret){delete x.data;delete x.diceArgs;delete x.content;delete x.description;delete x.relatedAttr;}}return x;
+  });
   function requireText(v,label){if(typeof v!=='string'||!v.trim())throw Error(label+' 不得为空');return v;}
   function finite(v,label){if(typeof v!=='number'||!Number.isFinite(v))throw Error(label+' 必须是有限数值');return v;}
   function modifiers(x){if(x==null)return 0;if(!object(x))throw Error('修正值必须是对象');return Object.values(x).reduce((n,v)=>n+finite(v,'修正值'),0);}
@@ -171,6 +207,7 @@ const GameCore = (() => {
       if(/critical_(success|failure)_range|闭区间/.test(m))return '大成功/大失败区间请使用 JSON 数组，例如 "critical_success_range":[1,14]、"critical_failure_range":[96,100]；不用时填 null。';
       if(/target_value|compare_mode/.test(m))return '正式检定请提供数值 target_value 和 compare_mode（gt/lt/ge/le/ne/eq）；仅 calculate_only:true 时可填 null。';
       if(/left_modifiers|right_modifiers|修正值/.test(m))return '修正请写成对象，例如 "left_modifiers":{"环境":-10}；没有修正时两个字段都填写 {}。';
+      if(/roller 角色|接收者|target_player|角色基础信息/.test(m))return '请核对实际角色目录与基础信息，roller 使用唯一角色 ID；私密目标只能是有效 Player-ID。多人时不要使用含糊的主角或玩家。';
       if(/description|roller|related_attr|is_secret|calculate_only|dice_combine_mode/.test(m))return '请按完整 roll_dice 结构重试，所有字段都必须显式填写。';
     }
     if(/修改前先 read_file/.test(m))return '先用 read_file 读取该文件的最新内容，再进行修改。';
@@ -194,6 +231,7 @@ const GameCore = (() => {
     const missing=DICE_REQUIRED.filter(k=>!Object.hasOwn(a,k));if(missing.length)throw Error('roll_dice 缺少必填参数：'+missing.join('、'));
     requireText(a.description,'description');requireText(a.roller,'roller');requireText(a.related_attr,'related_attr');
     if(typeof a.is_secret!=='boolean')throw Error('is_secret 必须是 true 或 false');
+    if(a.is_private!==undefined&&typeof a.is_private!=='boolean')throw Error('is_private 必须是 true 或 false');
     if(typeof a.calculate_only!=='boolean')throw Error('calculate_only 必须是 true 或 false');
     if(!object(a.dice_dict)||!Object.keys(a.dice_dict).length)throw Error('dice_dict 不得为空');
     const compare={gt:(x,y)=>x>y,ge:(x,y)=>x>=y,lt:(x,y)=>x<y,le:(x,y)=>x<=y,eq:(x,y)=>x===y,ne:(x,y)=>x!==y};
@@ -249,7 +287,7 @@ const GameCore = (() => {
     if(Object.hasOwn(round.receipts,callId))return copy(round.receipts[callId]);
     
     
-    const before=copy({tree:s.tree,cache:s.cache,round:s.round,status:s.status,playerPath:s.playerPath,
+    const before=copy({tree:s.tree,slots:s.slots,cache:s.cache,round:s.round,status:s.status,playerPath:s.playerPath,
       summaries:s.summaries,lastChanges:s.lastChanges,activeRound:round});
     const eventCount=s.events.length;
     let out;
@@ -267,18 +305,38 @@ const GameCore = (() => {
         if(!n)throw Error('文件不存在: '+fp);
         const r=vfs.readFile(s.tree,fp,{offset:input.offset,limit:input.limit,cap:120000});round.readState[fp]=n.content;return r;
       };
-      const writable=fp=>{if(fp==='/.reference'||fp.startsWith('/.reference/')||fp==='/prompts'||fp.startsWith('/prompts/')||options.resource?.(fp)!==undefined)throw Error('提示词为只读资源');};
+      const writable=fp=>{
+        if(fp==='/.reference'||fp.startsWith('/.reference/')||fp==='/prompts'||fp.startsWith('/prompts/')||options.resource?.(fp)!==undefined)throw Error('提示词为只读资源');
+        const role=/^\/workspace\/((Player|AIPC|DISABLE|KPC)-[^/]*)(?:\/|$)/.exec(fp);
+        if(role&&(role[2]==='DISABLE'||!vfs.resolve(s.tree,['workspace',role[1]])))throw Error('角色槽位由宿主管理，不能新增槽位或修改关闭角色');
+      };
       const readFirst=fp=>{writable(fp);const n=vfs.resolve(s.tree,vfs.normalize(fp));if(n?.type==='file'&&round.readState[fp]!==n.content)throw Error('修改前先 read_file 读取最新内容: '+fp);};
       const readSubtreeFirst=fp=>{readFirst(fp);const n=vfs.resolve(s.tree,vfs.normalize(fp));if(n?.type==='dir')for(const child of Object.values(n.children))readSubtreeFirst(fp+'/'+child.name);};
       let result;
       switch(name){
         case 'trigger_next_round':{
           const plan=jsonObject(a.phase_plan);if(typeof plan.Countdowns!=='string'||!plan.Countdowns.trim()||!Array.isArray(plan.Pending_Triggers)||typeof plan.Forced_Checks!=='string'||!plan.Forced_Checks.trim())throw Error('phase_plan 需要非空文本 Countdowns、Forced_Checks 和数组 Pending_Triggers');
-          round.triggered=true;result={action:round.action,player:s.playerPath,phase_plan:plan,warnings:round.number>3?data.references(s,plan.Pending_Triggers):[]};break;
+          round.triggered=true;
+          const participantIds=round.participantIds??(s.multiplayer?.members?Object.values(s.multiplayer.members).map(m=>m.actorId).filter(Boolean):null),participants=participantIds?new Set(participantIds):null;
+          const actors=slots.scan(s.tree).filter(x=>x.kind!=='disabled'&&(x.kind!=='player'||!participants||participants.has(x.id))).map(x=>({...x,...data.actorState(readJson(s,x.path+'/基础信息.json',{}))}));
+          const living=actors.filter(x=>x.kind==='player'&&x.alive),unconsciousActors=living.length&&living.every(x=>!x.enabled)?living.map(x=>x.id):[];
+          result={action:round.action,actions:round.actions||[],player:s.playerPath,actors,unconsciousActors,
+            instruction:unconsciousActors.length?(options.multiplayerPrompts?.all_unconscious||'所有存活玩家均失去意识。推进时间并描写苏醒，通过工具恢复这些存活角色的 Enabled，不恢复死亡角色。').replace('{actorIds}',unconsciousActors.join('、')):(options.multiplayerPrompts?.ai_roles||'AIPC/KPC 由主持人依照人设代为行动；死亡者不能行动，无意识者只能等待。'),
+            phase_plan:plan,warnings:round.number>3?data.references(s,plan.Pending_Triggers):[]};break;
+        }
+        case 'private_append_story':{
+          if(!round.triggered)throw Error('先调用 trigger_next_round 获取玩家行动');
+          if(!Array.isArray(a.entries)||!a.entries.length)throw Error('entries 不得为空');
+          const entries=a.entries.map(e=>({slot:recipient(s,e.id),content:requireText(e.story,'story').trim()}));
+          for(const e of entries){if(s.events.some(x=>x.type==='story'&&x.round===round.number&&x.content===e.content&&Array.isArray(x.audience)&&x.audience.includes(e.slot.id)))continue;
+            emit(s,'story',{content:e.content,audience:e.slot.kind==='player'?[e.slot.id]:'host',private:true});}
+          round.privatePublished=(round.privatePublished||0)+entries.length;result={status:options.multiplayerPrompts?.private_story_follow_up||'Private story published; finish public output or use skip_output'};break;
         }
         case 'append_story':{
           if(!round.triggered)throw Error('先调用 trigger_next_round 获取玩家行动');
-          requireText(a.content,'content');requireText(a.one_line_summary_of_content,'one_line_summary_of_content');
+          requireText(a.one_line_summary_of_content,'one_line_summary_of_content');
+          if(a.skip_output===true){if(!round.privatePublished||String(a.content||'').trim())throw Error('skip_output 仅限本轮已有私密输出且公开正文为空');round.published++;round.summary.push(a.one_line_summary_of_content);result={status:'Public output skipped'};break;}
+          requireText(a.content,'content');
           const content=a.content.trim();if(s.events.some(e=>e.type==='story'&&e.round===round.number&&e.content.trim()===content))throw Error('此内容已经输出成功，请勿重复发布；如需继续请追加不同的下一段');
           player(s);emit(s,'story',{content,worldTime:data.worldTime(s)});round.published++;round.summary.push(a.one_line_summary_of_content);
           result={status:'Story appended successfully; warnings are advisory, do not republish',warnings:data.validate(s)};break;
@@ -286,20 +344,19 @@ const GameCore = (() => {
         case 'end_the_round':{
           if(!round.published)throw Error('先成功调用 append_story 输出故事');
           const cache=jsonObject(a.NEXT_TURN_CACHE);if(!['游戏前准备','游戏循环','游戏结束'].includes(cache.Story_Phase))throw Error('NEXT_TURN_CACHE.Story_Phase 无效');
-          s.playerPath=validateTree(s.tree);player(s);
+          s.playerPath=validateTree(s.tree,s.playerPath);slots.ensure(s);for(const actor of slots.scan(s.tree).filter(x=>x.kind!=='disabled'))player({...s,playerPath:actor.path});
           s.cache=copy(cache);s.round=round.number;s.status=cache.game_over===true?'ended':'waiting';round.complete=true;
           s.summaries.push({round:s.round,content:round.summary.join('；'),worldTime:data.worldTime(s),at:Date.now()});
           emit(s,'round_end',{content:'第 '+s.round+' 回合结束'});
           const roundStart=s.snapshots.at(-1)?.tree;
           let playerState;
           if(roundStart){
-            const playerRel=s.playerPath.replace(/^\/workspace\//,'');
-            const rawFile=(tree,rel)=>vfs.resolve(tree,vfs.normalize('/workspace/'+rel))?.content;
-            const infoRel=playerRel+'/基础信息.json',bagRel=playerRel+'/背包.json';
-            const filesChanged=rawFile(roundStart,infoRel)!==rawFile(s.tree,infoRel)||rawFile(roundStart,bagRel)!==rawFile(s.tree,bagRel);
-            if(filesChanged){
+            const humans=slots.scan(s.tree).filter(actor=>actor.kind==='player');
+            const filesChanged=JSON.stringify(player({...s,tree:roundStart}))!==JSON.stringify(player(s));
+            if(filesChanged||humans.length>1){
               const afterPlayer=player(s);
-              playerState={round:s.round,worldTime:data.worldTime(s),at:Date.now(),info:copy(afterPlayer.info),items:copy(afterPlayer.items)};
+              const actors=Object.fromEntries(humans.map(actor=>{const view=player({...s,playerPath:actor.path});return [actor.id,{info:copy(view.info),items:copy(view.items)}];}));
+              playerState={round:s.round,worldTime:data.worldTime(s),at:Date.now(),actorId:s.actorId,info:copy(afterPlayer.info),items:copy(afterPlayer.items),actors};
             }
           }
           history.archive(s,playerState);
@@ -355,14 +412,13 @@ const GameCore = (() => {
         case 'write_file':readFirst(p);if(typeof a.content!=='string')throw Error('content 必须是文本');vfs.writeFile(s.tree,p,a.content,writeOptions);result={path:p,written:a.content.length};break;
         case 'apply_patch':readFirst(p);if(typeof a.new_str!=='string')throw Error('new_str 必须是文本');result=vfs.applyPatch(s.tree,p,requireText(a.old_str,'old_str'),a.new_str,writeOptions);break;
         case 'mkdir':writable(p);vfs.mkdir(s.tree,p);result={path:p};break;
-        case 'delete':if(p===s.playerPath)throw Error('不能删除唯一玩家目录');readSubtreeFirst(p);vfs.deletePath(s.tree,p);result={path:p};break;
+        case 'delete':if(p==='/workspace'||slots.scan(s.tree).some(x=>x.path===p))throw Error('角色目录由槽位管理，不能删除');readSubtreeFirst(p);vfs.deletePath(s.tree,p);result={path:p};break;
         case 'move':case 'copy':{
-          const from=path(a.from),to=path(a.to);writable(to);if(name==='move'){writable(from);if(from===s.playerPath)throw Error('不能修改玩家目录 ID');}
+          const from=path(a.from),to=path(a.to);if([from,to].some(x=>/^\/workspace\/(Player|AIPC|DISABLE|KPC)-[^/]+$/.test(x)))throw Error('角色控制方式请通过槽位管理修改');writable(to);if(name==='move'){writable(from);if(from===s.playerPath)throw Error('不能修改玩家目录 ID');}
           if(to==='/workspace'||to.startsWith(from+'/'))throw Error('无效目标路径');vfs[name](s.tree,from,to,writeOptions);result={from,to};break;
         }
         case 'roll_dice':{
-          const d=dice(a,options.random,options.fixedDiceRolls),payload={...d,roller:a.roller,description:a.description||'',relatedAttr:a.related_attr||'',
-            secret:diceSecret(a),playerRelated:dicePlayerRelated(s,a),diceArgs:copy(a),manual:!!options.manualDiceResolved,pending:false,callId};
+          const identity=diceIdentity(s,a),d=dice(a,options.random,options.fixedDiceRolls),payload={...d,...identity,roller:a.roller,description:a.description||'',relatedAttr:a.related_attr||'',diceArgs:copy(a),manual:!!options.manualDiceResolved,pending:false,callId};
           const pendingEvent=options.manualEventId&&s.events.find(e=>e.id===options.manualEventId);
           if(pendingEvent)Object.assign(pendingEvent,payload,{at:Date.now(),worldTime:data.worldTime(s)});
           else emit(s,'dice',payload);
@@ -383,6 +439,12 @@ const GameCore = (() => {
           result={subject_value:x,target_value:y,calculated_dc:Math.trunc(cmp*40-10),raw_cmp_value:cmp};break;
         }
         default:throw Error('未知工具: '+name);
+      }
+      if(['write_file','append_file','apply_patch','mkdir','delete','move','copy'].includes(name)){
+        const roles=tree=>Object.entries(vfs.resolve(tree,['workspace'])?.children||{}).filter(([key])=>/^(Player|AIPC|DISABLE|KPC)-/.test(key));
+        const old=roles(before.tree),next=roles(s.tree),shape=xs=>JSON.stringify(xs.map(([key,node])=>[key,node.type]).sort(([a],[b])=>a.localeCompare(b)));
+        if(shape(old)!==shape(next))throw Error('角色根目录集合由槽位管理，文件工具不能改变');
+        for(const [key,node]of old)if(key.startsWith('DISABLE-')&&JSON.stringify(node)!==JSON.stringify(vfs.resolve(s.tree,['workspace',key])))throw Error('关闭角色资料只允许通过槽位管理恢复后修改');
       }
       out={ok:true,result:result??{status:'ok'}};
     }catch(e){
@@ -411,12 +473,12 @@ const GameCore = (() => {
       const tool=tools.get(e.callId),result=tool?.result;
       if(!result||typeof result!=='object'||!result.data)continue;
       const args=tool.args&&typeof tool.args==='object'?tool.args:(e.diceArgs||{});
-      Object.assign(e,copy(result),{
+      let identity;try{identity=diceIdentity(s,args);}catch(_){identity={audience:[],private:true,playerRelated:false,secret:diceSecret(args)};}
+      Object.assign(e,copy(result),{...identity,
         roller:e.roller||args.roller||'',
         description:e.description||args.description||'',
         relatedAttr:e.relatedAttr||args.related_attr||'',
         secret:diceSecret(args),
-        playerRelated:typeof e.playerRelated==='boolean'?e.playerRelated:dicePlayerRelated(s,args),
         diceArgs:copy(args),manual:true,pending:false,callId:e.callId
       });
       changed=true;
@@ -511,9 +573,9 @@ const GameCore = (() => {
         try{
           a=JSON.parse(tc.function.arguments||'{}');
           if(tc.function.name==='roll_dice'&&opts.manualDice===true&&dicePlayerRelated(s,a)&&!diceSecret(a)){
-            const request=diceRequest(a);
+            const identity=diceIdentity(s,a),request=diceRequest(a);
             if(request.specs.some(spec=>spec.n)){
-              const e=emit(s,'dice',{roller:a.roller,description:a.description||'',relatedAttr:a.related_attr||'',secret:false,playerRelated:true,
+              const e=emit(s,'dice',{roller:a.roller,description:a.description||'',relatedAttr:a.related_attr||'',...identity,
                 diceArgs:copy(a),manual:true,pending:true,callId:tc.id});
               s.pendingManualDice={callId:tc.id,eventId:e.id,round:s.activeRound.number,args:copy(a),createdAt:Date.now()};
               s.status='interrupted';s.error=null;await step();return true;
@@ -553,6 +615,6 @@ const GameCore = (() => {
       throw Error('本回合已达到工具循环上限，可继续本回合或回退');
     }catch(e){s.status=s.activeRound.complete?(s.cache.game_over?'ended':'waiting'):'interrupted';s.error=e.message;emit(s,'error',{content:e.message});await step();throw e;}
   }
-  return {uid,path,createSave,validateTree,beginRound,execute,run,context,estimate,player,filterVisible,visibleEvents,rollback,pruneRollback,ROLLBACK_LIMIT,changes,flatten,dice,dicePlayerRelated,diceSecret,resolveManualDice,repairManualDiceEvents};
+  return {uid,path,createSave,validateTree,beginRound,execute,run,context,estimate,player,filterVisible,visibleEvents,rollback,pruneRollback,ROLLBACK_LIMIT,changes,flatten,dice,dicePlayerRelated,diceSecret,diceEventAccess,resolveManualDice,repairManualDiceEvents};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=GameCore;

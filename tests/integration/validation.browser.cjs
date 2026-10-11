@@ -6,7 +6,7 @@ const { pathToFileURL } = require('node:url');
 const { chromium } = require('playwright');
 const ready = require('./designer-ready.cjs');
 const contract = fs.readFileSync('skills/game-world-builder/reference/WorldDataContract.md', 'utf8');
-const character = contract.split('```json\n')[1].split('```')[0];
+const character = contract.match(/```json\r?\n([\s\S]*?)```/)[1];
 
 (async () => {
   const browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL || 'msedge', headless: true });
@@ -83,12 +83,12 @@ const character = contract.split('```json\n')[1].split('```')[0];
     assert.equal(await page.locator('#worldValidationTooltip').count(), 0);
     // Dirty editors must survive error navigation, even on the mobile file tab.
     await page.locator('#editorText').fill('{"世界时间":"未保存"}');
-    await page.evaluate(async () => { VFS.deletePath(__UI_STATE__.tree, '/workspace/测试世界/开场说明.md'); await __UI__.saveTree(); });
+    await page.evaluate(async () => { VFS.deletePath(__UI_STATE__.tree, '/workspace/测试世界/模组.md'); await __UI__.saveTree(); });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.evaluate(() => __UI__.setTab('files'));
     // Exercise dirty error navigation through the existing handler while the lamp stays hidden.
     await lamp.evaluate(button => button.click());
-    await page.locator('#worldValidationDialog [data-path="/workspace/测试世界/开场说明.md"]').click();
+    await page.locator('#worldValidationDialog [data-path="/workspace/测试世界/模组.md"]').click();
     assert.equal(await page.evaluate(() => __UI_STATE__.fmRoot), '/workspace/测试世界');
     assert.equal(await page.locator('#editorText').inputValue(), '{"世界时间":"未保存"}');
     assert.equal(await page.evaluate(() => __UI_STATE__.editorDirty), true);
@@ -96,7 +96,7 @@ const character = contract.split('```json\n')[1].split('```')[0];
     assert.equal(await page.locator('#editorText').isVisible(), true);
     await page.screenshot({ path: 'tests/artifacts/validation-dirty-mobile.png', animations: 'disabled' });
     await page.setViewportSize({ width: 1440, height: 960 });
-    await page.evaluate(async () => { VFS.writeFile(__UI_STATE__.tree, '/workspace/测试世界/开场说明.md', '世界内容。'.repeat(30)); await __UI__.saveTree(); });
+    await page.evaluate(async () => { VFS.writeFile(__UI_STATE__.tree, '/workspace/测试世界/模组.md', '世界内容。'.repeat(30)); await __UI__.saveTree(); });
     const play = () => page.locator('#playWorldBtn').evaluate(b => b.click());
     const confirm = () => page.locator('#worldPlayConfirm').getByRole('button', { name: '确认并前往' });
     const cancel = () => page.locator('#worldPlayConfirm').getByRole('button', { name: '取消', exact: true }).click();

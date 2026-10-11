@@ -46,7 +46,8 @@ for (const [name, status] of [
       await page.route('https://**/*', route => route.abort());
       await page.goto(pathToFileURL(file).href);
       assert.equal(await page.locator('.history article.revealed').count(), 3, 'first round is revealed on entry');
-      assert.match(await page.locator('.history').innerText(), /SECRET_DICE/);
+      assert.doesNotMatch(await page.locator('.history').innerText(), /SECRET_DICE/);
+      assert.match(await page.locator('.history').innerText(), /主持人进行了一次暗骰/);
       assert.doesNotMatch(await page.locator('.history').innerText(), /第二回合正文/);
       await page.locator('#archive-vitals .resource').first().waitFor();
       assert.equal(await page.locator('#archive-vitals .resource').count(), 3);
@@ -75,6 +76,30 @@ for (const [name, status] of [
     } finally { await context.close(); }
   });
 }
+
+test('offline archive distinguishes private dice and actor actions without disclosing dark results',async t=>{
+  const view={name:'私密骰子',actorId:'a',slots:[{id:'a',name:'青'},{id:'b',name:'秋'}],events:[
+    {type:'player',round:1,actorId:'a',content:'自己的行动'},
+    {type:'player',round:1,actorId:'b',content:'他人的行动'},
+    {type:'dice',round:1,private:true,targetPlayer:'a',audience:['a'],content:'可见骰点：42'},
+    {type:'dice',round:1,private:true,targetPlayer:'a',audience:['a'],secret:true,content:'SECRET_PRIVATE_DICE',data:{total:91}},
+    {type:'dice',round:1,private:true,targetPlayer:'b',audience:['b'],content:'OTHER_PRIVATE_DICE'},
+  ]};
+  const html=Presentation.historyHTML(view),file=path.resolve(__dirname,'../artifacts/archive-private-'+randomUUID()+'.html');
+  fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,html);t.after(()=>fs.rmSync(file,{force:true}));
+  assert.doesNotMatch(html,/SECRET_PRIVATE_DICE|OTHER_PRIVATE_DICE/);
+  const page=await browser.newPage({viewport:{width:1440,height:960}});
+  try{
+    await page.goto(pathToFileURL(file).href);
+    assert.equal(await page.locator('.history article').count(),4);
+    assert.match(await page.locator('.private-dice').first().innerText(),/私密检定.*可见骰点：42/s);
+    assert.match(await page.locator('.secret-dice').innerText(),/私密暗骰.*主持人进行了一次暗骰/s);
+    assert.match(await page.locator('.player-other header').innerText(),/秋的行动/);
+    assert.equal(await page.locator('.private-dice').first().evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(243, 236, 255)');
+    assert.equal(await page.locator('.player-self').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(209, 231, 221)');
+    assert.equal(await page.locator('.player-other').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(207, 244, 252)');
+  }finally{await page.close();}
+});
 
 test('replay continuation hint appears at the bottom, advances once and hides at the end', async t => {
   const tree=VFS.createTree();

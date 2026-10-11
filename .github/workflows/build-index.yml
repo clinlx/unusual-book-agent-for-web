@@ -31,7 +31,7 @@ jobs:
         run: npm run build
 
       - name: Verify artifact
-        run: test -s dist/index.html && test -s dist/designer.html
+        run: test -s dist/index.html && test -s dist/designer.html && test -s dist/client.html
 
       - name: Upload pages and page resources
         uses: actions/upload-artifact@v4
@@ -40,6 +40,7 @@ jobs:
           path: |
             dist/index.html
             dist/designer.html
+            dist/client.html
             dist/robots.txt
           if-no-files-found: error
           retention-days: 30

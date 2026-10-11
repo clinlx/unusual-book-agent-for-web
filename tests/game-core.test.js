@@ -35,9 +35,11 @@ test('tree respects depth, includes directories, and does not read file contents
 });
 const cache={Story_Phase:'游戏循环',Game_World_Time:'清晨',Active_Scene:'门口'};
 function call(name,args,id=name){return {id,type:'function',function:{name,arguments:JSON.stringify(args)}};}
-test('只接受单个 Player，不创建默认角色',()=>{
+test('接受多个角色槽位且等待选择，不创建默认角色',()=>{
   const s=save(); assert.equal(s.playerPath,'/workspace/Player-p1');
-  VFS.mkdir(s.tree,'/workspace/Player-p2'); assert.throws(()=>Core.createSave('双人',s.tree),/一个|单个|多/);
+  VFS.mkdir(s.tree,'/workspace/Player-p2'); const multi=Core.createSave('双人',s.tree);
+  assert.deepEqual(multi.slots.map(x=>x.id),['p1','p2']);assert.equal(multi.slotsConfigured,false);
+  VFS.mkdir(s.tree,'/workspace/AIPC-p1');assert.throws(()=>Core.createSave('重复',s.tree),/ID.*冲突/);
   const t=VFS.createTree();VFS.mkdirp(t,['workspace']);assert.throws(()=>Core.createSave('空',t),/Player|玩家/);
 });
 test('主角面板过滤隐藏字段、隐藏 buff 和物品脚本',()=>{

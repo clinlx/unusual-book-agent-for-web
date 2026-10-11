@@ -14,7 +14,7 @@ const WorldHandoff = (() => {
       if (node?.type !== 'dir') return;
       // Include unfinished worlds so a missing player can be diagnosed in its own directory.
       if (Object.entries(node.children).some(([name, child]) =>
-        (child.type === 'dir' && (/^Player-/.test(name) || name === '世界状态和世界规则')) ||
+        (child.type === 'dir' && (/^(Player|AIPC|DISABLE)-/.test(name) || name === '世界状态和世界规则')) ||
         (child.type === 'file' && name === '模组.md'))) { found.push(path); return; }
       for (const [name, child] of Object.entries(node.children)) if (child.type === 'dir') walk(child, path + '/' + name);
     }

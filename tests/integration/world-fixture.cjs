@@ -9,7 +9,9 @@ function fixture() {
   for (const file of ['模组.md', '开场白.md', '样例开场.md', '剧情线与进度/主线剧情.md', '世界状态和世界规则/世界规则.md', '世界状态和世界规则/掷骰规则.md', '世界状态和世界规则/检定与触发器索引.md', '存档-世界/世界日志.txt']) write(file, '测试世界。'.repeat(30));
   write('世界状态和世界规则/世界共识.json', { 世界时间: '第一天' });
   const doc = fs.readFileSync(path.join(__dirname, '../../skills/game-world-builder/reference/WorldDataContract.md'), 'utf8');
-  write('Player-pc/基础信息.json', JSON.parse(doc.split('```json\n')[1].split('```')[0]));
+  const template=doc.match(/```json\r?\n([\s\S]*?)```/);
+  if(!template)throw new Error('WorldDataContract 缺少 JSON 角色模板');
+  write('Player-pc/基础信息.json', JSON.parse(template[1]));
   for (const file of ['关系记忆.json', '格式化记忆.json', '关系图.json', '待办与目标.json']) write('Player-pc/' + file, {});
   write('Player-pc/背包.json', []); write('Player-pc/日志.txt', '');
   return { tree, root, write };

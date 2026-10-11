@@ -6,6 +6,7 @@ const GameImport=(()=>{
   const core=typeof module!=='undefined'&&module.exports?require('./game-core.js'):GameCore;
   const history=typeof module!=='undefined'&&module.exports?require('./game-history.js'):GameHistory;
   const inputs=typeof module!=='undefined'&&module.exports?require('./game-input-history.js'):GameInputs;
+  const slots=typeof module!=='undefined'&&module.exports?require('./game-slots.js'):GameSlots;
   const MANIFEST='.trpg-save.json';
   function toBase64(bytes){
     let out='';
@@ -33,16 +34,26 @@ const GameImport=(()=>{
     const s=core.createSave(file.name.replace(/\.(zip|png)$/i,''),tree);
     if(manifest){
       let m;try{m=JSON.parse(manifest.content);}catch(_){throw Error('完整存档的进度数据已损坏');}
-      if(m.format!=='trpg-single-player'||m.version!==1||!m.state)throw Error('无法识别完整存档版本');
+      if(m.format!=='trpg-single-player'||![1,2].includes(m.version)||!m.state)throw Error('无法识别完整存档版本');
       const st=m.state;
       if(!Array.isArray(st.messages)||!Array.isArray(st.events)||!Number.isSafeInteger(st.round)||st.round<0)throw Error('存档历史格式不正确');
       const unsafeKey=(k,v)=>{if(['__proto__','prototype','constructor'].includes(k))throw Error('存档包含不安全字段');return v;};
       JSON.parse(JSON.stringify(st),unsafeKey);
-      for(const key of ['name','round','cache','messages','events','summaries','status','snapshots','activeRound','contextFromRound','lastChanges','draft','draftRound','draftVersion','inputHistory','error','requestHistory','historyArchiveVersion','importNotice','pendingManualDice'])
+      for(const key of ['playerPath','slotsConfigured','name','round','cache','messages','events','summaries','status','snapshots','activeRound','contextFromRound','lastChanges','draft','privateDraft','draftRound','draftVersion','inputHistory','error','requestHistory','historyArchiveVersion','importNotice','pendingManualDice'])
         if(st[key]!==undefined)s[key]=structuredClone(st[key]);
       if(s.activeRound&&!s.activeRound.complete)s.status='interrupted';
       if(st.draftRound===undefined)s.draftRound=inputs.targetRound(s);
-      s.playerPath=core.validateTree(s.tree);
+      s.playerPath=core.validateTree(s.tree,s.playerPath);
+      s.slots=slots.scan(s.tree).filter(slot=>slot.kind!=='kpc');
+      s.actorId=s.slots.find(slot=>slot.path===s.playerPath).id;
+      s.slotsConfigured=s.slots.length===1||st.slotsConfigured===true;
+      for(const snapshot of s.snapshots||[]){
+        delete snapshot.multiplayer;delete snapshot.room;delete snapshot.memberId;
+        if(Array.isArray(snapshot.slots))snapshot.slots=snapshot.slots.map(({id,path,kind})=>({id,path,kind}));
+        if(snapshot.tree){snapshot.playerPath=core.validateTree(snapshot.tree,snapshot.playerPath||s.playerPath);snapshot.slots=slots.scan(snapshot.tree).filter(slot=>slot.kind!=='kpc');snapshot.actorId=snapshot.slots.find(slot=>slot.path===snapshot.playerPath).id;}
+        else if(typeof snapshot.playerPath==='string'){const role=/^\/workspace\/(?:Player|AIPC|DISABLE)-([^/]+)$/.exec(snapshot.playerPath);if(role)snapshot.actorId=role[1];else delete snapshot.actorId;}
+        else delete snapshot.actorId;
+      }
     }else history.restoreReference(s);
     if(coverBytes)s.cover={mime:'image/png',data:toBase64(coverBytes)};
     inputs.ensure(s);history.backfill(s);core.pruneRollback(s);return s;
@@ -54,7 +65,8 @@ const GameImport=(()=>{
     walk(vfs.resolve(s.tree,['workspace']),'');
     if(entries.some(e=>e.name===MANIFEST))throw Error('工作目录使用了保留文件名 '+MANIFEST);
     const {tree,id,createdAt,updatedAt,...state}=s;
-    entries.push({name:MANIFEST,text:JSON.stringify({format:'trpg-single-player',version:1,state})});
+    delete state.multiplayer;delete state.publishedView;state.slots=state.slots?.map(({memberId,...slot})=>slot);
+    entries.push({name:MANIFEST,text:JSON.stringify({format:'trpg-single-player',version:2,state})});
     return zip.makeZip(entries);
   }return {importSave,exportSave};
 })();

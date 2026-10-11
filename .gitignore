@@ -17,7 +17,15 @@ tests/*
 docs/*
 !docs/integration.md
 !docs/narrative-prompt-audit.md
+!docs/multiplayer-design.md
+!docs/multiplayer-plan.md
 assets/trpg_rule_books/
 参考/
 assets/modules.json
 __pycache__
+
+!docs/bridge-integration.md
+
+!docs/multiplayer-audit.md
+!docs/bridge-public-deployment.md
+docs/

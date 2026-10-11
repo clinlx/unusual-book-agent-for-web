@@ -10,7 +10,7 @@ function fixture(t) {
   for(const d of ['存档-索引-NPC','存档-索引-物品','存档-旧']) fs.mkdirSync(path.join(root,d),{recursive:true});
   for(const p of ['模组.md','开场白.md','样例开场.md','剧情线与进度/主线剧情.md','世界状态和世界规则/世界规则.md','世界状态和世界规则/掷骰规则.md','世界状态和世界规则/检定与触发器索引.md','存档-世界/世界日志.txt']) write(p,'测试世界。'.repeat(30));
   json('世界状态和世界规则/世界共识.json',{世界时间:'第一天'});
-  const doc=fs.readFileSync(path.join(__dirname,'../reference/WorldDataContract.md'),'utf8');
+  const doc=fs.readFileSync(path.join(__dirname,'../reference/WorldDataContract.md'),'utf8').replace(/\r\n/g,'\n');
   const info=JSON.parse(doc.split('```json\n')[1].split('```')[0]);
   json('Player-pc/基础信息.json',info);
   for(const f of ['关系记忆.json','格式化记忆.json','关系图.json','待办与目标.json']) json('Player-pc/'+f,{});
@@ -19,7 +19,8 @@ function fixture(t) {
   return {temp,root,write,json,info,item,errors:()=>validateStructure(root)};
 }
 test('documented character creation template passes without derived stats',t=>a.deepEqual(fixture(t).errors(),[]));
-test('multiple players and empty player IDs fail',t=>{const f=fixture(t);fs.cpSync(path.join(f.root,'Player-pc'),path.join(f.root,'Player-p2'),{recursive:true});a.match(f.errors().join('\n'),/玩家数量/);fs.rmSync(path.join(f.root,'Player-p2'),{recursive:true});fs.renameSync(path.join(f.root,'Player-pc'),path.join(f.root,'Player-'));a.match(f.errors().join('\n'),/玩家ID/);});
+test('multiple player slots and AI slots pass, duplicate and empty IDs fail',t=>{const f=fixture(t);for(const name of ['Player-p2','AIPC-p3','DISABLE-p4','KPC-guide'])fs.cpSync(path.join(f.root,'Player-pc'),path.join(f.root,name),{recursive:true});a.deepEqual(f.errors(),[]);fs.cpSync(path.join(f.root,'Player-pc'),path.join(f.root,'AIPC-pc'),{recursive:true});a.match(f.errors().join('\n'),/ID冲突/);fs.renameSync(path.join(f.root,'Player-p2'),path.join(f.root,'Player-'));a.match(f.errors().join('\n'),/玩家ID/);});
+test('disabled slots retain structural validation and item ownership',t=>{const f=fixture(t);fs.renameSync(path.join(f.root,'Player-pc'),path.join(f.root,'DISABLE-pc'));f.item('DISABLE-pc');f.json('DISABLE-pc/背包.json',['key']);a.deepEqual(f.errors(),[]);f.write('DISABLE-pc/基础信息.json','{');a.match(f.errors().join('\n'),/JSON/);});
 for(const value of ['not json','','[NaN]']) test('invalid backpack '+JSON.stringify(value),t=>{const f=fixture(t);f.write('Player-pc/背包.json',value);a.match(f.errors().join('\n'),/JSON.*背包.json/);});
 for(const name of ['剧情线与进度/custom.json','Player-pc/关系记忆.json','存档-世界/场景/场景信息.json','存档-世界/场景/场景台本.json']) test('all JSON parsed: '+name,t=>{const f=fixture(t);f.write(name,'not json');a.ok(f.errors().some(e=>e.includes('JSON')&&e.includes(name)));});
 test('UTF-8 BOM is accepted',t=>{const f=fixture(t);f.write('Player-pc/基础信息.json','\uFEFF'+JSON.stringify(f.info));f.write('Player-pc/背包.json','\uFEFF[]');a.deepEqual(f.errors(),[]);});

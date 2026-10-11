@@ -3,9 +3,10 @@ const GameTools=(()=>{
   const str={type:'string'},num={type:'number'},bool={type:'boolean'},obj={type:'object'},integer={type:'integer'};
   const definitions={
     trigger_next_round:{properties:{phase_plan:{anyOf:[{type:'string'},{type:'object',properties:{Countdowns:{type:'string',minLength:1},Pending_Triggers:{type:'array',items:obj},Forced_Checks:{type:'string',minLength:1}},required:['Countdowns','Pending_Triggers','Forced_Checks']}]}},required:['phase_plan']},
-    append_story:{properties:{content:str,one_line_summary_of_content:str},required:['content','one_line_summary_of_content']},
+    private_append_story:{properties:{entries:{type:'array',minItems:1,items:{type:'object',properties:{id:str,story:str},required:['id','story']}}},required:['entries']},
+    append_story:{properties:{content:str,skip_output:bool,one_line_summary_of_content:str},required:['one_line_summary_of_content']},
     end_the_round:{properties:{NEXT_TURN_CACHE:{anyOf:[str,{type:'object',properties:{Story_Phase:{type:'string',enum:['游戏前准备','游戏循环','游戏结束']},game_over:bool},required:['Story_Phase']}]}},required:['NEXT_TURN_CACHE']},
-    roll_dice:{properties:{description:str,roller:str,related_attr:str,is_secret:bool,dice_dict:{type:'object',additionalProperties:str},calculate_only:bool,
+    roll_dice:{properties:{description:str,roller:{...str,description:'实际角色的唯一 ID、目录或唯一姓名；支持 Player/AIPC/KPC/NPC，主持人用 <|GM|>。'},related_attr:str,is_secret:bool,is_private:{...bool,description:'仅向指定 Player 展示；暗骰仍只展示占位。'},target_player:{...str,description:'is_private:true 时指定有效 Player ID；省略时取 roller，非 Player 骰必须明确指定。'},dice_dict:{type:'object',additionalProperties:str},calculate_only:bool,
       target_value:{anyOf:[num,{type:'null'}]},compare_mode:{anyOf:[{type:'string',enum:['gt','lt','ge','le','ne','eq']},{type:'null'}]},
       critical_success_range:{anyOf:[{type:'array',items:num,minItems:2,maxItems:2},{type:'null'}]},critical_failure_range:{anyOf:[{type:'array',items:num,minItems:2,maxItems:2},{type:'null'}]},
       dice_combine_mode:{type:'string',enum:['sum','max','min','independent'],description:'independent 仅用于同骰式、同角色属性、同目标/修正/临界区间的同类检定。不同用途分别调用；SAN 检定与损失计算不能放在同一个 dice_dict。'},left_modifiers:{type:'object',additionalProperties:num},right_modifiers:{type:'object',additionalProperties:num}},required:['description','roller','related_attr','is_secret','dice_dict','calculate_only','target_value','compare_mode','critical_success_range','critical_failure_range','dice_combine_mode','left_modifiers','right_modifiers']},

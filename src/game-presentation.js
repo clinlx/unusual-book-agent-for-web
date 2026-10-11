@@ -41,7 +41,7 @@ const GamePresentation=(()=>{
   function realTime(at){return at&&Number.isFinite(new Date(at).getTime())?new Date(at).toLocaleString():'';}
   function metadata(e){const parts=[];if(e.round!=null)parts.push('第 '+e.round+' 回合');if(e.worldTime)parts.push(e.worldTime);if(e.at&&Number.isFinite(new Date(e.at).getTime()))parts.push(new Date(e.at).toLocaleString());return parts.join(' · ');}
   function names(save){
-    const map=new Map();for(const n of Object.values(D.node(save,'/workspace')?.children||{})){if(n.type!=='dir'||! /^(Player|KPC)-/.test(n.name))continue;try{const name=D.get(D.read(save,n.name+'/基础信息.json'),'姓名');if(typeof name==='string'){map.set(n.name,name);map.set(n.name.replace(/^(Player|KPC)-/,''),name);}}catch(_){} }
+    const map=new Map();for(const n of Object.values(D.node(save,'/workspace')?.children||{})){if(n.type!=='dir'||! /^(Player|AIPC|KPC)-/.test(n.name))continue;try{const name=D.get(D.read(save,n.name+'/基础信息.json'),'姓名');if(typeof name==='string'){map.set(n.name,name);map.set(n.name.replace(/^(Player|AIPC|KPC)-/,''),name);}}catch(_){} }
     return id=>map.get(String(id))||id;
   }
   function eventContent(save,e){let text=String(e.content||'');if(!save?.tree)return text;const resolve=names(save),roller=e.data?.roller||e.roller; if(roller&&resolve(roller)!==roller){if(text.startsWith(roller))text=resolve(roller)+text.slice(String(roller).length);}return text.replace(/\b(?:Player|KPC)-[^\s:：·，。;；()[\]<>]+/g,id=>resolve(id));}
@@ -60,12 +60,29 @@ const GamePresentation=(()=>{
       }).join('');
       return bars?'<div class="resource-strips">'+bars+'</div>':'';
     };
-    const events=(save.events||[]).filter(e=>['player','story','round_end','dice','note'].includes(e.type));
+    const isPrivate=e=>e.private===true||Array.isArray(e.audience);
+    const isDark=e=>e.type==='dice'&&!!(e.secret||e.diceArgs?.is_secret||e.relatedAttr==='心理学'||e.diceArgs?.related_attr==='心理学');
+    const events=(save.events||[]).filter(e=>{
+      if(!['player','story','round_end','dice','note'].includes(e.type))return false;
+      if(e.audience!==undefined&&e.audience!=='public'&&!(Array.isArray(e.audience)&&save.actorId&&e.audience.includes(save.actorId)))return false;
+      if(isPrivate(e)&&e.targetPlayer&&e.targetPlayer!==save.actorId)return false;
+      if(isPrivate(e)&&save.tree&&!Array.isArray(e.audience)&&!e.targetPlayer)return false;
+      if(e.type==='dice'){
+        const roller=e.rollerId||e.diceArgs?.roller||e.data?.roller||e.roller;
+        if(e.rollerKind==='gm'||roller==='<|GM|>')return false;
+        if(!isPrivate(e)&&(e.playerRelated===false||['ai','kpc','npc'].includes(e.rollerKind)))return false;
+      }else if(e.secret&&!isPrivate(e))return false;
+      return !(e.type==='player'&&e.actorId!==save.actorId&&!String(e.content||'').trim()&&e.privateContent&&!e.skip);
+    });
+    const actorName=e=>e.name||(save.slots||[]).find(s=>s.id===e.actorId)?.name||names(save)(e.actorId)||'玩家';
     const eventHTML=e=>{
       if(e.type==='round_end')return `<article class="round_end" data-round="${esc(e.round)}"><header>回合结束 · ${esc(metadata(e))}</header></article>`;
-      const title=e.type==='player'?'你的行动':e.type==='dice'?(e.secret?'暗骰':'检定'):e.type==='note'?'注释':'故事';
-      const cls=e.type+(e.type==='dice'&&e.secret?' secret-dice':'');
-      const content=e.type==='story'?renderStory(eventContent(save,e)):'<p class="plain">'+esc(eventContent(save,e))+'</p>';
+      const own=!e.actorId||e.actorId===save.actorId,privateEvent=isPrivate(e),dark=isDark(e);
+      const title=e.type==='player'?(own?'你的行动':actorName(e)+'的行动'):e.type==='dice'?((privateEvent?'私密':'')+(dark?'暗骰':'检定')):e.type==='note'?'注释':privateEvent?'私密故事':'故事';
+      const cls=e.type+(dark?' secret-dice':'')+(privateEvent?(e.type==='dice'?' private-dice':' private-story'):'')+(e.type==='player'?(own?' player-self':' player-other'):'');
+      const text=dark?'[主持人进行了一次暗骰]':eventContent(save,e);
+      let content=e.type==='story'?renderStory(text):'<p class="plain">'+esc(text)+'</p>';
+      if(e.type==='player'&&save.actorId&&e.actorId===save.actorId&&e.privateContent)content+='<section class="private-story"><small>私密行动</small><p class="plain">'+esc(e.privateContent)+'</p></section>';
       return `<article class="${cls}" data-round="${esc(e.round)}"><header>${esc(title)} · ${esc(metadata(e))}</header>${content}</article>`;
     };
     const nodes=events.map((e,i)=>({index:i,round:Number(e.round)||0,type:e.type,secret:!!e.secret,html:eventHTML(e)}));
@@ -79,12 +96,20 @@ const GamePresentation=(()=>{
       try{
         const state=JSON.parse(String(file.content||'').replace(/^\uFEFF/,''));
         if(state&&typeof state==='object'){
-          const info=D.visible(state.info||{});
-          roundStates[Number(m[1])]={info,items:D.visible(state.items||[],true),vitals:resourceHTML(info)};
+          const slots=save.slots||(Object.values(D.node(save,'/workspace')?.children||{}).filter(n=>n.type==='dir'&&/^Player-/.test(n.name)));
+          const own=state.actors?.[save.actorId]||(state.actorId===save.actorId&&save.actorId||!state.actorId&&slots.length===1?state:null);
+          if(!own)continue;
+          const info=D.visible(own.info||{});
+          roundStates[Number(m[1])]={info,items:D.visible(own.items||[],true),vitals:resourceHTML(info)};
         }
       }catch(_){}
     }
 
+    for(const event of events){
+      if(event.type!=='round_end'||!event.roundState||!Number.isSafeInteger(event.round))continue;
+      const info=D.visible(event.roundState.info||{});
+      roundStates[event.round]={info,items:D.visible(event.roundState.items||[],true),vitals:resourceHTML(info)};
+    }
     const finalState={info:D.visible(projection.info||{}),items:D.visible(projection.items||[],true)};
     finalState.vitals=resourceHTML(finalState.info);
     const stateHTML=(current,previous={info:{},items:[]})=>({
@@ -136,7 +161,7 @@ surface.addEventListener('pointerup',e=>{if(!press||press.id!==e.pointerId)retur
 render(false);
 })();`;
 
-    return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'"><title>'+esc(save.name)+' · 故事存档</title><style>'+styles+'.change-tag{display:inline-flex;align-items:center;padding:1px 6px;margin-left:6px;border-radius:999px;border:1px solid currentColor;font:10px/1.5 var(--sans,system-ui);font-weight:500;vertical-align:middle;white-space:nowrap}.change-tag.added,.change-tag.increased{color:#427550;background:#e5f0e4}.change-tag.deleted,.change-tag.decreased{color:#a24a43;background:#f7e3df}.change-tag.modified{color:#8a6523;background:#f4e8cc}</style></head><body>'+layout+'<script>'+script.replaceAll('</script','<\\/script')+'</script></body></html>';
+    return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'"><title>'+esc(save.name)+' · 故事存档</title><style>'+styles+'.player-self{background:#d1e7dd;border-left-color:#0f5132}.player-other{background:#cff4fc;border-left-color:#055160}.private-dice,.private-story{background:#f3ecff;border-left:3px solid #8c5ed7;color:#222;padding:10px 14px;border-radius:6px}.private-dice header,.private-story header,.private-story>small{color:#70519c}.change-tag{display:inline-flex;align-items:center;padding:1px 6px;margin-left:6px;border-radius:999px;border:1px solid currentColor;font:10px/1.5 var(--sans,system-ui);font-weight:500;vertical-align:middle;white-space:nowrap}.change-tag.added,.change-tag.increased{color:#427550;background:#e5f0e4}.change-tag.deleted,.change-tag.decreased{color:#a24a43;background:#f7e3df}.change-tag.modified{color:#8a6523;background:#f4e8cc}</style></head><body>'+layout+'<script>'+script.replaceAll('</script','<\\/script')+'</script></body></html>';
   }
   return {vitals,secondary,diff,fields,createReader,metadata,realTime,historyHTML,eventContent,hasPlayHistory,exportName};
 })();

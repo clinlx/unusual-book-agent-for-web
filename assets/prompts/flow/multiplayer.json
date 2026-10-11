@@ -1,0 +1,6 @@
+{
+  "unconscious_commit": "[该角色 Enabled=false（无意识），无法行动，只能被动等待主持人安排剧情恢复。故事随时间流逝向前推进。]",
+  "all_unconscious": "[所有存活真人角色均失去意识：{actorIds}。允许推进较长的世界时间，描写这些角色苏醒后的剧情，并将相应 Enabled 恢复为 true。只恢复存活的昏迷角色，不修改 Alive，不恢复死亡者，不作用于 DISABLE。仍清醒的 AIPC/KPC 与其他人物按其人设处理期间事件。世界状态通过正常工具落盘。]",
+  "private_story_follow_up": "私密正文已发布，继续调用 append_story 发布本轮公开内容；无公开内容时设置 skip_output=true，content 为空，仍填写摘要，然后 end_the_round。不重复已成功的私密正文。",
+  "ai_roles": "AIPC/KPC 不需要真人提交，依当前人设、认知与身体状态行动。死亡角色不能行动，昏迷角色不能主动行动。DISABLE 不参与本轮剧情、行动或存活统计。"
+}

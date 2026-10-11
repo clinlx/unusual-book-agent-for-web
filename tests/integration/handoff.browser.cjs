@@ -77,7 +77,7 @@ const fs=require('node:fs'),http=require('node:http');
    const bad=await page.evaluate(()=>WorldHandoff.create().put(ZIP.makeZip([{name:'模组.md',text:'缺少玩家目录'}]),'错误世界'));
    await page.goto(new URL('index.html#handoff='+bad,designer).href);
    await page.getByRole('button',{name:'重试',exact:true}).waitFor();
-   assert.match(await page.locator('.world-transfer-overlay').innerText(),/Player-/);
+   assert.match(await page.locator('.world-transfer-overlay').innerText(),/Player.*玩家槽位/);
    if(mode==='http')await page.screenshot({path:'tests/artifacts/world-play-import-error.png',animations:'disabled'});
    assert.ok(await page.evaluate(async id=>(await WorldHandoff.create().get(id)).blob.size,bad));
    assert.equal(await page.evaluate(()=>GameApp.getState().saves.length),2);

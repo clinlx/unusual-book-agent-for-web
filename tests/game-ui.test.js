@@ -59,3 +59,11 @@ test('estimated request progress follows split curve, story bonus and fixed widt
  s.active.activeRound.published=1;assert.equal(api.requestProgress(s),'100%');s.active.activeRound.requestCount=20;assert.equal(api.requestProgress(s),' 90%');
  for(const m of [1,10,20]){s.settings.maxToolLoops=m;assert.equal(api.requestProgress(s),' 90%');}
 });
+test('private dice and stories carry a distinct visual label while secret dice never reveal details',()=>{
+ const api=ui(),d={type:'dice',id:'d',private:true,roller:'乙 (Player-b)',relatedAttr:'侦查',data:{rows:[{label:'侦查',formula:'1d100',rolls:[22],total:22}],raw:22,total:22}};
+ assert.match(api.eventHTML(d,'play'),/private-dice/);assert.match(api.eventHTML(d,'play'),/私密/);
+ assert.match(api.eventHTML({...d,pending:true,diceArgs:{dice_dict:{侦查:'1d100'}}},'play'),/private-dice/);
+ const secret=api.eventHTML({...d,secret:true,description:'绝不暴露',content:'秘密骰值22'},'play');
+ assert.match(secret,/private-dice/);assert.doesNotMatch(secret,/乙|侦查|22|秘密骰值|绝不暴露|dice-detail/);
+ assert.match(api.eventHTML({type:'story',private:true,content:'私密剧情'},'play'),/private-story/);
+});

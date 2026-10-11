@@ -1,11 +1,173 @@
 'use strict';
 const GameApp=(()=>{
   const defaults={baseUrl:'https://api.deepseek.com/v1',apiKey:'',model:'deepseek-flash',stream:true,temperature:0.7,topP:'',frequencyPenalty:'',presencePenalty:'',seed:'',customRequestBody:'',maxContextK:240,maxOutputTokens:16384,
-    reasoningEffort:'high',maxToolLoops:60,httpTimeoutSeconds:180,maxRetries:2,worldListSource:'',manualDice:false,reverseSendNewline:false,promptOverrides:{}};
+    reasoningEffort:'high',maxToolLoops:60,httpTimeoutSeconds:180,maxRetries:2,worldListSource:'',bridgeUrl:'wss://mc.birdry.cn:8443/',manualDice:false,autoAdvanceUnconscious:true,reverseSendNewline:false,promptOverrides:{}};
   const S={saves:[],active:null,settings:{...defaults},mode:'play',running:false,importing:null,stream:{content:'',reasoning:'',tools:[],story:'',storyPublished:0},error:null,storageWarning:null,usage:null};
   const db=GameStore.create();const listeners=new Set();let controller=null,initialized=false,storage=null,lease=null;
+  let hostSession=null,syncHost=null,roomTransport=null,transportStop=null,publishedSave=null,localInputOwner='',bridgeSession=null,bridgeGeneration=0,invitationQueue=Promise.resolve();
+  const invitationTask=fn=>{const job=invitationQueue.then(fn);invitationQueue=job.catch(()=>{});return job;};
+  const inputScope=s=>({gameId:s.id,memberId:'host',actorId:s.actorId});
+  const localInputs=()=>GameLocalInputs.create(storage);
+  function saveLocalInputs(){const s=S.active;if(!s||!storage||localInputOwner!==JSON.stringify(inputScope(s)))return;try{
+    const scope=inputScope(s),epoch=s.multiplayer?.epoch||0,old=localInputs().load(scope);
+    if(epoch>old.epoch){Object.assign(s,localInputs().rollback(scope,{round:s.round,epoch}));return;}
+    const records=(s.inputHistory||[]).map(r=>({...r,epoch:r.epoch??epoch,privateContent:r.privateContent||'',status:r.status||(r.rolledBack?'retracted':'accepted')}));
+    localInputs().save(scope,{epoch,inputHistory:records,draft:s.draft||'',privateDraft:s.privateDraft||'',draftRound:s.draftRound||s.round+1,draftVersion:s.draftVersion||0});
+  }catch(error){S.storageWarning=error.message;}}
+  function loadLocalInputs(s){localInputOwner=JSON.stringify(inputScope(s));if(!storage)return;try{
+    const scope=inputScope(s),saved=localInputs().load(scope);
+    if(saved.inputHistory.length||saved.draft||saved.privateDraft)Object.assign(s,saved);
+    else saveLocalInputs();
+  }catch(error){S.storageWarning=error.message;}}
+  async function setupHost(s){
+    stopBridge();hostSession?.dispose();GameSlots.ensure(s);s.actorId||=s.slots.find(x=>x.path===s.playerPath)?.id;
+    loadLocalInputs(s);publishedSave=structuredClone(s);
+    hostSession=MultiplayerHost.create({getSave:()=>s,getSettings:()=>S.settings,persist:async()=>{if(localInputOwner!==JSON.stringify(inputScope(s))){s.inputHistory=[];s.draft='';s.privateDraft='';s.draftVersion=0;loadLocalInputs(s);}await persist();saveLocalInputs();},
+      execute:async(actions,options)=>{
+        publishedSave=structuredClone(s);
+        const own=actions.find(x=>x.memberId==='host');
+        await executeRound(options.resume?'resume':options.starting?'start':'action',own?.content||'',{...options,actions,roundId:options.roundId});
+        if(s.activeRound?.complete)publishedSave=structuredClone(s);
+      },
+      rollback:async({targetRound})=>{idle();while(s.round>targetRound||s.activeRound&&!s.activeRound.complete){GameCore.rollback(s);}GameHistory.backfill(s,true);readPlayer.clear(s);publishedSave=structuredClone(s);S.error=null;}
+    });
+    syncHost=MultiplayerSync.createHost({getSave:()=>{
+      const stable=s.activeRound&&!s.activeRound.complete?publishedSave:s;
+      return {...stable,events:s.events,status:s.status,slots:s.slots,round:s.round};
+    },getRoom:()=>({...hostSession.state(),autoAdvanceUnconscious:S.settings.autoAdvanceUnconscious!==false})});
+    hostSession.subscribe(()=>{emit();publishClients();});
+    if(s.slotsConfigured!==false)await hostSession.initialize(s.actorId);
+    S.room=hostSession.state();
+  }
+  async function publishClients(){
+    if(!roomTransport||!hostSession?.state().online)return;
+    for(const [id,m]of Object.entries(hostSession.state().members))if(id!=='host'&&m.actorId&&m.connected)scheduleClientSync(id);
+  }
+  const clientCursors=new Map();
+  const profileRequests=new Map();
+  const clientSyncJobs=new Map();
+  function clearClientSyncJobs(){for(const job of clientSyncJobs.values())clearTimeout(job.timer);clientSyncJobs.clear();}
+  function scheduleClientSync(id,force=false){
+    if(!roomTransport||!hostSession?.state().online)return;
+    let job=clientSyncJobs.get(id);if(!job){job={timer:null,busy:false,wanted:false,force:false,lastAt:0};clientSyncJobs.set(id,job);}
+    job.wanted=true;job.force||=force;if(job.busy||job.timer!==null)return;
+    const transport=roomTransport,domain=hostSession,sync=syncHost;
+    job.timer=setTimeout(async()=>{
+      job.timer=null;if(clientSyncJobs.get(id)!==job||transport!==roomTransport||domain!==hostSession)return;
+      const member=domain.state().members[id];if(!domain.state().online||!member?.connected)return;
+      const required=job.force;job.force=false;job.wanted=false;job.busy=true;job.lastAt=Date.now();
+      try{
+        const packet=await sync.sync(id,{...(clientCursors.get(id)||{}),onlyIfChanged:!required});
+        if(packet&&clientSyncJobs.get(id)===job&&transport===roomTransport&&domain.state().online&&domain.state().members[id]?.connected)await transport.sendToClient(id,packet);
+      }catch(_){}finally{
+        job.busy=false;if(job.wanted&&clientSyncJobs.get(id)===job)scheduleClientSync(id);
+      }
+    },Math.max(force?0:75,job.lastAt+250-Date.now()));
+  }
+  async function attachMultiplayerTransport(transport){
+    clearClientSyncJobs();transportStop?.();roomTransport=transport;
+    transportStop=transport.onHost(async(memberId,command)=>{
+      try{
+        if(!hostSession?.state().online)throw Error('房间尚未开启');
+        if(bridgeSession){const invited=S.network?.invites?.find(x=>x.memberId===memberId),bound=hostSession.state().members[memberId];if(!invited||bound?.actorId!==invited.actorId||!bound.connected||command.type==='slot.claim.request')throw Error('邀请仅允许使用指定角色');}
+        if(command.type==='sync.ack'){clientCursors.set(memberId,command.payload||{});return;}
+        if(command.type==='sync.request'){clientCursors.set(memberId,command.payload||{});scheduleClientSync(memberId,true);return;}
+        if(command.type==='profile.request'){
+          const r=hostSession.state(),m=r.members[memberId];
+          if(typeof command.requestId!=='string'||command.requestId.length>160||command.roomId!==r.roomId||command.epoch!==r.epoch||command.bindingVersion!==m?.bindingVersion)throw Error('资料请求已失效');
+          if(Date.now()-(profileRequests.get(memberId)||0)<250)throw Error('资料请求过于频繁');profileRequests.set(memberId,Date.now());
+          await transport.sendToClient(memberId,{type:'command.result',requestId:command.requestId,ok:true,profile:MultiplayerSync.profile(active(),command.payload?.actorId,{room:r,memberId})});return;
+        }
+        const receipt=await hostSession.handle(memberId,command);await transport.sendToClient(memberId,{type:'command.result',...receipt});
+      }catch(error){await transport.sendToClient(memberId,{type:'command.result',requestId:command.requestId,ok:false,error:error.code||'REQUEST_REJECTED',message:'请求未执行，请同步后重试或联系房主。'});}
+    });return transportStop;
+  }
+  async function roomCommand(type,payload={}){
+    if(!hostSession)throw Error('请先选择存档');
+    if(!S.settings.apiKey.trim()&&['action.submit','action.skip','round.start','round.resume','round.advance'].includes(type))throw Error('请先在设置中填写 API Key');
+    if(S.active.slotsConfigured===false)throw Error('请先选择角色槽位');
+    const r=hostSession.state(),m=r.members.host;
+    const result=await hostSession.handle('host',{type,payload,requestId:GameCore.uid(),roomId:r.roomId,epoch:r.epoch,roundId:r.roundId,bindingVersion:m.bindingVersion});
+    await hostSession.waitForIdle();emit();return result;
+  }
+  async function submitAction(content,privateContent=''){
+    const s=active();if(!String(content).trim()&&!String(privateContent).trim())return;
+    if(s.status==='new')return start();
+    const r=hostSession.state(),round=s.round+1;
+    GameInputs.ensure(s);const entry={round,roundId:r.roundId,text:String(content),privateContent:String(privateContent),epoch:r.epoch,status:'pending'};s.inputHistory=s.inputHistory.filter(x=>x.roundId!==r.roundId).concat(entry).slice(-10);saveLocalInputs();
+    const result=await roomCommand('action.submit',{content:String(content),privateContent:String(privateContent)});
+    const accepted=s.inputHistory.find(x=>x.roundId===r.roundId);if(accepted)accepted.status='accepted';
+    s.draft='';s.privateDraft='';s.draftRound=s.round+1;saveLocalInputs();await persist();emit();return result;
+  }
+  async function configureSlots(actorId,modes={}){idle();const s=active();peerCheck(s);if(hostSession?.state().status!=='selecting')throw Error('房主只能在首次进入存档时选择角色，之后不能切换');saveLocalInputs();
+    if(hostSession?.state().status==='selecting'){GameSlots.select(s,actorId,modes);s.inputHistory=[];s.draft='';s.privateDraft='';s.draftVersion=0;loadLocalInputs(s);await hostSession.initialize(actorId);}
+    GameInputs.advance(s);saveLocalInputs();publishedSave=structuredClone(s);await persist();emit();
+  }
+  async function openRoom(){idle();if(!S.active.slotsConfigured)throw Error('请先选择角色槽位');return hostSession.open();}
+  async function closeRoom(){const previous=hostSession.state();await hostSession.close();for(const id of Object.keys(previous.members))if(id!=='host')try{await roomTransport?.sendToClient(id,{type:'room.closed',roomId:previous.roomId});}catch(_){}stopBridge();emit();}
+  function stopBridge(){bridgeGeneration++;clearClientSyncJobs();profileRequests.clear();const previous=bridgeSession;bridgeSession=null;previous?.close();transportStop?.();transportStop=null;roomTransport=null;clientCursors.clear();S.network=null;}
+  async function openOnlineRoom(){
+    idle();peerCheck(active());if(S.network?.status==='connecting')throw Error('正在连接联机服务');
+    if(bridgeSession&&S.network?.status==='connected')return;
+    if(!String(S.settings.bridgeUrl||'').trim())throw Error('请在设置中填写联机服务地址');
+    const url=BridgeTransport.validateServerUrl(S.settings.bridgeUrl),domain=hostSession;
+    if(domain?.state().online)throw Error('请先关闭当前房间后重新开房');
+    const generation=++bridgeGeneration;S.network={status:'connecting',message:'正在创建联机房间',invites:[]};emit();
+    try{
+      const room=await openRoom();
+      const session=await BridgeTransport.createHost({url,roomId:room.roomId,title:active().name,
+        onMember:event=>invitationTask(async()=>{if(generation!==bridgeGeneration)return;const invited=S.network?.invites?.find(x=>x.memberId===event.memberId);if(!invited)return;if(event.type==='joined')await domain.joinInvitation(event.memberId);else if(domain.state().members[event.memberId])await domain.setConnected(event.memberId,false);}),
+        onState:info=>{if(generation!==bridgeGeneration)return;S.network={...S.network,...info};if(info.status==='closed'||info.status==='disconnected')for(const id of Object.keys(domain.state().members))if(id!=='host')domain.setConnected(id,false).catch(()=>{});emit();}
+      });
+      if(generation!==bridgeGeneration){session.close();throw Error('开房已取消');}
+      bridgeSession=session;await attachMultiplayerTransport(session.transport);S.network={...S.network,status:'connected',message:'联机房间已开启'};emit();
+    }catch(error){if(generation===bridgeGeneration){try{if(domain.state().online)await domain.close();}catch(_){}S.network={status:'disconnected',message:error.message,code:error.code,invites:[]};emit();}throw error;}
+  }
+  function setInvitationSlot(actorId,kind){const domain=hostSession;return invitationTask(async()=>{
+    idle();peerCheck(active());if(domain!==hostSession)throw Error('存档已经切换');if(!['player','ai','disabled'].includes(kind))throw Error('请选择玩家、AIPC 或关闭');
+    const slot=active().slots.find(x=>x.id===actorId&&x.kind!=='kpc');if(!slot)throw Error('世界需要有空白角色槽位');
+    const occupied=Object.entries(domain.state().members).find(([,m])=>m.actorId===actorId),existing=S.network?.invites?.find(x=>x.actorId===actorId);
+    if(occupied){
+      if(occupied[0]==='host')throw Error('房主角色已锁定，不能更改控制方式');
+      if(kind==='player'&&existing)return structuredClone(existing);
+      if(kind!=='ai')throw Error('已占用槽位可以由房主转为 NPC');
+      const session=bridgeSession,id=occupied[0];if(!session)throw Error('请先连接房间');
+      await domain.release(id,'ai',{forget:true});
+      S.network.invites=S.network.invites.filter(x=>x.memberId!==id);clientCursors.delete(id);profileRequests.delete(id);
+      const job=clientSyncJobs.get(id);if(job)clearTimeout(job.timer);clientSyncJobs.delete(id);
+      try{await session.revoke(id);}catch(_){session.close();S.network={...S.network,status:'closed',message:'无法确认玩家权限撤销，房间连接已关闭'};emit();throw Error('角色已转为 NPC，但无法确认玩家权限撤销，房间连接已关闭');}
+      emit();return null;
+    }
+    if(kind!=='player'){
+      if(existing){const session=bridgeSession,generation=bridgeGeneration;if(!session)throw Error('房间已关闭');
+        await domain.cancelInvitation(existing.memberId,kind);
+        try{await session.revoke(existing.memberId);if(generation!==bridgeGeneration)throw Error('房间已经关闭');}
+        catch(error){if(generation===bridgeGeneration)try{await domain.reserveInvitation(existing.memberId,actorId);}catch(_){session.close();S.network.invites=S.network.invites.filter(x=>x.memberId!==existing.memberId);}throw error;}
+        S.network.invites=S.network.invites.filter(x=>x.memberId!==existing.memberId);clientCursors.delete(existing.memberId);
+      }
+      else await roomCommand('slot.mode',{actorId,kind});emit();return null;
+    }
+    if(existing)return structuredClone(existing);
+    await openOnlineRoom();if(domain!==hostSession)throw Error('存档已经切换');
+    const session=bridgeSession,generation=bridgeGeneration,memberId='p_'+crypto.randomUUID().replaceAll('-',''),oldKind=slot.kind;
+    await domain.reserveInvitation(memberId,actorId);
+    try{
+      const invitation=await session.invite(memberId);if(generation!==bridgeGeneration)throw Error('房间已经关闭');
+      const key=BridgeTransport.encodeInvitation(invitation),url=new URL('client.html',location.href);url.search='';url.hash='join='+key;
+      const result={actorId,memberId,key,link:url.href};S.network.invites.push(result);emit();return structuredClone(result);
+    }catch(error){try{await session.revoke(memberId);}catch(_){}if(generation===bridgeGeneration)try{await domain.cancelInvitation(memberId,oldKind==='ai'?'ai':'disabled');}catch(_){}throw error;}
+  });}
+  async function createInvitation(actorId){
+    if(!actorId){const occupied=new Set(Object.values(hostSession.state().members).map(m=>m.actorId));actorId=active().slots.find(s=>s.kind!=='kpc'&&!occupied.has(s.id)&&!S.network?.invites?.some(i=>i.actorId===s.id))?.id;}
+    if(!actorId)throw Error('世界需要有空白角色槽位');return (await setInvitationSlot(actorId,'player')).link;
+  }
+  async function revokeInvitation(memberId){const invite=S.network?.invites?.find(x=>x.memberId===memberId);if(!invite)throw Error('邀请已失效');await setInvitationSlot(invite.actorId,'disabled');}
+  const multiplayerState=()=>hostSession?.state();
+  async function requestRollback(){const snap=active().snapshots.at(-1);if(!snap)throw Error('没有可回退的回合');return roomCommand('rollback.request',{targetRound:snap.round,targetRoundId:snap.inputRoundId});}
+  async function decideHostRollback(decision){idle();peerCheck(active());const snap=active().snapshots.at(-1);if(!snap)throw Error('没有可回退的回合');const result=await roomCommand('rollback.host',{targetRound:snap.round,targetRoundId:snap.inputRoundId,decision});if(decision==='approve')S.lastRequest=null;emit();return result;}
+  function exportView(){const s=active();return MultiplayerSync.project(s,s.actorId,{memberId:'host',room:hostSession?.state()});}
   try{storage=globalThis.localStorage;lease=Lease.create({storage,tabId:GameCore.uid()});}catch(_){}
-  function emit(){for(const fn of listeners){try{fn(S);}catch(e){console.error(e);}}}
+  function emit(){if(S.active&&hostSession){S.room=hostSession.state();}for(const fn of listeners){try{fn(S);}catch(e){console.error(e);}}}
   const subscribe=fn=>{listeners.add(fn);return()=>listeners.delete(fn);};
   function idle(){if(S.importing)throw Error('请等待存档导入完成');if(S.running)throw Error('请先停止当前回合');}
   function active(){if(!S.active)throw Error('请先选择存档');return S.active;}
@@ -47,7 +209,7 @@ const GameApp=(()=>{
   async function runImport(source){
     idle();S.active=null;S.error=null;S.importing={phase:'prepare',received:0,total:null};emit();
     try{const file=await source();S.importing={...S.importing,phase:'extract'};emit();
-      const s=await GameImport.importSave(file);GameCore.repairManualDiceEvents(s);await settleCompletedBatch(s);await db.putSave(s);S.saves=await db.list();S.active=s;restoreLastRequest(s);S.mode='play';return s;
+      const s=await GameImport.importSave(file);GameCore.repairManualDiceEvents(s);await settleCompletedBatch(s);await db.putSave(s);S.saves=await db.list();S.active=s;restoreLastRequest(s);S.mode='play';await setupHost(s);return s;
     }catch(e){S.error=e.message||'导入失败';throw e;}finally{S.importing=null;emit();}
   }
   function restoreLastRequest(s){const last=s.requestHistory?.at(-1);S.lastRequest=last?.body?structuredClone(last.body):null;S.lastRequestSaveId=last?s.id:null;}
@@ -63,10 +225,10 @@ const GameApp=(()=>{
     GameInputs.ensure(s);s.draftRound??=GameInputs.targetRound(s);if(inputBindingMissing)await db.putSave(s);
     const repairedDice=GameCore.repairManualDiceEvents(s),backfilled=GameHistory.backfill(s);if(repairedDice||backfilled)await db.putSave(s);
     if(s.activeRound?.complete&&pendingBatch(s)){peerCheck(s);await settleCompletedBatch(s);}
-    if(s.activeRound&&(!s.activeRound.complete||pendingBatch(s)))s.status='interrupted';S.active=s;restoreLastRequest(s);S.mode='play';S.error=s.error||null;emit();return s;}
-  function closeSave(){idle();S.active=null;S.error=null;emit();}
+    if(s.activeRound&&(!s.activeRound.complete||pendingBatch(s)))s.status='interrupted';S.active=s;restoreLastRequest(s);S.mode='play';S.error=s.error||null;await setupHost(s);emit();return s;}
+  function closeSave(){idle();stopBridge();hostSession?.dispose();hostSession=null;S.room=null;S.active=null;S.error=null;emit();}
   async function renameSave(id,name){idle();const s=id===S.active?.id?S.active:await db.getSave(id);if(!s)throw Error('存档不存在');peerCheck(s);s.name=String(name).trim()||s.name;await db.putSave(s);S.saves=await db.list();emit();}
-  async function deleteSave(id){idle();peerCheck({id});await db.deleteSave(id);if(S.active?.id===id)S.active=null;S.saves=await db.list();emit();}
+  async function deleteSave(id){idle();peerCheck({id});await db.deleteSave(id);if(S.active?.id===id){stopBridge();hostSession?.dispose();hostSession=null;S.active=null;}S.saves=await db.list();emit();}
   function exportSave(){idle();return GameImport.exportSave(active());}
   function rawRead(p){const node=VFS.resolve(active().tree,VFS.normalize(GameCore.path(p)));if(!node||node.type!=='file')throw Error('文件不存在');if(node.encoding==='base64')throw Error('该文件不能作为文本打开');return node.content;}
   function readFile(p){const resource=Prompts.file(p);return resource===undefined?rawRead(p):resource;}
@@ -76,7 +238,7 @@ const GameApp=(()=>{
     if([p,from,to].some(x=>x.startsWith('/.reference/')))throw Error('提示词为只读资源');
     if(op==='mkdir')VFS.mkdir(t,p);else if(op==='create'){if(VFS.resolve(t,VFS.normalize(p)))throw Error('同名文件已存在');VFS.writeFile(t,p,args.content||'');}
     else if(op==='delete')VFS.deletePath(t,p);else if(op==='move'||op==='copy')VFS[op](t,from,to);else throw Error('未知文件操作');
-    const pp=GameCore.validateTree(t);if(pp!==s.playerPath)throw Error('不能修改唯一玩家目录 ID');s.tree=t;await persist();emit();}
+    const pp=GameCore.validateTree(t,s.playerPath);if(pp!==s.playerPath)throw Error('请通过角色槽位管理修改控制方式');s.tree=t;await persist();emit();}
   const readInfo=GamePresentation.createReader(s=>GameCore.player(s,'info')),readItems=GamePresentation.createReader(s=>GameCore.player(s,'items'));
   const readPlayer={clear:s=>{readInfo.clear(s);readItems.clear(s);}};
   function player(){const s=active(),info=readInfo(s),items=readItems(s);return {info:info.info,name:info.name,items:items.items,stale:info.stale||items.stale,infoStale:info.stale,itemsStale:items.stale,error:[info.error,items.error].filter(Boolean).join('；')};}
@@ -89,7 +251,7 @@ const GameApp=(()=>{
     const built=GameCore.context(s,(frozen?.system&&!Object.keys(frozen.overrides||{}).length?frozen.system:system()),GameTransport.inputBudget(S.settings,GameTools.build(Prompts,overrides)),{cachePrompt:flows.flow_cache,summariesPrompt:flows.flow_summaries,transformContext:Prompts.migrateText});
     return built;
   }
-  async function executeRound(kind,text){
+  async function executeRound(kind,text,roundOptions={}){
     idle();let s=active();if(!S.settings.apiKey.trim())throw Error('请先在设置中填写 API Key');peerCheck(s);
     if(lease?.available){const lock=lease.acquireForRun(s.id,s.id);if(!lock.ok)throw Error('该存档正在另一个页面运行');}
     S.running=true;S.error=null;controller=new AbortController();
@@ -97,9 +259,9 @@ const GameApp=(()=>{
     let timer;const clearStream=(keepStory=false)=>{const story=keepStory?S.stream.story||'':'',storyPublished=keepStory?S.stream.storyPublished||0:0;S.stream={content:'',reasoning:'',tools:[],story,storyPublished};};
     try{
       
-      const latest=await db.getSave(s.id);if(latest&&latest.updatedAt>s.updatedAt){S.active=s=latest;}
+      const latest=await db.getSave(s.id);if(latest&&latest.updatedAt>s.updatedAt)throw Error('存档已在其他页面更新，请重新打开后继续');
       if(kind!=='resume'&&pendingBatch(s))throw Error('上一轮尚有工具记录需要恢复，请先继续本回合');
-      if(kind!=='resume')GameCore.beginRound(s,text,kind==='start',Prompts.roundPrompt(kind==='start',overrides),{skip:kind==='skip'});
+      if(kind!=='resume')GameCore.beginRound(s,text,kind==='start',Prompts.roundPrompt(kind==='start',overrides),{skip:kind==='skip',...roundOptions});
       else if(!s.activeRound)throw Error('没有可继续的回合');
       if(!s.activeRound.promptSnapshot||Object.keys(s.activeRound.promptSnapshot.overrides||{}).length)s.activeRound.promptSnapshot={overrides,system:system(overrides)};
       if(!Number.isFinite(s.activeRound.requestCount))s.activeRound.requestCount=s.messages.filter(m=>m.round===s.activeRound.number&&m.role==='assistant').length;
@@ -119,16 +281,16 @@ const GameApp=(()=>{
             if(parts.length){if(!S.stream.story)S.stream.storyPublished=s.activeRound?.published||0;S.stream.story=parts.join('\n\n');}
           }
           if(currentRequest)currentRequest.response.tools=structuredClone(t);emit();}});
-      const transport=async messages=>{clearStream();emit();try{const response=await raw(messages);if(currentRequest){currentRequest.status='completed';currentRequest.response=structuredClone(response);}return response;}catch(e){if(currentRequest){currentRequest.status='interrupted';currentRequest.error=e.message;}throw e;}};
+      const transport=async messages=>{if(roundOptions.isCurrent&&!roundOptions.isCurrent())throw Error('回合已失效');clearStream();emit();try{const response=await raw(messages);if(roundOptions.isCurrent&&!roundOptions.isCurrent())throw Error('回合已失效');if(currentRequest){currentRequest.status='completed';currentRequest.response=structuredClone(response);}return response;}catch(e){if(currentRequest){currentRequest.status='interrupted';currentRequest.error=e.message;}throw e;}};
       const flows=Prompts.flows(snapshot.overrides);
       await GameCore.run(s,transport,{signal:controller.signal,system:snapshot.system,manualDice:settings.manualDice===true,
-        cap:GameTransport.inputBudget(settings,defs),maxToolLoops:settings.maxToolLoops,
+        cap:GameTransport.inputBudget(settings,defs),maxToolLoops:settings.maxToolLoops,multiplayerPrompts:Prompts.multiplayer(snapshot.overrides),
         
         
         resource:p=>Prompts.file(p),resourceList:Prompts.referencePaths(),afterStory:flows.flow_after_story,firstRecall:flows.flow_recall,
         resumePrompt:kind==='resume'?flows.flow_resume:'',cachePrompt:flows.flow_cache,summariesPrompt:flows.flow_summaries,transformContext:Prompts.migrateText,
         reminder:save=>!save.activeRound.triggered?flows.flow_need_trigger:!save.activeRound.published?flows.flow_no_story:flows.flow_need_end,
-        onStep:async()=>{if(lease?.available&&lease.lostWhileRunning(s.id))throw Error('存档被另一个页面接管');await persist();const keepStory=!!S.stream.story&&(s.activeRound?.published||0)<=S.stream.storyPublished;clearStream(keepStory);emit();}});
+        onStep:async()=>{if(roundOptions.isCurrent&&!roundOptions.isCurrent())throw Error('回合已失效');if(lease?.available&&lease.lostWhileRunning(s.id))throw Error('存档被另一个页面接管');await persist();publishClients();const keepStory=!!S.stream.story&&(s.activeRound?.published||0)<=S.stream.storyPublished;clearStream(keepStory);emit();}});
     }catch(e){S.error=e.message||'回合未完成';if(s.activeRound&&!s.activeRound.complete){s.status='interrupted';s.error=S.error;}
       
       try{if(!lease?.lostWhileRunning(s.id))await persist();}catch(storageError){S.storageWarning='存档保存失败：'+storageError.message+'。请导出存档保留当前内容。';}throw e;
@@ -137,12 +299,12 @@ const GameApp=(()=>{
       clearInterval(timer);lease?.releaseLease(s.id);if(pendingBatch(s))s.status='interrupted';S.running=false;controller=null;clearStream();emit();
     }
   }
-  const send=text=>{if(!String(text).trim())return Promise.resolve();const s=active();return executeRound(s.status==='new'?'start':'action',String(text));};
-  const skip=()=>{if(active().status==='new')throw Error('请先开始故事');return executeRound('skip','');};
-  const start=()=>{if(active().status!=='new')throw Error('已经开局，请提交行动');return executeRound('start','');};
-  const resume=()=>executeRound('resume','');
+  const send=(text,privateContent='')=>submitAction(text,privateContent);
+  const skip=async()=>{if(active().status==='new')throw Error('请先开始故事');const flags=GameData.actorState(player().info);return roomCommand(flags.enabled?'action.skip':'round.advance');};
+  const start=()=>roomCommand('round.start');
+  const resume=()=>roomCommand('round.resume');
   function abort(){controller?.abort(Object.assign(Error('已中止本回合，可继续或回退'),{name:'AbortError'}));}
-  async function rollback(){idle();peerCheck(active());GameCore.rollback(active());GameHistory.backfill(active(),true);readPlayer.clear(active());S.error=null;S.lastRequest=null;await persist();emit();}
+  async function rollback(){return decideHostRollback('approve');}
   async function updateSettings(values){
     const next={...S.settings};for(const k of Object.keys(defaults))if(k!=='promptOverrides'&&Object.hasOwn(values,k))next[k]=values[k];
     for(const [key,min,max]of [['maxContextK',4,4000],['maxOutputTokens',256,200000],['maxToolLoops',1,300],['httpTimeoutSeconds',10,3600],['maxRetries',0,10],['temperature',0,2]]){
@@ -154,20 +316,30 @@ const GameApp=(()=>{
     for(const k of ['baseUrl','apiKey','model','worldListSource'])next[k]=String(next[k]||'').trim();
     next.customRequestBody=String(next.customRequestBody||'').trim();
     if(next.customRequestBody){let extra;try{extra=JSON.parse(next.customRequestBody);}catch(e){throw Error('自定义请求包体不是有效 JSON：'+e.message);}if(!extra||typeof extra!=='object'||Array.isArray(extra))throw Error('自定义请求包体必须是 JSON 对象');}
-    if(next.worldListSource)GameCatalog.source(next.worldListSource);
+    if(next.worldListSource)GameCatalog.source(next.worldListSource);next.bridgeUrl=BridgeTransport.validateServerUrl(next.bridgeUrl);
     if(!['none','low','high','xhigh','max'].includes(next.reasoningEffort))throw Error('思考强度无效');
-    next.stream=!!next.stream;next.manualDice=!!next.manualDice;await db.putSettings(next);S.settings=next;emit();
+    next.stream=!!next.stream;next.manualDice=!!next.manualDice;next.autoAdvanceUnconscious=next.autoAdvanceUnconscious!==false;await db.putSettings(next);S.settings=next;emit();hostSession?.checkAutomatic().catch(()=>{});
   }
   async function resolveManualDice(rolls){
     idle();const s=active();peerCheck(s);GameCore.resolveManualDice(s,rolls);await persist();emit();return s;
   }
-  async function saveDraft(text,binding){if(!S.active)return;peerCheck(S.active);if(!GameInputs.setDraft(S.active,text,binding))return;await persist();}
+  async function saveDraft(text,binding,options={}){if(!S.active)return;peerCheck(S.active);if(!GameInputs.setDraft(S.active,options.private?'':text,binding))return;S.active.privateDraft=options.private?String(text):String(options.privateContent||'');saveLocalInputs();await persist();}
+  async function cancelAction(){
+    const s=active(),r=hostSession.state(),result=await roomCommand('action.cancel',{submissionRequestId:r.submissions?.[s.actorId]?.requestId});
+    if(active()!==s||hostSession.state().roundId!==r.roundId||hostSession.state().epoch!==r.epoch)return result;
+    const entry=s.inputHistory?.find(x=>x.roundId===r.roundId);if(entry)entry.status='cancelled';
+    if(!s.draft&&!s.privateDraft){s.draft=result.cancelled.content;s.privateDraft=result.cancelled.privateContent;}
+    GameInputs.advance(s);saveLocalInputs();await persist();emit();return result;
+  }
   if(typeof window!=='undefined'){
     // Navigation inside the app is guarded by page-rendered UI, never a native unload dialog.
     window.addEventListener('storage',e=>{if(e.key?.startsWith('awl:lease:'))emit();});
   }
   return {getState:()=>S,subscribe,init,importSave,importHandoff,importLink,openSave,closeSave,renameSave,deleteSave,exportSave,send,skip,start,resume,abort,rollback,setMode,
-    readFile,writeFile,fileOperation,player,currentContext,updateSettings,saveDraft,resolveManualDice,
+    configureSlots,setInvitationSlot,openRoom,createInvitation,revokeInvitation,closeRoom,multiplayerState,roomCommand,requestRollback,decideHostRollback,exportView,attachMultiplayerTransport,
+    addMember:id=>hostSession.addMember(id),setMemberConnected:(id,connected)=>hostSession.setConnected(id,connected),assignMember:(id,actor)=>hostSession.assign(id,actor),dispatchMember:(id,command)=>hostSession.handle(id,command),multiplayerSync:(id,request)=>syncHost.sync(id,request),
+    readFile,writeFile,fileOperation,player,currentContext,updateSettings,saveDraft,resolveManualDice,cancelAction,
+    profile:actorId=>MultiplayerSync.profile(active(),actorId,{room:hostSession?.state(),memberId:'host'}),
     testConnection:values=>GameTransport.testConnection({...S.settings,...values}),
     listModels:values=>GameTransport.listModels({...S.settings,...values})};
 })();
