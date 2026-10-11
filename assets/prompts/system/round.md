@@ -21,7 +21,8 @@ if 满足阶段转移条件: read_file(对应阶段文档)
 # ===== 2 解析输入与检定 =====
 if 非系统已提供的开局行动 and 本轮尚未获取行动:
     result = @trigger_next_round(phase_plan={"Countdowns": 倒计时说明文本, "Pending_Triggers": 待触发事项数组, "Forced_Checks": 强制检定说明文本})
-    character, action = result.player, result.action
+    actions = result.actions  # 宿主提供的全部角色提交，兼容单人 result.player/result.action
+    逐个解析 actions 的 actorId、公开行动、私密行动与 Alive/Enabled；无意识自动等待，死亡和禁用角色不能行动
 conditions = 从本轮行动与已读世界状态确认；无计划事项时 Countdowns、Forced_Checks 填 "无"，Pending_Triggers 填 []
 逐源列出适用于本回合输入的规则条目(编号/条名)备用:
 # 行动范围 §P6、§P1、§P4、§P5；检定 §C1、§P3、§C6；触发条件 §N6；推进节奏 §W1。
@@ -100,7 +101,9 @@ if 剧情触发器已成功触发 and 该触发器不可重复:
 if 当前剧情节点变化: assert 新节点存在(原本就存在或已创建)
 
 # ===== 6 发布与文件对账（→细则6）=====
-@append_story(content=draft_story, one_line_summary_of_content=one_line_summary)
+if 有个人私密正文: @private_append_story(entries=按固定角色ID分组的私密终稿)
+if 有公开正文: @append_story(content=公开终稿, one_line_summary_of_content=one_line_summary)
+elif 本轮已经成功私密输出: @append_story(content="", skip_output=true, one_line_summary_of_content=one_line_summary)
 # 仅成功发布后进入收尾；已发布正文不可修改，中断续执行不得重复发布。
 assert 背包、人物信息、日志已更新
 assert 战斗数值/状态/技能/资源/倒计时冷却已准确更新；属性 Value 不加括号注释，它只反映此刻状态
@@ -110,8 +113,8 @@ for npc in 本回合未退场的NPC:
     assert npc.格式化记忆.json 的 内心想法/短期目标/预期下一回合行动 已按本回合发生的事推进
     assert 已兑现的预期下一回合行动已替换为符合当前状态的新行动
     assert 位置变化已写回 npc.基础信息.json 的 当前位置
-assert 每个未退场的重要同行NPC（包括原KPC）都已预估下一步并写入 Cache
-assert 角色身体变化已落盘: 背包 + 基础信息(失去意识/睡眠→Enabled=False, 死亡→Alive=False)
+assert 每个未退场的重要同行NPC（包括 AIPC/KPC）都已预估下一步并写入 Cache
+assert 每个启用角色身体变化已落盘: 背包 + 基础信息(失去意识/睡眠→Enabled=False, 死亡→Alive=False)
 assert 过时的触发器/状态已清理，退场判定已做
 
 # ===== 7 锚定与结束（→细则7、细则S）=====
