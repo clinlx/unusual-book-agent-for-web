@@ -11,6 +11,22 @@ function setup(t){
  let receiver,action;let syncs=0;const transport={onClient(id,fn){receiver=fn;return ()=>{};},async sendToHost(id,command){if(command.type==='sync.request'){syncs++;return receiver(await host.sync(id,command.payload));}if(command.type==='sync.ack')return;if(action)return action(command);}};
  return {ctx,app,save,room,host,storage,entries,transport,get syncs(){return syncs;},setAction:fn=>{action=fn;},receive:packet=>receiver(packet),scope:{gameId:'game',memberId:'guest',actorId:'a'}};
 }
+test('client requests another bound player inventory through the host without local world access',async t=>{
+ const f=setup(t);await f.app.connect(f.transport,'guest');assert.equal(typeof f.app.inventory,'function');
+ f.setAction(async c=>{assert.equal(c.type,'inventory.request');assert.equal(c.payload.actorId,'b');assert.equal(c.roomId,f.room.roomId);assert.equal(c.epoch,f.room.epoch);assert.equal(c.bindingVersion,1);await f.receive({type:'command.result',requestId:c.requestId,ok:true,inventory:{actorId:'b',name:'乙',items:[{名称:'公用地图'}]}});});
+ const result=await f.app.inventory('b');assert.equal(result.items[0].名称,'公用地图');assert.equal(f.app.getState().active.tree,undefined);
+});
+
+test('disguised action options survive cancellation and rollback locally',async t=>{
+ const f=setup(t);await f.app.connect(f.transport,'guest');const local=Local.create(f.storage);
+ f.setAction(async c=>{assert.equal(c.payload.disguise,true);await f.receive({type:'command.result',requestId:c.requestId,ok:true});});
+ await f.app.send('假装等车','真实藏起钥匙',{hiddenSend:true,disguiseSend:true});
+ assert.equal(local.load(f.scope).inputHistory.at(-1).disguiseSend,true);
+ f.setAction(async c=>{await f.receive({type:'command.result',requestId:c.requestId,ok:true,cancelled:{content:'假装等车',privateContent:'真实藏起钥匙',disguise:true}});});
+ await f.app.cancelAction();assert.equal(f.app.getState().active.hiddenSend,true);assert.equal(f.app.getState().active.disguiseSend,true);
+ f.room.epoch++;await f.receive(await f.host.sync('guest'));
+ assert.equal(f.app.getState().active.disguiseSend,true);assert.equal(f.app.getState().active.privateDraft,'真实藏起钥匙');
+});
 test('newer push with stale base cursor actively resynchronizes once and duplicate packets do not loop',async t=>{
  const f=setup(t);await f.app.connect(f.transport,'guest');const oldRequest={scope:(await f.host.sync('guest')).scope,cursor:1,hashes:(await f.host.sync('guest')).hashes,revision:1};
  f.save.events.push({type:'story',round:1,content:'middle'});await f.receive(await f.host.sync('guest',oldRequest));

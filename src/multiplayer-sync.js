@@ -18,6 +18,17 @@ const MultiplayerSync=(()=>{
     if(Data.hiddenFlag(raw['.是否对玩家隐藏']))return {actorId,name:'角色',info:{}};
     const card=Core.player({...save,playerPath:slot.path},'info');return {actorId,name:card.name,info:clone(card.info)};
   }
+  function inventory(save,actorId,options={}){
+    const publicProfile=profile(save,actorId,options),slot=save.slots.find(s=>s.id===actorId);
+    const Data=typeof module!=='undefined'&&module.exports?require('./game-data'):GameData,Core=typeof module!=='undefined'&&module.exports?require('./game-core'):GameCore;
+    if(Data.hiddenFlag(Data.read(save,slot.path+'/基础信息.json')['.是否对玩家隐藏']))return {actorId,name:publicProfile.name,items:[]};
+    const visibilityKeys=new Set(['可见性','visibility','visible','是否可见']);
+    const items=Core.player({...save,playerPath:slot.path},'items').items.filter(item=>object(item)&&!Object.entries(item).some(([k,v])=>{
+      if(!visibilityKeys.has(Data.normalize(k)))return false;
+      return v===false||v===0||/^(false|否|no|0)$/i.test(String(v).trim())||/不可见|隐藏|hide|hidden|invisible/i.test(String(v));
+    }));
+    return {actorId,name:publicProfile.name,items:clone(items)};
+  }
   const itemIdentities=new WeakMap();
   function itemKeys(save,slot,Data,keyMap){
     if(!keyMap&&!itemIdentities.has(save))itemIdentities.set(save,new Map());
@@ -59,7 +70,7 @@ const MultiplayerSync=(()=>{
     }else{
       if(e.private===true||Array.isArray(e.audience)||e.actorId===actorId&&String(e.privateContent||'').trim())out.private=true;
       if(typeof e.content==='string')out.content=e.content;
-      if(e.actorId===actorId&&typeof e.privateContent==='string')out.privateContent=e.privateContent;
+      if(e.actorId===actorId&&typeof e.privateContent==='string'){out.privateContent=e.privateContent;if(e.disguise===true)out.disguise=true;}
     }
     return out;
   }
@@ -194,6 +205,6 @@ const MultiplayerSync=(()=>{
     function enqueue(memberId,args){pending.push({memberId,args:clone(args)});if(autoFlush)return flush(pending.length-1);return Promise.resolve();}
     return {onHost(fn){host.add(fn);return ()=>host.delete(fn);},onClient(memberId,fn){if(!clients.has(memberId))clients.set(memberId,new Set());clients.get(memberId).add(fn);return ()=>clients.get(memberId)?.delete(fn);},sendToHost:(memberId,message)=>enqueue(null,[memberId,message]),sendToClient:(memberId,message)=>enqueue(memberId,[message]),flush,drop(index=0){return !!pending.splice(index,1).length;},pending:()=>clone(pending)};
   }
-  return {project,profile,hash,canonical,createHost,createClient,createMemoryTransport};
+  return {project,profile,inventory,hash,canonical,createHost,createClient,createMemoryTransport};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=MultiplayerSync;

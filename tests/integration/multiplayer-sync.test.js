@@ -15,6 +15,18 @@ function fixture(){
   return {save,room,host:Sync.createHost({getSave:()=>save,getRoom:()=>room})};
 }
 
+test('disguised actions expose only their public cover to other players and private edits preserve their hashes',async()=>{
+  const {save,host}=fixture(),a=Sync.createClient(),b=Sync.createClient();
+  save.events.push({type:'player',round:1,actorId:'a',content:'我在等车',privateContent:'暗中藏好钥匙',disguise:true});
+  await a.apply(await host.sync('one'));await b.apply(await host.sync('two'));
+  const own=a.getState().view.events.at(-1),other=b.getState().view.events.at(-1);
+  assert.equal(own.privateContent,'暗中藏好钥匙');assert.equal(own.disguise,true);
+  assert.equal(other.content,'我在等车');assert.equal(other.privateContent,undefined);assert.equal(other.disguise,undefined);
+  const before=b.request();save.events.at(-1).privateContent='改为取出钥匙';save.events.at(-1).disguise=false;
+  const packet=await host.sync('two',before);assert.deepEqual(packet.hashes,before.hashes);assert.equal(packet.events.length,0);
+  assert.ok(!JSON.stringify(packet).includes('disguise'));assert.ok(!JSON.stringify(packet).includes('钥匙'));
+});
+
 test('on-demand player profiles share sanitized character fields only with bound players',()=>{
  const {save,room}=fixture();
  VFS.writeFile(save.tree,'/workspace/Player-a/基础信息.json',JSON.stringify({姓名:'甲',职业:'侦探',密码:'password-secret',当前位置:'secret-location','.秘密':'private-truth',技能:{侦查:60,'.隐藏数值':99},经历:[{描述:'公开经历'},{'.是否对玩家隐藏':true,描述:'hidden-history'}]}));

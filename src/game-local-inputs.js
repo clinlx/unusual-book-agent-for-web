@@ -9,19 +9,20 @@ const GameLocalInputs=(()=>{
     if(parts.some(v=>typeof v!=='string'||!v.trim()))fail('LOCAL_INPUT_SCOPE','本地输入缺少完整玩家身份');
     return 'game-local-inputs:v1:'+JSON.stringify(parts);
   }
-  function empty(){return {version:1,epoch:0,inputHistory:[],draft:'',privateDraft:'',draftRound:1,draftVersion:0};}
+  function empty(){return {version:1,epoch:0,inputHistory:[],draft:'',privateDraft:'',hiddenSend:false,disguiseSend:false,draftRound:1,draftVersion:0};}
   function entry(value){
     if(!value||!integer(value.round,1)||!integer(value.epoch)||typeof value.roundId!=='string'||!value.roundId)fail('LOCAL_INPUT_RECORD','本地输入回合标识无效');
     if(!states.has(value.status))fail('LOCAL_INPUT_RECORD','本地输入状态无效');
     if(typeof value.text!=='string'||typeof value.privateContent!=='string')fail('LOCAL_INPUT_RECORD','本地输入正文无效');
     if(value.requestId!==undefined&&typeof value.requestId!=='string')fail('LOCAL_INPUT_RECORD','本地输入请求标识无效');
-    return {round:value.round,roundId:value.roundId,epoch:value.epoch,text:value.text,privateContent:value.privateContent,requestId:value.requestId||'',status:value.status};
+    return {round:value.round,roundId:value.roundId,epoch:value.epoch,text:value.text,privateContent:value.privateContent,requestId:value.requestId||'',status:value.status,...value.hiddenSend!==undefined?{hiddenSend:value.hiddenSend===true,disguiseSend:value.hiddenSend===true&&value.disguiseSend===true}:{}};
   }
   function normalize(value){
     if(!value||value.version!==1||!Array.isArray(value.inputHistory)||!integer(value.epoch)||typeof value.draft!=='string'||typeof value.privateDraft!=='string'||!integer(value.draftRound,1)||!integer(value.draftVersion))fail('LOCAL_INPUT_RECORD','本地输入记录格式无效');
     const records=new Map();
     for(const item of value.inputHistory){const record=entry(item);records.delete(record.roundId);records.set(record.roundId,record);}
-    return {...empty(),epoch:value.epoch,inputHistory:[...records.values()].slice(-LIMIT),draft:value.draft,privateDraft:value.privateDraft,draftRound:value.draftRound,draftVersion:value.draftVersion};
+    const hiddenSend=value.hiddenSend??!!value.privateDraft;
+    return {...empty(),epoch:value.epoch,inputHistory:[...records.values()].slice(-LIMIT),draft:value.draft,privateDraft:value.privateDraft,hiddenSend:hiddenSend===true,disguiseSend:hiddenSend===true&&(value.disguiseSend??!!value.draft)===true,draftRound:value.draftRound,draftVersion:value.draftVersion};
   }
   function create(storage){
     if(!storage||typeof storage.getItem!=='function'||typeof storage.setItem!=='function')throw new Error('缺少本地输入存储接口');
@@ -60,7 +61,7 @@ const GameLocalInputs=(()=>{
       const candidates=previous.inputHistory.filter(r=>r.round===round+1&&r.epoch<epoch);
       const restored=candidates.at(-1)||null;
       for(const item of previous.inputHistory)if(item.epoch<epoch&&item.round>round)item.status='retracted';
-      previous.epoch=epoch;previous.draft=restored?.text||'';previous.privateDraft=restored?.privateContent||'';previous.draftRound=round+1;previous.draftVersion++;
+      previous.epoch=epoch;previous.draft=restored?.text||'';previous.privateDraft=restored?.privateContent||'';previous.hiddenSend=restored?.hiddenSend??!!previous.privateDraft;previous.disguiseSend=previous.hiddenSend&&(restored?.disguiseSend??!!previous.draft);previous.draftRound=round+1;previous.draftVersion++;
       return {...write(scope,previous),restored:restored?clone(restored):null};
     }
     return {load,save,record,rollback};

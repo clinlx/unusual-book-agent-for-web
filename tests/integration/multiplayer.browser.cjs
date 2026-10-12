@@ -27,6 +27,38 @@ async function panelSnapshot(page,selector){return page.locator(selector).evalua
   return {text:element.textContent.trim(),width:Math.round(box.width),font:style.fontFamily,fontSize:style.fontSize,lineHeight:style.lineHeight,color:style.color,padding:style.padding,children:[...element.children].map(child=>{const b=child.getBoundingClientRect(),s=getComputedStyle(child);return {tag:child.tagName,class:child.className,width:Math.round(b.width),fontSize:s.fontSize,lineHeight:s.lineHeight,color:s.color};})};
 }));}
 
+test('initial slot selection previews choices and commits only after confirmation',async t=>{
+  const page=await pageFor(t),sockets=[];page.on('websocket',socket=>sockets.push(socket.url()));
+  await page.goto(origin+'/index.html');await page.locator('[data-action="import"]').waitFor();
+  await page.evaluate(async()=>{
+    const files=['a','b','c'].flatMap(id=>[{name:`Player-${id}/基础信息.json`,text:JSON.stringify({姓名:id})},{name:`Player-${id}/背包.json`,text:'[]'}]);
+    await GameApp.importSave(new File([ZIP.makeZip(files)],'选角确认.zip'));
+  });
+  const modal=page.getByRole('dialog',{name:'选择角色槽位'});
+  await modal.waitFor();assert.equal(await modal.locator('select').count(),0);
+  assert.equal(await modal.locator('[data-action="slot-confirm"]').isDisabled(),true);
+  await modal.locator('[data-action="slot-choose"][data-actor="a"]').click();
+  assert.equal(await modal.locator('select').count(),2);assert.equal(await modal.locator('#slot-mode-a').count(),0);
+  assert.equal(await page.evaluate(()=>GameApp.getState().active.slotsConfigured),false);
+  assert.equal(await modal.locator('#slot-mode-c option[value="ai"]').innerText(),'设为NPC');
+  await modal.locator('#slot-mode-c').selectOption('ai');
+  await modal.locator('[data-action="slot-choose"][data-actor="b"]').click();
+  assert.equal(await modal.locator('#slot-mode-b').count(),0);assert.equal(await modal.locator('#slot-mode-a').count(),1);
+  assert.equal(await modal.locator('#slot-mode-c').inputValue(),'ai');
+  assert.equal(await page.evaluate(()=>GameApp.getState().active.actorId),'a');
+  const rightAligned=()=>modal.locator('[data-slot="c"]').evaluate(card=>{const row=card.querySelector('.slot-controls').getBoundingClientRect(),select=card.querySelector('.slot-mode-control').getBoundingClientRect();return Math.abs(row.right-select.right)<2;});
+  assert.ok(await rightAligned());
+  await page.setViewportSize({width:390,height:844});assert.ok(await rightAligned());
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  await page.keyboard.press('Escape');assert.equal(await modal.count(),1);
+  fs.mkdirSync(path.join(__dirname,'../artifacts'),{recursive:true});await page.screenshot({path:'tests/artifacts/slot-selection-390.png'});
+  await modal.locator('[data-action="slot-confirm"]').click();await modal.waitFor({state:'hidden'});
+  const configured=await page.evaluate(()=>({save:GameApp.getState().active,room:GameApp.multiplayerState()}));
+  assert.equal(configured.save.slotsConfigured,true);assert.equal(configured.save.actorId,'b');
+  assert.deepEqual(configured.save.slots.map(s=>[s.id,s.kind]).sort((a,b)=>a[0].localeCompare(b[0])),[['a','disabled'],['b','player'],['c','ai']]);
+  assert.equal(configured.room.online,false);assert.deepEqual(sockets,[]);
+});
+
 test('mid-game invitations warn for invalid cards before connecting and allow acknowledgement or cancellation',async t=>{
   const page=await pageFor(t),errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto(origin+'/index.html');await page.locator('[data-action="import"]').waitFor();
@@ -53,7 +85,7 @@ test('mid-game invitations warn for invalid cards before connecting and allow ac
   await apply('b','player');await page.locator('[data-dialog-value="confirm"]').click();
   await page.waitForFunction(()=>GameApp.getState().network?.invites?.length===1);assert.equal(await page.evaluate(()=>__connections),2);
   await apply('b','player');assert.equal(await page.locator('[role="alertdialog"]').count(),0);
-  await page.locator('[data-action="close-modal"]').click();
+  await page.locator('[data-action="close-modal"]').first().click();
   await page.evaluate(async()=>{VFS.writeFile(GameApp.getState().active.tree,'/workspace/DISABLE-c/基础信息.json','{broken');await GameApp.updateSettings({});});
   await openPanel();await apply('c','player');await page.locator('[role="alertdialog"]').waitFor();await page.locator('[data-dialog-value="cancel"]').click();
   const card={姓名:'丙',性别:'女',外貌:'短发',穿戴:{},性格:'谨慎',职业:'医生',身份:'调查员',说话习惯:'温和',原则:'救人','喜好/厌恶':'喜欢阅读',技能:{},属性:{},主动技能:[],状态:{HP:10,MAXHP:10,MP:5,MAXMP:5,Enabled:true,Alive:true},buff栏:[],当前位置:'车站'};
@@ -80,9 +112,10 @@ test('host and isolated clients use authoritative rounds, private projections, r
   await host.goto(origin+'/index.html');await host.locator('[data-action="import"]').waitFor();
   await host.evaluate(async()=>{
     await GameApp.updateSettings({baseUrl:'https://multiplayer.invalid/v1',apiKey:'test-only',stream:false});
-    const files=['a','b'].flatMap(id=>[{name:`Player-${id}/基础信息.json`,text:JSON.stringify({姓名:id==='a'?'甲':'乙',职业:'旅人',Alive:true,Enabled:true,'.秘密':'隐藏卡片-'+id})},{name:`Player-${id}/背包.json`,text:id==='a'?'["key"]':'[]'}]);
+    const files=['a','b'].flatMap(id=>[{name:`Player-${id}/基础信息.json`,text:JSON.stringify({姓名:id==='a'?'甲':'乙',职业:'旅人',Alive:true,Enabled:true,'.秘密':'隐藏卡片-'+id})},{name:`Player-${id}/背包.json`,text:id==='a'?'["key","concealed"]':'[]'}]);
     files.push({name:'KPC-guide/基础信息.json',text:'{"姓名":"站长"}'},{name:'KPC-guide/背包.json',text:'[]'},
-      {name:'存档-索引-物品/key/物品基础信息.json',text:'{"名称":"铜钥匙","余量":1,"位置所属":"Player-a",".秘密":"隐藏物品"}'},
+      {name:'存档-索引-物品/key/物品基础信息.json',text:'{"名称":"铜钥匙","可见性":"可见","余量":1,"位置所属":"Player-a",".秘密":"隐藏物品"}'},
+      {name:'存档-索引-物品/concealed/物品基础信息.json',text:'{"名称":"BACKPACK_PRIVATE_MARKER","可见性":"Hide","信息":"INVENTORY_SECRET_DETAIL"}'},
       {name:'模组.md',text:'两名玩家在车站相遇。'});
     await GameApp.importSave(new File([ZIP.makeZip(files)],'多人回归.zip'));await GameApp.configureSlots('a');
   });
@@ -96,11 +129,35 @@ test('host and isolated clients use authoritative rounds, private projections, r
   const lobby=await guest.evaluate(()=>GameApp.getState().active);assert.equal(lobby.actorId,null);assert.deepEqual(lobby.events,[]);assert.deepEqual(lobby.info,{});assert.deepEqual(lobby.items,[]);
   await guest.evaluate(()=>GameApp.roomCommand('slot.claim.request',{actorId:'b'}));
   await host.waitForFunction(()=>GameApp.multiplayerState().slotRequests.length===1);
-  if(await host.locator('[data-action="close-modal"]').count())await host.locator('[data-action="close-modal"]').click();
+  if(await host.locator('[data-action="close-modal"]').count())await host.locator('[data-action="close-modal"]').first().click();
   await host.locator('[data-action="room-panel"]').click();await host.locator('[data-action="slot-decide"][data-decision="approve"]').click();
   await guest.waitForFunction(()=>GameApp.getState().active.actorId==='b');
-  for(const page of [host,guest])if(await page.locator('[data-action="close-modal"]').count())await page.locator('[data-action="close-modal"]').click();
+  for(const page of [host,guest])if(await page.locator('[data-action="close-modal"]').count())await page.locator('[data-action="close-modal"]').first().click();
   await guest.waitForFunction(()=>document.querySelector('#action-input')?.disabled===false&&document.querySelector('.character')?.textContent.includes('乙'));
+  await host.locator('[data-action="room-panel"]').click();
+  await host.locator('[data-slot="b"] [data-presence="online"]').waitFor();
+  await host.evaluate(()=>GameApp.setMemberConnected('guest',false));
+  await host.locator('[data-slot="b"] [data-presence="offline"]').waitFor();
+  await host.evaluate(()=>GameApp.setMemberConnected('guest',true));
+  await host.locator('[data-slot="b"] [data-presence="online"]').waitFor();
+  await host.locator('[data-action="close-modal"]').first().click();
+  assert.equal(await guest.locator('#action-private-input').count(),0);
+  await guest.locator('#hidden-send-toggle').check();
+  assert.equal(await guest.locator('#action-private-input').count(),0);
+  await guest.locator('#action-input').fill('乙暗中藏起钥匙');
+  await guest.locator('#disguise-send-toggle').check();
+  await guest.locator('#action-private-input').fill('乙说自己在等车');
+  await guest.locator('#action-form button[type="submit"]').click();
+  await host.waitForFunction(()=>GameApp.multiplayerState().submissions.b?.privateContent==='乙暗中藏起钥匙');
+  assert.equal(await host.evaluate(()=>GameApp.multiplayerState().submissions.b.content),'乙说自己在等车');
+  assert.equal(await host.evaluate(()=>GameApp.multiplayerState().submissions.b.disguise),true);
+  await guest.locator('[data-action="cancel-action"]').click();
+  await guest.waitForFunction(()=>document.querySelector('#action-input')?.value==='乙暗中藏起钥匙');
+  assert.equal(await guest.locator('#hidden-send-toggle').isChecked(),true);
+  assert.equal(await guest.locator('#disguise-send-toggle').isChecked(),true);
+  assert.equal(await guest.locator('#action-private-input').inputValue(),'乙说自己在等车');
+  await guest.locator('#hidden-send-toggle').uncheck();
+  assert.equal(await guest.locator('#action-private-input').count(),0);
   await host.evaluate(()=>GameApp.send('','甲只向主持人提交的秘密行动'));
   assert.equal(modelRequests,1);assert.equal(await host.evaluate(()=>GameApp.multiplayerState().status),'collecting');
   await guest.locator('#action-input').fill('乙检查门锁');await guest.locator('#action-form button[type="submit"]').click();
@@ -125,10 +182,30 @@ test('host and isolated clients use authoritative rounds, private projections, r
     await page.locator('[data-action="room-panel"]').click();
     assert.equal(await page.locator('.slot-card').count(),await page.evaluate(()=>GameApp.getState().active.slots.length));
     assert.equal(await page.locator('.slot-card [data-action="player-profile"]').count(),2);
+    assert.equal(await page.locator('.slot-card [data-action="player-inventory"]').count(),2);
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
     await page.screenshot({path:'tests/artifacts/slot-cards-'+(page===host?'host':'client')+'-390.png'});
-    await page.locator('[data-action="close-modal"]').click();
+    await page.locator('[data-action="player-inventory"][data-actor="a"]').click();
+    await page.locator('.player-inventory').waitFor();
+    const text=await page.locator('.player-inventory').innerText();
+    assert.ok(text.includes('铜钥匙'));
+    for(const secret of ['BACKPACK_PRIVATE_MARKER','INVENTORY_SECRET_DETAIL','隐藏物品','位置所属'])assert.ok(!text.includes(secret),secret);
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    await page.screenshot({path:'tests/artifacts/shared-inventory-'+(page===host?'host':'client')+'-390.png'});
+    await page.locator('[data-action="close-modal"]').first().click();
   }
+  await guest.locator('[data-action="room-panel"]').click();
+  await guest.locator('[data-action="player-profile"][data-actor="a"]').click();await guest.locator('.player-profile').waitFor();
+  await guest.getByRole('button',{name:'返回房间',exact:true}).click();
+  await guest.locator('[data-action="player-inventory"][data-actor="a"]').click();await guest.locator('.player-inventory').waitFor();
+  assert.ok((await guest.locator('.player-inventory').innerText()).includes('铜钥匙'));
+  const sharedState=await guest.evaluate(()=>JSON.stringify({state:GameApp.getState(),storage:{...localStorage},body:document.body.innerText}));
+  for(const secret of ['BACKPACK_PRIVATE_MARKER','INVENTORY_SECRET_DETAIL','隐藏物品','位置所属'])assert.ok(!sharedState.includes(secret),secret);
+  await guest.getByRole('button',{name:'返回房间',exact:true}).click();
+  await guest.waitForTimeout(300);
+  await guest.locator('[data-action="player-inventory"][data-actor="b"]').click();await guest.locator('.player-inventory').waitFor();
+  assert.match(await guest.locator('.player-inventory').innerText(),/暂无可公开的物品/);
+  await guest.locator('[data-action="close-modal"]').first().click();
   const baseline=await panelSnapshot(own,'.inventory');await own.addStyleTag({content:'.inventory{font-size:31px!important}'});assert.notDeepEqual(await panelSnapshot(own,'.inventory'),baseline,'the comparison detects one-sided CSS drift');
   const target=await host.evaluate(()=>{const s=GameApp.getState().active.snapshots.at(-1);return {targetRound:s.round,targetRoundId:s.inputRoundId};});
   await guest.evaluate(payload=>GameApp.roomCommand('rollback.request',payload),target);

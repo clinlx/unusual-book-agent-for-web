@@ -91,7 +91,7 @@ const GameCore = (() => {
       participantIds:s.multiplayer?.members?Object.values(s.multiplayer.members).map(m=>m.actorId).filter(Boolean):null,
       requestCount:0,readState:{},receipts:{},complete:false,summary:[]};
     s.status='running';s.error=null;s.lastChanges=[];s.draft='';s.draftRound=inputRound;
-    if(!isStart){if(options.actions){for(const action of options.actions)emit(s,'player',{actorId:action.actorId,content:action.content||(action.skip?'等待局势发展。':''),privateContent:action.privateContent||'',audience:'public',skip:!!action.skip,roundId});}else emit(s,'player',{actorId:s.actorId,content:actionText,name:'player_action',args:{action:actionText},skip:!!options.skip,roundId});}
+    if(!isStart){if(options.actions){for(const action of options.actions)emit(s,'player',{actorId:action.actorId,content:action.content||(action.skip?'等待局势发展。':''),privateContent:action.privateContent||'',...action.disguise?{disguise:true}:{},audience:'public',skip:!!action.skip,roundId});}else emit(s,'player',{actorId:s.actorId,content:actionText,name:'player_action',args:{action:actionText},skip:!!options.skip,roundId});}
     s.messages.push({role:'user',content:String(prompt),round:s.activeRound.number});
     return s.activeRound;
   }
@@ -192,7 +192,7 @@ const GameCore = (() => {
     if(e.type==='player'&&e.actorId!==id&&e.privateContent&&!String(e.content||'').trim()&&!e.skip)return false;
     if(e.audience!==undefined&&e.audience!=='public'&&(!Array.isArray(e.audience)||!e.audience.includes(id)))return false;
     return !e.secret&&['player','story','round_end','note'].includes(e.type);
-  }).map(e=>{const x=copy(e),id=s.actorId||s.playerPath?.split('/').pop().replace(/^Player-/,'');if(x.actorId!==id)delete x.privateContent;
+  }).map(e=>{const x=copy(e),id=s.actorId||s.playerPath?.split('/').pop().replace(/^Player-/,'');if(x.actorId!==id){delete x.privateContent;delete x.disguise;}
     if(x.type==='dice'){const {visible,...access}=diceEventAccess(s,e,id);Object.assign(x,access);if(x.secret){delete x.data;delete x.diceArgs;delete x.content;delete x.description;delete x.relatedAttr;}}return x;
   });
   function requireText(v,label){if(typeof v!=='string'||!v.trim())throw Error(label+' 不得为空');return v;}
@@ -320,7 +320,7 @@ const GameCore = (() => {
           const participantIds=round.participantIds??(s.multiplayer?.members?Object.values(s.multiplayer.members).map(m=>m.actorId).filter(Boolean):null),participants=participantIds?new Set(participantIds):null;
           const actors=slots.scan(s.tree).filter(x=>x.kind!=='disabled'&&(x.kind!=='player'||!participants||participants.has(x.id))).map(x=>({...x,...data.actorState(readJson(s,x.path+'/基础信息.json',{}))}));
           const living=actors.filter(x=>x.kind==='player'&&x.alive),unconsciousActors=living.length&&living.every(x=>!x.enabled)?living.map(x=>x.id):[];
-          result={action:round.action,actions:round.actions||[],player:s.playerPath,actors,unconsciousActors,
+          result={action:round.action,actions:round.actions||[],...round.actions?.some(a=>a.disguise)?{disguiseInstruction:'disguise=true 的 content 是角色对外公开的伪装说辞，真实行动以 privateContent 为准。按角色感知与动机决定他人能发现什么；不在公开正文中泄露真实行动或伪装标记。'}:{},player:s.playerPath,actors,unconsciousActors,
             instruction:unconsciousActors.length?(options.multiplayerPrompts?.all_unconscious||'所有存活玩家均失去意识。推进时间并描写苏醒，通过工具恢复这些存活角色的 Enabled，不恢复死亡角色。').replace('{actorIds}',unconsciousActors.join('、')):(options.multiplayerPrompts?.ai_roles||'AIPC/KPC 由主持人依照人设代为行动；死亡者不能行动，无意识者只能等待。'),
             phase_plan:plan,warnings:round.number>3?data.references(s,plan.Pending_Triggers):[]};break;
         }

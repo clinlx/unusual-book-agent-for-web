@@ -8,9 +8,123 @@ before(async()=>{site=await staticSite();bridge=await startBridge();browser=awai
 after(async()=>{await browser?.close();await bridge?.close();await site?.close();});
 const diceArgs=extra=>({description:'公开检定',roller:'Player-b',related_attr:'侦查',is_secret:false,is_private:false,dice_dict:{检定:'1d100'},calculate_only:false,target_value:50,compare_mode:'le',critical_success_range:null,critical_failure_range:null,dice_combine_mode:'sum',left_modifiers:{},right_modifiers:{},...extra});
 const call=(name,args,id)=>({id,type:'function',function:{name,arguments:JSON.stringify(args)}});
+
+test('invitation links show progress without flashing a key form, and failures open a result dialog', {timeout:60000},async t=>{
+  const errors=[],host=await pageFor(t,errors,[]),guest=await pageFor(t,errors,[]);
+  await host.goto(site.origin+'/index.html');await host.locator('[data-action="import"]').waitFor();
+  const invite=await host.evaluate(async bridgeUrl=>{
+    await GameApp.updateSettings({bridgeUrl});
+    const files=['a','b'].flatMap(id=>[{name:`Player-${id}/基础信息.json`,text:JSON.stringify({姓名:id})},{name:`Player-${id}/背包.json`,text:'[]'}]);
+    await GameApp.importSave(new File([ZIP.makeZip(files)],'自动加入.zip'));await GameApp.configureSlots('a');return GameApp.setInvitationSlot('b','player');
+  },bridge.url);
+  await guest.addInitScript(()=>{
+    window.joinFormFlashed=false;
+    new MutationObserver(()=>{if(document.querySelector('#join-room-form'))window.joinFormFlashed=true;}).observe(document,{childList:true,subtree:true});
+  });
+  await guest.route('**/client.html*',async route=>{
+    const response=await route.fetch(),html=await response.text();
+    await route.fulfill({response,body:html.replace('const GameUI = (() => {',`const originalJoinClient=BridgeTransport.createClient;BridgeTransport.createClient=async options=>{await new Promise(resolve=>window.releaseJoin=resolve);return originalJoinClient(options);};const GameUI = (() => {`)});
+  });
+  await guest.setViewportSize({width:390,height:844});await guest.goto(invite.link);
+  await guest.waitForFunction(()=>typeof window.releaseJoin==='function');
+  assert.equal(await guest.locator('#join-room-form').count(),0);
+  assert.equal(await guest.locator('[role="progressbar"]').isVisible(),true);
+  assert.equal(await guest.evaluate(()=>window.joinFormFlashed),false);
+  fs.mkdirSync(path.join(__dirname,'../artifacts'),{recursive:true});await guest.screenshot({path:path.join(__dirname,'../artifacts/client-join-progress-390.png')});
+  await guest.evaluate(()=>window.releaseJoin());await guest.waitForFunction(()=>GameApp.getState().active?.actorId==='b');await guest.locator('#history').waitFor();
+  assert.equal(await guest.locator('.join-progress [role="progressbar"]').count(),0);assert.equal(await guest.evaluate(()=>window.joinFormFlashed),false);
+  await guest.goto(site.origin+'/client.html?join=invalid-key');
+  await guest.locator('[role="alertdialog"]').waitFor();
+  assert.match(await guest.locator('[role="alertdialog"]').innerText(),/加入失败/);
+  await guest.getByRole('button',{name:'我知道了',exact:true}).click();await guest.locator('#join-room-form').waitFor();
+  const bad=await guest.evaluate(key=>{const i=BridgeTransport.parseInvitation(key);i.token=(i.token[0]==='A'?'B':'A')+i.token.slice(1);return BridgeTransport.encodeInvitation(i);},invite.key);
+  await guest.goto(site.origin+'/client.html?join='+bad);await guest.waitForFunction(()=>typeof window.releaseJoin==='function');await guest.evaluate(()=>window.releaseJoin());
+  await guest.locator('[role="alertdialog"]').waitFor();assert.match(await guest.locator('[role="alertdialog"]').innerText(),/凭证|无权/);
+  await guest.screenshot({path:path.join(__dirname,'../artifacts/client-join-failure-390.png')});
+  await host.evaluate(()=>GameApp.closeRoom());assert.deepEqual(errors,[]);
+});
 async function pageFor(t,errors,sockets){const context=await browser.newContext();t.after(()=>context.close());const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));page.on('console',message=>{if(message.type()==='error')errors.push(message.text());});page.on('websocket',socket=>{const record={url:socket.url(),received:[],sent:[]};sockets.push(record);socket.on('framereceived',frame=>record.received.push(typeof frame.payload==='string'?Buffer.byteLength(frame.payload):frame.payload.byteLength));socket.on('framesent',frame=>record.sent.push(typeof frame.payload==='string'?Buffer.byteLength(frame.payload):frame.payload.byteLength));});return page;}
 async function waitHost(page,round){await page.waitForFunction(round=>GameApp.getState().active.round===round&&GameApp.multiplayerState().status==='collecting',round);}
-async function closeModal(page){if(await page.locator('[data-action="close-modal"]').count())await page.locator('[data-action="close-modal"]').click();}
+async function closeModal(page){if(await page.locator('[data-action="close-modal"]').count())await page.locator('[data-action="close-modal"]').first().click();}
+
+test('real sockets recover both sides without losing submissions or interrupting model execution', {timeout:60000},async t=>{
+  const errors=[],host=await pageFor(t,errors,[]),guest=await pageFor(t,errors,[]);
+  for(const page of [host,guest])await page.addInitScript(()=>{const Native=WebSocket;window.testSockets=[];window.WebSocket=class extends Native{constructor(...args){super(...args);window.testSockets.push(this);}};});
+  let modelRequests=0,release,started;const gate=new Promise(resolve=>release=resolve),modelStarted=new Promise(resolve=>started=resolve);t.after(()=>release());
+  await host.route('https://reconnect-model.invalid/**',async route=>{
+    modelRequests++;if(modelRequests===2){started();await gate;}
+    await route.fulfill({contentType:'application/json',body:JSON.stringify({choices:[{message:{role:'assistant',content:'',tool_calls:[...(modelRequests>1?[call('trigger_next_round',{phase_plan:{Countdowns:'无',Pending_Triggers:[],Forced_Checks:'无'}},'trigger-'+modelRequests)]:[]),call('append_story',{content:'两名旅人一起走进大厅。',one_line_summary_of_content:'进入大厅'},'story-'+modelRequests),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环',Game_World_Time:'九点'}},'end-'+modelRequests)]},finish_reason:'tool_calls'}]})});
+  });
+  await host.goto(site.origin+'/index.html');await host.locator('[data-action="import"]').waitFor();
+  const invite=await host.evaluate(async bridgeUrl=>{
+    await GameApp.updateSettings({bridgeUrl,baseUrl:'https://reconnect-model.invalid/v1',apiKey:'test-key',stream:false});
+    const files=['a','b'].flatMap(id=>[{name:`Player-${id}/基础信息.json`,text:JSON.stringify({姓名:id})},{name:`Player-${id}/背包.json`,text:'[]'}]);
+    await GameApp.importSave(new File([ZIP.makeZip(files)],'恢复通信.zip'));await GameApp.configureSlots('a');return GameApp.setInvitationSlot('b','player');
+  },bridge.url);
+  await closeModal(host);await host.locator('[data-action="start"]').click();
+  await host.waitForFunction(()=>document.querySelector('#toast')?.textContent.includes('没有玩家加入'));assert.equal(modelRequests,0);
+  await guest.goto(invite.link);await guest.waitForFunction(()=>GameApp.getState().active?.actorId==='b');
+  await host.evaluate(()=>GameApp.start());await waitHost(host,1);await guest.waitForFunction(()=>GameApp.getState().active?.round===1);
+  await guest.evaluate(()=>GameApp.send('乙已经提交'));await host.waitForFunction(()=>!!GameApp.multiplayerState().submissions.b);
+  const roundId=await host.evaluate(()=>GameApp.multiplayerState().roundId);
+  await guest.evaluate(()=>window.testSockets.at(-1).close(4000,'模拟掉线'));
+  await host.waitForFunction(()=>Object.values(GameApp.multiplayerState().members).some(m=>m.actorId==='b'&&!m.connected));
+  await host.evaluate(()=>{window.waitingRun=GameApp.send('甲随后提交');});await host.waitForFunction(()=>GameApp.getState().running);
+  await modelStarted;
+  assert.equal(modelRequests,2,'已提交的掉线玩家不阻止结算');
+  await guest.waitForFunction(()=>GameApp.getState().network.status==='reconnecting');await guest.locator('#connection-lamp').click();
+  await guest.waitForFunction(()=>GameApp.getState().network.status==='connected');assert.equal(await guest.evaluate(()=>GameApp.getState().room.roundId),roundId);
+  await host.evaluate(()=>window.testSockets.at(-1).close(4000,'模拟房主掉线'));
+  await host.waitForFunction(()=>GameApp.getState().network.status==='reconnecting');
+  assert.equal(await host.evaluate(()=>GameApp.getState().running),true);
+  await host.waitForFunction(()=>GameApp.getState().network.status==='connected',null,{timeout:20000});
+  await guest.waitForFunction(()=>GameApp.getState().network.status==='connected',null,{timeout:25000});
+  assert.equal(await host.evaluate(()=>GameApp.multiplayerState().roundId),roundId);assert.equal(modelRequests,2,'房主恢复不重复计算');
+  release();await host.evaluate(()=>window.waitingRun);try{await waitHost(host,2);}catch(error){t.diagnostic(JSON.stringify(await host.evaluate(()=>({network:GameApp.getState().network,room:GameApp.multiplayerState(),error:GameApp.getState().error,events:GameApp.getState().active.events.slice(-8)}))));throw error;}await guest.waitForFunction(()=>GameApp.getState().active.round===2);
+  await guest.evaluate(()=>window.testSockets.at(-1).close(4000,'未提交掉线'));
+  await host.waitForFunction(()=>Object.values(GameApp.multiplayerState().members).some(m=>m.actorId==='b'&&!m.connected));
+  await host.evaluate(()=>GameApp.send('甲下一回合'));assert.equal(modelRequests,2,'未提交的掉线玩家必须等待');
+  await guest.waitForFunction(()=>GameApp.getState().network.status==='connected',null,{timeout:15000});
+  assert.equal(modelRequests,2,'重连本身不能当作提交');
+  const memberId=await host.evaluate(()=>Object.values(GameApp.getState().network.invites)[0].memberId);
+  await host.evaluate(id=>GameApp.roomCommand('action.hostSkip',{memberId:id}),memberId);await waitHost(host,3);assert.equal(modelRequests,3);
+  await host.evaluate(()=>window.testSockets.at(-1).close(4000,'手动恢复房主'));
+  await host.waitForFunction(()=>GameApp.getState().network.status==='reconnecting');await host.locator('#connection-lamp').click();
+  await host.waitForFunction(()=>GameApp.getState().network.status==='connected');assert.equal(modelRequests,3);
+  await guest.waitForFunction(()=>GameApp.getState().network.status==='connected',null,{timeout:15000});
+  await host.evaluate(()=>GameApp.closeRoom());assert.deepEqual(errors,[]);
+});
+
+test('room cancel preserves the connection, and the red leave button returns to the home page', {timeout:60000},async t=>{
+  const errors=[],sockets=[],host=await pageFor(t,errors,[]),guest=await pageFor(t,errors,sockets);
+  await host.goto(site.origin+'/index.html');await host.locator('[data-action="import"]').waitFor();
+  const invite=await host.evaluate(async bridgeUrl=>{
+    await GameApp.updateSettings({bridgeUrl});
+    const files=['a','b'].flatMap(id=>[{name:`Player-${id}/基础信息.json`,text:JSON.stringify({姓名:id})},{name:`Player-${id}/背包.json`,text:'[]'}]);
+    await GameApp.importSave(new File([ZIP.makeZip(files)],'离开房间.zip'));await GameApp.configureSlots('a');return GameApp.setInvitationSlot('b','player');
+  },bridge.url);
+  await guest.goto(invite.link);await guest.waitForFunction(()=>GameApp.getState().active?.actorId==='b');await guest.locator('#history').waitFor();
+  await guest.locator('[data-action="room-panel"]').click();
+  const cancel=guest.locator('.room-modal .modal-actions [data-action="close-modal"]');
+  assert.equal(await cancel.innerText(),'取消');
+  assert.ok(!(await guest.locator('.room-modal').innerText()).includes('房间已开启'));
+  const socketCount=sockets.length;await cancel.click();
+  assert.equal(await guest.locator('.room-modal').count(),0);assert.equal(await guest.evaluate(()=>GameApp.getState().active.actorId),'b');assert.equal(sockets.length,socketCount);
+  await guest.locator('[data-action="room-panel"]').click();
+  for(const width of [1280,390]){
+    await guest.setViewportSize({width,height:844});
+    const leave=guest.locator('[data-action="leave-room"]'),right=await cancel.boundingBox(),left=await leave.boundingBox();
+    assert.ok(left.x+left.width<=right.x,'取消按钮位于离开按钮右侧');
+    await guest.waitForFunction(()=>getComputedStyle(document.querySelector('[data-action="leave-room"]')).backgroundColor==='rgb(177, 66, 57)');
+    assert.equal(await leave.evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(177, 66, 57)');
+  }
+  fs.mkdirSync(path.join(__dirname,'../artifacts'),{recursive:true});await guest.screenshot({path:path.join(__dirname,'../artifacts/client-room-actions-390.png')});
+  await Promise.all([guest.waitForURL(site.origin+'/index.html'),guest.locator('[data-action="leave-room"]').click()]);
+  await guest.locator('[data-action="import"]').waitFor();
+  await host.waitForFunction(()=>Object.values(GameApp.getState().room.members).some(m=>m.actorId==='b'&&!m.connected));
+  assert.equal(await host.evaluate(()=>GameApp.getState().room.online),true);
+  await host.evaluate(()=>GameApp.closeRoom());assert.deepEqual(errors,[]);
+});
 
 test('real Bridge sockets preserve host authority, private views, fragmented sync, reconnect and rollback', {timeout:120000},async t=>{
   t.diagnostic(bridge.external?'使用 BRIDGE_URL 指定服务，通过完整握手及真实消息验证':'已启动独立 Bridge 进程 PID '+bridge.pid+'：'+bridge.executable);
@@ -46,6 +160,7 @@ test('real Bridge sockets preserve host authority, private views, fragmented syn
   assert.match(await host.locator('body').innerText(),/只有房主产生 token 消耗/);
   await host.locator('#slot-mode-b').selectOption('player');await host.locator('[data-action="slot-mode"][data-actor="b"]').click();
   await host.locator('#room-invitation-b').waitFor({state:'attached'});
+  await host.locator('[data-slot="b"] [data-presence="waiting"]').waitFor();
   assert.equal(await host.locator('[data-action="copy-invitation"][data-actor="b"]').count(),1);
   assert.equal(await host.locator('[data-action="copy-join-key"][data-actor="b"]').count(),1);
   await host.setViewportSize({width:390,height:844});
@@ -68,20 +183,28 @@ test('real Bridge sockets preserve host authority, private views, fragmented syn
   try{await guest.waitForFunction(()=>GameApp.getState().active?.actorId==='b');}catch(error){
     const diagnostic=await guest.evaluate(()=>({actorId:GameApp.getState().active?.actorId,room:GameApp.getState().room,network:GameApp.getState().network}));
     t.diagnostic(JSON.stringify(diagnostic));throw error;
-  }await closeModal(host);await closeModal(guest);
+  }
+  await host.locator('[data-slot="b"] [data-presence="online"]').waitFor();
+  assert.equal(await host.locator('#room-invitation-b').inputValue(),invitationCode,'presence updates preserve invitation controls');
+  await closeModal(host);await closeModal(guest);
   assert.equal(await host.evaluate(async()=>{try{await GameApp.configureSlots('b');return true;}catch{return false;}}),false,'开局后房主不能改换自己的角色');
   assert.deepEqual(await guest.evaluate(()=>[typeof GameCore,typeof GameTransport,typeof VFS]),['undefined','undefined','undefined']);
   await guest.locator('[data-action="room-panel"]').click();await guest.locator('[data-action="player-profile"][data-actor="a"]').click();
   await guest.waitForFunction(()=>document.querySelector('.player-profile')?.textContent.includes('公开职业-a'));
   for(const hidden of ['不公开人物','不公开密码','不公开位置'])assert.ok(!(await guest.locator('.player-profile').innerText()).includes(hidden));
   await closeModal(guest);
-  await guest.locator('#action-input').fill('待取消的公开行动');await guest.locator('#action-private-input').fill('待取消的秘密行动');
+  assert.equal(await guest.locator('#action-private-input').count(),0,'private controls start collapsed');
+  await guest.locator('#hidden-send-toggle').check();
+  assert.equal(await guest.locator('#action-private-input').count(),0,'hidden-only action uses the main input');
+  await guest.locator('#disguise-send-toggle').check();
+  await guest.locator('#action-input').fill('待取消的秘密行动');await guest.locator('#action-private-input').fill('待取消的公开行动');
   await guest.locator('#action-form button[type="submit"]').click();await guest.locator('[data-action="cancel-action"]').waitFor();
   await guest.locator('[data-action="cancel-action"]').click();
   await host.waitForFunction(()=>!GameApp.multiplayerState().submissions.b);
   await guest.waitForFunction(()=>GameApp.getState().active.inputHistory.at(-1)?.status==='cancelled');
   await guest.waitForFunction(()=>GameApp.getState().room.submitted===false);
-  assert.equal(await guest.locator('#action-input').inputValue(),'待取消的公开行动');assert.equal(await guest.locator('#action-private-input').inputValue(),'待取消的秘密行动');
+  assert.equal(await guest.locator('#action-input').inputValue(),'待取消的秘密行动');assert.equal(await guest.locator('#action-private-input').inputValue(),'待取消的公开行动');
+  assert.equal(await guest.locator('#hidden-send-toggle').isChecked(),true);assert.equal(await guest.locator('#disguise-send-toggle').isChecked(),true);
   assert.ok(await guest.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'双输入框在窄屏不能横向溢出');
   await guest.screenshot({path:path.join(__dirname,'../artifacts/multiplayer-dual-input-390.png'),fullPage:true});
   assert.ok(!(await host.locator('#history').innerText()).includes('待取消的公开行动'));assert.equal(modelRequests,1);
@@ -104,7 +227,7 @@ test('real Bridge sockets preserve host authority, private views, fragmented syn
   const homeRoom=await host.evaluate(()=>({id:GameApp.getState().active.id,roomId:GameApp.multiplayerState().roomId})),homeSockets=hostSockets.length;
   await host.locator('.home-button').click();await host.locator('.save-grid').waitFor();assert.equal(await host.locator('#connection-lamp').count(),0);assert.equal(await host.evaluate(()=>GameApp.multiplayerState().online),true);
   await guest.waitForFunction(()=>!document.querySelector('#action-input')?.disabled&&document.querySelector('.character')?.textContent.includes('乙'));
-  await guest.locator('#action-input').fill('乙检查车站的大门');await guest.locator('#action-private-input').fill('乙悄悄记录门锁');await guest.locator('#action-private-input').press('Control+Enter');
+  await guest.locator('#action-input').fill('乙悄悄记录门锁');await guest.locator('#action-private-input').fill('乙检查车站的大门');await guest.locator('#action-private-input').press('Control+Enter');
   await waitHost(host,2);await guest.waitForFunction(()=>GameApp.getState().active.round===2&&document.querySelector('#history')?.textContent.includes('长篇同步终点'));
   assert.equal(await host.locator('.save-grid').count(),1,'background completion does not leave home');assert.equal(await host.locator('#connection-lamp').count(),0);
   await host.locator(`[data-action="open-save"][data-id="${homeRoom.id}"]`).click();await host.locator('#history').waitFor();assert.equal(await host.locator('[role="alertdialog"]').count(),0);assert.equal(await host.evaluate(()=>GameApp.multiplayerState().roomId),homeRoom.roomId);assert.equal(hostSockets.length,homeSockets,'returning to the same save does not reconnect');
@@ -131,7 +254,13 @@ test('real Bridge sockets preserve host authority, private views, fragmented syn
   assert.ok(await guest.evaluate(()=>window.bridgeTestRequests.some(request=>request.type==='sync.request'&&request.payload?.hashes?.history&&request.payload?.cursor>0)),'重连/同步携带已确认历史 hash 与增量游标');
   assert.equal(modelRequests,2,'重连不能重新启动模型回合');
 
-  await guest.goto('about:blank');await guest.goto(invitation);await guest.waitForFunction(()=>GameApp.getState().active?.actorId==='b'&&GameApp.getState().active.round===2);
+  await host.locator('[data-action="room-panel"]').click();
+  await host.locator('[data-slot="b"] [data-presence="online"]').waitFor();
+  await guest.goto('about:blank');
+  await host.locator('[data-slot="b"] [data-presence="offline"]').waitFor();
+  await guest.goto(invitation);await guest.waitForFunction(()=>GameApp.getState().active?.actorId==='b'&&GameApp.getState().active.round===2);
+  await host.locator('[data-slot="b"] [data-presence="online"]').waitFor();
+  await closeModal(host);
   assert.deepEqual(await guest.evaluate(()=>GameApp.exportView().events.map(event=>event.id)),ids,'完整邀请链接可一键恢复同一槽位且不重复回合');
   assert.equal(await guest.evaluate(()=>GameApp.getState().active?.draft),'重连时保留的草稿',JSON.stringify(await guest.evaluate(()=>({network:GameApp.getState().network,room:GameApp.getState().room}))));
 
@@ -153,7 +282,8 @@ test('real Bridge sockets preserve host authority, private views, fragmented syn
   for(const p of [host,guest])for(const text of ['乙检查车站的大门','乙悄悄记录门锁','甲的隐秘行动'])assert.ok(!(await p.locator('#history').innerText()).includes(text),'rollback removes all actors actions from story history');
   for(const p of [host,guest])await p.waitForFunction(()=>!document.querySelector('[data-action="rollback-vote"]'));
   assert.equal(await guest.locator('[data-action="input-history"]').count(),0);
-  assert.equal(await guest.locator('#action-input').inputValue(),'乙检查车站的大门');assert.equal(await guest.locator('#action-private-input').inputValue(),'乙悄悄记录门锁');
+  assert.equal(await guest.locator('#action-input').inputValue(),'乙悄悄记录门锁');assert.equal(await guest.locator('#action-private-input').inputValue(),'乙检查车站的大门');
+  assert.equal(await guest.locator('#hidden-send-toggle').isChecked(),true);assert.equal(await guest.locator('#disguise-send-toggle').isChecked(),true);
   await guest.evaluate(()=>GameApp.reconnectRoom());await guest.waitForFunction(()=>GameApp.getState().network.status==='connected'&&GameApp.getState().active.round===1);
   assert.ok(!(await guest.evaluate(()=>JSON.stringify(GameApp.exportView().events))).includes('乙检查车站的大门'),'reconnect cannot resurrect rolled-back actions');
   await host.evaluate(()=>GameApp.closeRoom());await guest.waitForFunction(()=>GameApp.getState().room?.online===false);
@@ -207,4 +337,39 @@ test('closing and reopening a player slot invalidates its previous invitation', 
   assert.equal(await guest.evaluate(async key=>{try{await GameApp.joinRoom(key);return true;}catch{return false;}},newKey),false,'occupied slot conversion revokes its invitation');
   await host.evaluate(()=>GameApp.closeRoom());
   assert.ok(sockets.some(socket=>socket.url.includes('/server/'))&&sockets.some(socket=>socket.url.includes('/client/')));assert.deepEqual(errors,[]);
+});
+
+test('host reload and explicit reopen preserve invitation keys and keep credentials out of world files', {timeout:60000},async t=>{
+  const errors=[],sockets=[],host=await pageFor(t,errors,sockets),guest=await pageFor(t,errors,[]);
+  await host.goto(site.origin+'/index.html');await host.locator('[data-action="import"]').waitFor();
+  const original=await host.evaluate(async bridgeUrl=>{
+    await GameApp.updateSettings({bridgeUrl});
+    const files=['a','b','c'].flatMap(id=>[{name:`Player-${id}/基础信息.json`,text:JSON.stringify({姓名:id})},{name:`Player-${id}/背包.json`,text:'[]'}]);
+    await GameApp.importSave(new File([ZIP.makeZip(files)],'保留邀请.zip'));await GameApp.configureSlots('a');
+    const b=await GameApp.setInvitationSlot('b','player'),c=await GameApp.setInvitationSlot('c','player');
+    const id=GameApp.getState().active.id,store=GameStore.create();await store.open();const record=await store.getRoomConfig(id);
+    return {id,b,c,roomId:record.roomId,credentialsPresent:!!record.credentials.token&&!JSON.stringify(await store.getSave(id)).includes(record.credentials.token)&&!JSON.stringify(GameApp.currentContext()).includes(record.credentials.token)};
+  },bridge.url);
+  assert.equal(original.credentialsPresent,true);
+  await host.reload();await host.locator('[data-action="import"]').waitFor();const socketCount=sockets.length;
+  await host.locator(`[data-action="open-save"][data-id="${original.id}"]`).click();await host.locator('#history').waitFor();
+  assert.equal(await host.evaluate(()=>GameApp.multiplayerState().online),false);assert.equal(sockets.length,socketCount,'reloading and opening a save stay offline');
+  await closeModal(host);await host.locator('[data-action="room-panel"]').click();
+  assert.equal(await host.locator('#room-invitation-b').inputValue(),original.b.key);
+  await host.locator('#slot-mode-b').selectOption('player');await host.locator('[data-action="slot-mode"][data-actor="b"]').click();
+  await host.waitForFunction(()=>GameApp.getState().network?.status==='connected');
+  assert.equal(await host.evaluate(()=>GameApp.multiplayerState().roomId),original.roomId);
+  assert.deepEqual(await host.evaluate(()=>GameApp.getState().network.invites.map(i=>i.key)),[original.b.key,original.c.key]);
+  await guest.goto(original.b.link);await guest.waitForFunction(()=>GameApp.getState().active?.actorId==='b');
+  await host.locator('[data-slot="b"] [data-presence="online"]').waitFor();
+  await host.evaluate(()=>GameApp.closeRoom());await host.evaluate(()=>GameApp.setInvitationSlot('b','player'));
+  assert.equal(await host.evaluate(()=>GameApp.getState().network.invites.find(i=>i.actorId==='b').key),original.b.key);
+  await guest.reload();await guest.waitForFunction(()=>GameApp.getState().active?.actorId==='b');
+  await host.evaluate(()=>GameApp.setInvitationSlot('c','disabled'));await host.evaluate(()=>GameApp.closeRoom());
+  await host.reload();await host.locator(`[data-action="open-save"][data-id="${original.id}"]`).click();await host.locator('#history').waitFor();
+  await host.evaluate(()=>GameApp.setInvitationSlot('b','player'));
+  const stale=await guest.evaluate(async key=>{try{await GameApp.joinRoom(key);return true;}catch{return false;}},original.c.key);
+  assert.equal(stale,false,'revoked invitations stay revoked after host reload');
+  const fresh=await host.evaluate(()=>GameApp.setInvitationSlot('c','player'));assert.notEqual(fresh.key,original.c.key);
+  await host.evaluate(()=>GameApp.closeRoom());assert.deepEqual(errors,[]);
 });

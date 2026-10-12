@@ -31,6 +31,31 @@ test('concurrent submissions collect exactly once, repeat receipts, preserve pri
   await assert.rejects(host.handle('member-b',{...b,requestId:'late'}),{code:'STALE_ROUND'});
 });
 
+test('opening waits for every invited player to join and be online',async t=>{
+ const f=await fixture(t,{count:1,status:'new'});
+ VFS.writeFile(f.save.tree,'/workspace/Player-b/基础信息.json','{}');VFS.writeFile(f.save.tree,'/workspace/Player-b/背包.json','[]');require('../../src/game-slots').ensure(f.save);
+ await f.host.open();await f.host.reserveInvitation('guest','b');
+ await assert.rejects(f.send('host','round.start'),e=>e.code==='WAITING_PLAYERS'&&/开放给玩家.*没有玩家加入/.test(e.message));assert.equal(f.runs.length,0);
+ await f.host.joinInvitation('guest');await f.host.setConnected('guest',false);
+ await assert.rejects(f.send('host','round.start'),{code:'WAITING_PLAYERS'});assert.equal(f.runs.length,0);
+ await f.host.setConnected('guest',true);await f.send('host','round.start');await f.host.waitForIdle();assert.equal(f.runs.length,1);
+});
+
+test('disconnect before submission waits; host skip or reconnect submission completes the round',async t=>{
+ for(const skip of [false,true]){
+   const f=await fixture(t);await f.host.setConnected('member-b',false);await f.send('host','action.submit',{content:'甲行动'});await f.host.waitForIdle();assert.equal(f.runs.length,0);
+   if(skip)await f.send('host','action.hostSkip',{memberId:'member-b'});
+   else{await f.host.setConnected('member-b',true);await f.send('member-b','action.submit',{content:'乙重连后行动'});}
+   await f.host.waitForIdle();assert.equal(f.runs.length,1);assert.equal(f.runs[0].actions.length,2);
+ }
+});
+
+test('submitted action remains valid after disconnect until the remaining players submit',async t=>{
+ const f=await fixture(t);await f.send('member-b','action.submit',{content:'乙已提交'});await f.host.setConnected('member-b',false);
+ await f.send('host','action.submit',{content:'甲随后提交'});await f.host.waitForIdle();assert.equal(f.runs.length,1);assert.equal(f.runs[0].actions.find(a=>a.actorId==='b').content,'乙已提交');
+ await f.send('host','action.submit',{content:'甲下一回合'});await f.host.waitForIdle();assert.equal(f.runs.length,1);
+});
+
 test('cancel only removes the requesting waiting action, restores both drafts, and refuses frozen rounds',async t=>{
  let finishRun;const gate=new Promise(r=>finishRun=r),f=await fixture(t,{execute:async(a,o,{finish})=>{await gate;finish();}});
   await f.send('member-b','action.submit',{content:'旧公开行动',privateContent:'旧秘密'});
@@ -233,8 +258,9 @@ test('reserved invitation actors stay outside actions until join and cannot be c
  const f=await fixture(t,{count:1});VFS.writeFile(f.save.tree,'/workspace/Player-b/基础信息.json','{}');VFS.writeFile(f.save.tree,'/workspace/Player-b/背包.json','[]');require('../../src/game-slots').ensure(f.save);
  await f.host.open();await f.host.reserveInvitation('guest','b');assert.equal(f.host.state().participants.length,1);assert.equal(f.host.state().members.guest.connected,false);
  await f.host.addMember('other');await assert.rejects(f.send('other','slot.claim.request',{actorId:'b'}),{code:'OCCUPIED'});
- await f.send('host','action.submit',{content:'等待'});await f.host.waitForIdle();assert.equal(f.runs.length,1);assert.equal(f.runs[0].actions.length,1);
+ await f.send('host','action.submit',{content:'等待'});await f.host.waitForIdle();assert.equal(f.runs.length,0);
  await f.host.joinInvitation('guest');assert.equal(f.host.state().participants.length,2);assert.equal(f.host.state().members.guest.actorId,'b');
+ await f.send('guest','action.skip');await f.host.waitForIdle();assert.equal(f.runs.length,1);assert.equal(f.runs[0].actions.length,2);
  await f.host.setConnected('guest',false);await assert.rejects(f.host.cancelInvitation('guest','disabled'),{code:'OCCUPIED'});
 });
 

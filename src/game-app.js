@@ -4,7 +4,7 @@ const GameApp=(()=>{
     reasoningEffort:'high',maxToolLoops:60,httpTimeoutSeconds:180,maxRetries:2,worldListSource:'',bridgeUrl:'wss://mc.birdry.cn:8443/',manualDice:false,autoAdvanceUnconscious:true,reverseSendNewline:false,promptOverrides:{}};
   const S={saves:[],active:null,home:false,switching:false,settings:{...defaults},mode:'play',running:false,importing:null,stream:{content:'',reasoning:'',tools:[],story:'',storyPublished:0},error:null,storageWarning:null,usage:null};
   const db=GameStore.create();const listeners=new Set();let controller=null,initialized=false,storage=null,lease=null;
-  let hostSession=null,syncHost=null,roomTransport=null,transportStop=null,publishedSave=null,localInputOwner='',bridgeSession=null,bridgeGeneration=0,invitationQueue=Promise.resolve();
+  let hostSession=null,syncHost=null,roomTransport=null,transportStop=null,publishedSave=null,localInputOwner='',bridgeSession=null,bridgeGeneration=0,invitationQueue=Promise.resolve(),savedRoom=null,bridgeClosing=Promise.resolve();
   const invitationTask=fn=>{const job=invitationQueue.then(fn);invitationQueue=job.catch(()=>{});return job;};
   const inputScope=s=>({gameId:s.id,memberId:'host',actorId:s.actorId});
   const localInputs=()=>GameLocalInputs.create(storage);
@@ -12,17 +12,17 @@ const GameApp=(()=>{
     const scope=inputScope(s),epoch=s.multiplayer?.epoch||0,old=localInputs().load(scope);
     if(epoch>old.epoch){Object.assign(s,localInputs().rollback(scope,{round:s.round,epoch}));return;}
     const records=(s.inputHistory||[]).map(r=>({...r,epoch:r.epoch??epoch,privateContent:r.privateContent||'',status:r.status||(r.rolledBack?'retracted':'accepted')}));
-    localInputs().save(scope,{epoch,inputHistory:records,draft:s.draft||'',privateDraft:s.privateDraft||'',draftRound:s.draftRound||s.round+1,draftVersion:s.draftVersion||0});
+    localInputs().save(scope,{epoch,inputHistory:records,draft:s.draft||'',privateDraft:s.privateDraft||'',hiddenSend:s.hiddenSend??!!s.privateDraft,disguiseSend:s.disguiseSend??!!(s.privateDraft&&s.draft),draftRound:s.draftRound||s.round+1,draftVersion:s.draftVersion||0});
   }catch(error){S.storageWarning=error.message;}}
   function loadLocalInputs(s){localInputOwner=JSON.stringify(inputScope(s));if(!storage)return;try{
     const scope=inputScope(s),saved=localInputs().load(scope);
-    if(saved.inputHistory.length||saved.draft||saved.privateDraft)Object.assign(s,saved);
+    if(saved.inputHistory.length||saved.draft||saved.privateDraft||saved.hiddenSend||saved.disguiseSend)Object.assign(s,saved);
     else saveLocalInputs();
   }catch(error){S.storageWarning=error.message;}}
   async function setupHost(s){
-    stopBridge();hostSession?.dispose();GameSlots.ensure(s);s.actorId||=s.slots.find(x=>x.path===s.playerPath)?.id;
+    await stopBridge();hostSession?.dispose();savedRoom=await db.getRoomConfig?.(s.id)||null;S.savedInvites=structuredClone(savedRoom?.invites||[]);GameSlots.ensure(s);s.actorId||=s.slots.find(x=>x.path===s.playerPath)?.id;
     loadLocalInputs(s);publishedSave=structuredClone(s);
-    hostSession=MultiplayerHost.create({getSave:()=>s,getSettings:()=>S.settings,persist:async()=>{if(localInputOwner!==JSON.stringify(inputScope(s))){s.inputHistory=[];s.draft='';s.privateDraft='';s.draftVersion=0;loadLocalInputs(s);}await persist();saveLocalInputs();},
+    hostSession=MultiplayerHost.create({getSave:()=>s,getSettings:()=>S.settings,persist:async()=>{if(localInputOwner!==JSON.stringify(inputScope(s))){s.inputHistory=[];s.draft='';s.privateDraft='';s.hiddenSend=false;s.disguiseSend=false;s.draftVersion=0;loadLocalInputs(s);}await persist();saveLocalInputs();},
       execute:async(actions,options)=>{
         publishedSave=structuredClone(s);
         const own=actions.find(x=>x.memberId==='host');
@@ -72,11 +72,13 @@ const GameApp=(()=>{
         if(bridgeSession){const invited=S.network?.invites?.find(x=>x.memberId===memberId),bound=hostSession.state().members[memberId];if(!invited||bound?.actorId!==invited.actorId||!bound.connected||command.type==='slot.claim.request')throw Error('邀请仅允许使用指定角色');}
         if(command.type==='sync.ack'){clientCursors.set(memberId,command.payload||{});return;}
         if(command.type==='sync.request'){clientCursors.set(memberId,command.payload||{});scheduleClientSync(memberId,true);return;}
-        if(command.type==='profile.request'){
+        if(['profile.request','inventory.request'].includes(command.type)){
           const r=hostSession.state(),m=r.members[memberId];
           if(typeof command.requestId!=='string'||command.requestId.length>160||command.roomId!==r.roomId||command.epoch!==r.epoch||command.bindingVersion!==m?.bindingVersion)throw Error('资料请求已失效');
-          if(Date.now()-(profileRequests.get(memberId)||0)<250)throw Error('资料请求过于频繁');profileRequests.set(memberId,Date.now());
-          await transport.sendToClient(memberId,{type:'command.result',requestId:command.requestId,ok:true,profile:MultiplayerSync.profile(active(),command.payload?.actorId,{room:r,memberId})});return;
+          const kind=command.type==='inventory.request'?'inventory':'profile';
+          const requestTimes=profileRequests.get(memberId)||{};
+          if(Date.now()-(requestTimes[kind]||0)<250)throw Error('资料请求过于频繁');profileRequests.set(memberId,{...requestTimes,[kind]:Date.now()});
+          await transport.sendToClient(memberId,{type:'command.result',requestId:command.requestId,ok:true,[kind]:MultiplayerSync[kind](active(),command.payload?.actorId,{room:r,memberId})});return;
         }
         const receipt=await hostSession.handle(memberId,command);await transport.sendToClient(memberId,{type:'command.result',...receipt});
       }catch(error){await transport.sendToClient(memberId,{type:'command.result',requestId:command.requestId,ok:false,error:error.code||'REQUEST_REJECTED',message:'请求未执行，请同步后重试或联系房主。'});}
@@ -90,49 +92,60 @@ const GameApp=(()=>{
     const result=await hostSession.handle('host',{type,payload,requestId:GameCore.uid(),roomId:r.roomId,epoch:r.epoch,roundId:r.roundId,bindingVersion:m.bindingVersion});
     await hostSession.waitForIdle();emit();return result;
   }
-  async function submitAction(content,privateContent=''){
+  async function submitAction(content,privateContent='',options={}){
     const s=active();if(!String(content).trim()&&!String(privateContent).trim())return;
     if(s.status==='new')return start();
     const r=hostSession.state(),round=s.round+1;
-    GameInputs.ensure(s);const entry={round,roundId:r.roundId,text:String(content),privateContent:String(privateContent),epoch:r.epoch,status:'pending'};s.inputHistory=s.inputHistory.filter(x=>x.roundId!==r.roundId).concat(entry).slice(-10);saveLocalInputs();
-    const result=await roomCommand('action.submit',{content:String(content),privateContent:String(privateContent)});
+    GameInputs.ensure(s);const hiddenSend=options.hiddenSend??!!privateContent,disguiseSend=hiddenSend&&(options.disguiseSend??!!content),entry={round,roundId:r.roundId,text:String(content),privateContent:String(privateContent),hiddenSend,disguiseSend,epoch:r.epoch,status:'pending'};s.inputHistory=s.inputHistory.filter(x=>x.roundId!==r.roundId).concat(entry).slice(-10);s.hiddenSend=hiddenSend;s.disguiseSend=disguiseSend;saveLocalInputs();
+    const result=await roomCommand('action.submit',{content:String(content),privateContent:String(privateContent),...options.disguiseSend===true?{disguise:true}:{}});
     const accepted=s.inputHistory.find(x=>x.roundId===r.roundId);if(accepted)accepted.status='accepted';
     s.draft='';s.privateDraft='';s.draftRound=s.round+1;saveLocalInputs();await persist();emit();return result;
   }
   async function configureSlots(actorId,modes={}){idle();const s=active();peerCheck(s);if(hostSession?.state().status!=='selecting')throw Error('房主只能在首次进入存档时选择角色，之后不能切换');saveLocalInputs();
-    if(hostSession?.state().status==='selecting'){GameSlots.select(s,actorId,modes);s.inputHistory=[];s.draft='';s.privateDraft='';s.draftVersion=0;loadLocalInputs(s);await hostSession.initialize(actorId);}
+    if(hostSession?.state().status==='selecting'){GameSlots.select(s,actorId,modes);s.inputHistory=[];s.draft='';s.privateDraft='';s.hiddenSend=false;s.disguiseSend=false;s.draftVersion=0;loadLocalInputs(s);await hostSession.initialize(actorId);}
     GameInputs.advance(s);saveLocalInputs();publishedSave=structuredClone(s);await persist();emit();
   }
   async function openRoom(){idle();if(!S.active.slotsConfigured)throw Error('请先选择角色槽位');return hostSession.open();}
-  async function closeRoom(){const previous=hostSession.state();await hostSession.close();for(const id of Object.keys(previous.members))if(id!=='host')try{await roomTransport?.sendToClient(id,{type:'room.closed',roomId:previous.roomId});}catch(_){}stopBridge();emit();}
-  function stopBridge(){bridgeGeneration++;clearClientSyncJobs();profileRequests.clear();const previous=bridgeSession;bridgeSession=null;previous?.close();transportStop?.();transportStop=null;roomTransport=null;clientCursors.clear();S.network=null;}
+  async function closeRoom(){const previous=hostSession.state();await hostSession.close();for(const id of Object.keys(previous.members))if(id!=='host')try{await roomTransport?.sendToClient(id,{type:'room.closed',roomId:previous.roomId});}catch(_){}await stopBridge();emit();}
+  function stopBridge(){bridgeGeneration++;clearClientSyncJobs();profileRequests.clear();const previous=bridgeSession;bridgeSession=null;if(previous)bridgeClosing=Promise.resolve(previous.close()).catch(()=>{});transportStop?.();transportStop=null;roomTransport=null;clientCursors.clear();S.network=null;return bridgeClosing;}
+  async function saveRoomRecord(value){
+    const id=value?.saveId||active().id;await db.putRoomConfig?.(id,value);if(S.active?.id===id){savedRoom=structuredClone(value);S.savedInvites=structuredClone(value?.invites||[]);}
+  }
+  async function forgetSavedInvite(memberId){if(savedRoom)await saveRoomRecord({...savedRoom,invites:savedRoom.invites.filter(i=>i.memberId!==memberId)});}
   async function openOnlineRoom(){
     idle();peerCheck(active());if(S.network?.status==='connecting')throw Error('正在连接联机服务');
     if(bridgeSession&&S.network?.status==='connected')return;
     if(!String(S.settings.bridgeUrl||'').trim())throw Error('请在设置中填写联机服务地址');
-    const url=BridgeTransport.validateServerUrl(S.settings.bridgeUrl),domain=hostSession;
+    const url=BridgeTransport.validateServerUrl(S.settings.bridgeUrl),domain=hostSession,saveId=active().id;
     if(domain?.state().online)throw Error('请先关闭当前房间后重新开房');
+    await bridgeClosing;
+    if(savedRoom?.invites.length&&savedRoom.url!==url)throw Error('已有邀请使用另一联机服务，请切回原服务地址，或先关闭这些玩家槽位再重新开放。');
+    const restored=savedRoom?.url===url?savedRoom:null;
     const generation=++bridgeGeneration;S.network={status:'connecting',message:'正在创建联机房间',invites:[]};emit();
     try{
-      const room=await openRoom();
-      const session=await BridgeTransport.createHost({url,roomId:room.roomId,title:active().name,
+      const room=restored?await domain.open({roomId:restored.roomId}):await openRoom();
+      const invites=(restored?.invites||[]).filter(i=>active().slots.some(slot=>slot.id===i.actorId&&slot.kind!=='kpc'&&slot.id!==active().actorId));
+      for(const invite of invites)if(!domain.state().members[invite.memberId])await domain.reserveInvitation(invite.memberId,invite.actorId);
+      S.network.invites=structuredClone(invites);
+      const session=await BridgeTransport.createHost({url,roomId:room.roomId,title:active().name,credentials:restored?.credentials,players:invites.map(i=>BridgeTransport.parseInvitation(i.key)),
         onMember:event=>invitationTask(async()=>{if(generation!==bridgeGeneration)return;const invited=S.network?.invites?.find(x=>x.memberId===event.memberId);if(!invited)return;if(event.type==='joined')await domain.joinInvitation(event.memberId);else if(domain.state().members[event.memberId])await domain.setConnected(event.memberId,false);}),
-        onState:info=>{if(generation!==bridgeGeneration)return;S.network={...S.network,...info};if(info.status==='closed'||info.status==='disconnected')for(const id of Object.keys(domain.state().members))if(id!=='host')domain.setConnected(id,false).catch(()=>{});emit();}
+        onState:info=>{if(generation!==bridgeGeneration)return;S.network={...S.network,...info};if(info.status!=='connected')for(const [id,m]of Object.entries(domain.state().members))if(id!=='host'&&m.connected)domain.setConnected(id,false).catch(()=>{});emit();}
       });
       if(generation!==bridgeGeneration){session.close();throw Error('开房已取消');}
-      bridgeSession=session;await attachMultiplayerTransport(session.transport);S.network={...S.network,status:'connected',message:'联机房间已开启'};emit();
-    }catch(error){if(generation===bridgeGeneration){try{if(domain.state().online)await domain.close();}catch(_){}S.network={status:'disconnected',message:error.message,code:error.code,invites:[]};emit();}throw error;}
+      bridgeSession=session;await saveRoomRecord({version:1,saveId,url,roomId:room.roomId,credentials:session.credentials?.(),invites});await attachMultiplayerTransport(session.transport);S.network={...S.network,status:'connected',message:'联机房间已开启'};emit();
+    }catch(error){if(generation===bridgeGeneration){await stopBridge();try{if(domain.state().online)await domain.close();}catch(_){}S.network={status:'disconnected',message:error.message,code:error.code,invites:[]};emit();}throw error;}
   }
   function setInvitationSlot(actorId,kind){const domain=hostSession;return invitationTask(async()=>{
     idle();peerCheck(active());if(domain!==hostSession)throw Error('存档已经切换');if(!['player','ai','disabled'].includes(kind))throw Error('请选择玩家、AIPC 或关闭');
     const slot=active().slots.find(x=>x.id===actorId&&x.kind!=='kpc');if(!slot)throw Error('世界需要有空白角色槽位');
-    const occupied=Object.entries(domain.state().members).find(([,m])=>m.actorId===actorId),existing=S.network?.invites?.find(x=>x.actorId===actorId);
+    const cached=savedRoom?.invites.find(i=>i.actorId===actorId),occupied=Object.entries(domain.state().members).find(([,m])=>m.actorId===actorId),existing=S.network?.invites?.find(x=>x.actorId===actorId);
     if(occupied){
       if(occupied[0]==='host')throw Error('房主角色已锁定，不能更改控制方式');
       if(kind==='player'&&existing)return structuredClone(existing);
       if(kind!=='ai')throw Error('已占用槽位可以由房主转为 NPC');
       const session=bridgeSession,id=occupied[0];if(!session)throw Error('请先连接房间');
-      await domain.release(id,'ai',{forget:true});
+      const beforeRecord=savedRoom;await forgetSavedInvite(id);
+      try{await domain.release(id,'ai',{forget:true});}catch(error){try{await saveRoomRecord(beforeRecord);}catch(_){session.close();}throw error;}
       S.network.invites=S.network.invites.filter(x=>x.memberId!==id);clientCursors.delete(id);profileRequests.delete(id);
       const job=clientSyncJobs.get(id);if(job)clearTimeout(job.timer);clientSyncJobs.delete(id);
       try{await session.revoke(id);}catch(_){session.close();S.network={...S.network,status:'closed',message:'无法确认玩家权限撤销，房间连接已关闭'};emit();throw Error('角色已转为 NPC，但无法确认玩家权限撤销，房间连接已关闭');}
@@ -140,28 +153,32 @@ const GameApp=(()=>{
     }
     if(kind!=='player'){
       if(existing){const session=bridgeSession,generation=bridgeGeneration;if(!session)throw Error('房间已关闭');
-        await domain.cancelInvitation(existing.memberId,kind);
-        try{await session.revoke(existing.memberId);if(generation!==bridgeGeneration)throw Error('房间已经关闭');}
-        catch(error){if(generation===bridgeGeneration)try{await domain.reserveInvitation(existing.memberId,actorId);}catch(_){session.close();S.network.invites=S.network.invites.filter(x=>x.memberId!==existing.memberId);}throw error;}
+        const beforeRecord=savedRoom;await forgetSavedInvite(existing.memberId);
+        try{
+          await domain.cancelInvitation(existing.memberId,kind);
+          try{await session.revoke(existing.memberId);if(generation!==bridgeGeneration)throw Error('房间已经关闭');}
+          catch(error){if(generation===bridgeGeneration)try{await domain.reserveInvitation(existing.memberId,actorId);}catch(_){session.close();S.network.invites=S.network.invites.filter(x=>x.memberId!==existing.memberId);}throw error;}
+        }catch(error){try{await saveRoomRecord(beforeRecord);}catch(_){session.close();}throw error;}
         S.network.invites=S.network.invites.filter(x=>x.memberId!==existing.memberId);clientCursors.delete(existing.memberId);
       }
-      else await roomCommand('slot.mode',{actorId,kind});emit();return null;
+      else {const beforeRecord=savedRoom;if(cached)await forgetSavedInvite(cached.memberId);try{await roomCommand('slot.mode',{actorId,kind});}catch(error){if(cached)await saveRoomRecord(beforeRecord);throw error;}}emit();return null;
     }
     if(existing)return structuredClone(existing);
     await openOnlineRoom();if(domain!==hostSession)throw Error('存档已经切换');
+    const resumed=S.network.invites.find(i=>i.actorId===actorId);if(resumed)return structuredClone(resumed);
     const session=bridgeSession,generation=bridgeGeneration,memberId='p_'+crypto.randomUUID().replaceAll('-',''),oldKind=slot.kind;
     await domain.reserveInvitation(memberId,actorId);
     try{
       const invitation=await session.invite(memberId);if(generation!==bridgeGeneration)throw Error('房间已经关闭');
       const key=BridgeTransport.encodeInvitation(invitation),url=new URL('client.html',location.href);url.search='';url.hash='join='+key;
-      const result={actorId,memberId,key,link:url.href};S.network.invites.push(result);emit();return structuredClone(result);
+      const result={actorId,memberId,key,link:url.href};await saveRoomRecord({...savedRoom,invites:[...S.network.invites,result]});S.network.invites.push(result);emit();return structuredClone(result);
     }catch(error){try{await session.revoke(memberId);}catch(_){}if(generation===bridgeGeneration)try{await domain.cancelInvitation(memberId,oldKind==='ai'?'ai':'disabled');}catch(_){}throw error;}
   });}
   async function createInvitation(actorId){
     if(!actorId){const occupied=new Set(Object.values(hostSession.state().members).map(m=>m.actorId));actorId=active().slots.find(s=>s.kind!=='kpc'&&!occupied.has(s.id)&&!S.network?.invites?.some(i=>i.actorId===s.id))?.id;}
     if(!actorId)throw Error('世界需要有空白角色槽位');return (await setInvitationSlot(actorId,'player')).link;
   }
-  async function revokeInvitation(memberId){const invite=S.network?.invites?.find(x=>x.memberId===memberId);if(!invite)throw Error('邀请已失效');await setInvitationSlot(invite.actorId,'disabled');}
+  async function revokeInvitation(memberId){const invite=(S.network?.invites||S.savedInvites)?.find(x=>x.memberId===memberId);if(!invite)throw Error('邀请已失效');await setInvitationSlot(invite.actorId,'disabled');}
   const multiplayerState=()=>hostSession?.state();
   async function requestRollback(){const snap=active().snapshots.at(-1);if(!snap)throw Error('没有可回退的回合');return roomCommand('rollback.request',{targetRound:snap.round,targetRoundId:snap.inputRoundId});}
   async function decideHostRollback(decision){idle();peerCheck(active());const snap=active().snapshots.at(-1);if(!snap)throw Error('没有可回退的回合');const result=await roomCommand('rollback.host',{targetRound:snap.round,targetRoundId:snap.inputRoundId,decision});if(decision==='approve')S.lastRequest=null;emit();return result;}
@@ -249,7 +266,7 @@ const GameApp=(()=>{
     if(s.activeRound&&(!s.activeRound.complete||pendingBatch(s)))s.status='interrupted';S.active=s;S.home=false;restoreLastRequest(s);S.mode='play';S.error=s.error||null;await setupHost(s);emit();return s;}
   function closeSave(){idle();stopBridge();hostSession?.dispose();hostSession=null;S.room=null;S.active=null;S.home=false;S.error=null;emit();}
   async function renameSave(id,name){idle();const s=id===S.active?.id?S.active:await db.getSave(id);if(!s)throw Error('存档不存在');peerCheck(s);s.name=String(name).trim()||s.name;await db.putSave(s);S.saves=await db.list();emit();}
-  async function deleteSave(id){idle();peerCheck({id});await db.deleteSave(id);if(S.active?.id===id){stopBridge();hostSession?.dispose();hostSession=null;S.active=null;}S.saves=await db.list();emit();}
+  async function deleteSave(id){idle();peerCheck({id});await db.deleteSave(id);if(S.active?.id===id){savedRoom=null;S.savedInvites=[];}if(S.active?.id===id){stopBridge();hostSession?.dispose();hostSession=null;S.active=null;}S.saves=await db.list();emit();}
   function exportSave(){idle();return GameImport.exportSave(active());}
   function rawRead(p){const node=VFS.resolve(active().tree,VFS.normalize(GameCore.path(p)));if(!node||node.type!=='file')throw Error('文件不存在');if(node.encoding==='base64')throw Error('该文件不能作为文本打开');return node.content;}
   function readFile(p){const resource=Prompts.file(p);return resource===undefined?rawRead(p):resource;}
@@ -320,7 +337,7 @@ const GameApp=(()=>{
       clearInterval(timer);lease?.releaseLease(s.id);if(pendingBatch(s))s.status='interrupted';S.running=false;controller=null;clearStream();emit();
     }
   }
-  const send=(text,privateContent='')=>submitAction(text,privateContent);
+  const send=(text,privateContent='',options={})=>submitAction(text,privateContent,options);
   const skip=async()=>{if(active().status==='new')throw Error('请先开始故事');const flags=GameData.actorState(player().info);return roomCommand(flags.enabled?'action.skip':'round.advance');};
   const start=()=>roomCommand('round.start');
   const resume=()=>roomCommand('round.resume');
@@ -344,12 +361,12 @@ const GameApp=(()=>{
   async function resolveManualDice(rolls){
     idle();const s=active();peerCheck(s);GameCore.resolveManualDice(s,rolls);await persist();emit();return s;
   }
-  async function saveDraft(text,binding,options={}){if(!S.active)return;peerCheck(S.active);if(!GameInputs.setDraft(S.active,options.private?'':text,binding))return;S.active.privateDraft=options.private?String(text):String(options.privateContent||'');saveLocalInputs();await persist();}
+  async function saveDraft(text,binding,options={}){if(!S.active)return;peerCheck(S.active);if(!GameInputs.setDraft(S.active,options.private?'':text,binding))return;S.active.privateDraft=options.private?String(text):String(options.privateContent||'');S.active.hiddenSend=options.hiddenSend??!!S.active.privateDraft;S.active.disguiseSend=S.active.hiddenSend&&(options.disguiseSend??!!S.active.draft);saveLocalInputs();await persist();}
   async function cancelAction(){
     const s=active(),r=hostSession.state(),result=await roomCommand('action.cancel',{submissionRequestId:r.submissions?.[s.actorId]?.requestId});
     if(active()!==s||hostSession.state().roundId!==r.roundId||hostSession.state().epoch!==r.epoch)return result;
     const entry=s.inputHistory?.find(x=>x.roundId===r.roundId);if(entry)entry.status='cancelled';
-    if(!s.draft&&!s.privateDraft){s.draft=result.cancelled.content;s.privateDraft=result.cancelled.privateContent;}
+    if(!s.draft&&!s.privateDraft){s.draft=result.cancelled.content;s.privateDraft=result.cancelled.privateContent;s.hiddenSend=entry?.hiddenSend??!!s.privateDraft;s.disguiseSend=entry?.disguiseSend??!!(s.privateDraft&&s.draft);}
     GameInputs.advance(s);saveLocalInputs();await persist();emit();return result;
   }
   if(typeof window!=='undefined'){
@@ -357,10 +374,11 @@ const GameApp=(()=>{
     window.addEventListener('storage',e=>{if(e.key?.startsWith('awl:lease:'))emit();});
   }
   return {getState:()=>S,subscribe,init,importSave,importHandoff,importLink,openSave,closeSave,returnHome,returnToGame,leaveForClient,renameSave,deleteSave,exportSave,send,skip,start,resume,abort,rollback,setMode,
-    configureSlots,setInvitationSlot,openRoom,createInvitation,revokeInvitation,closeRoom,multiplayerState,roomCommand,requestRollback,decideHostRollback,exportView,attachMultiplayerTransport,
+    configureSlots,setInvitationSlot,openRoom,createInvitation,revokeInvitation,closeRoom,reconnectRoom:async()=>{if(!bridgeSession)throw Error('请先开放玩家槽位建立房间');await bridgeSession.reconnect();},multiplayerState,roomCommand,requestRollback,decideHostRollback,exportView,attachMultiplayerTransport,
     addMember:id=>hostSession.addMember(id),setMemberConnected:(id,connected)=>hostSession.setConnected(id,connected),assignMember:(id,actor)=>hostSession.assign(id,actor),dispatchMember:(id,command)=>hostSession.handle(id,command),multiplayerSync:(id,request)=>syncHost.sync(id,request),
     readFile,writeFile,fileOperation,player,currentContext,updateSettings,saveDraft,resolveManualDice,cancelAction,
     profile:actorId=>MultiplayerSync.profile(active(),actorId,{room:hostSession?.state(),memberId:'host'}),
+    inventory:actorId=>MultiplayerSync.inventory(active(),actorId,{room:hostSession?.state(),memberId:'host'}),
     testConnection:values=>GameTransport.testConnection({...S.settings,...values}),
     listModels:values=>GameTransport.listModels({...S.settings,...values})};
 })();

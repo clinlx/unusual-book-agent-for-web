@@ -5,10 +5,11 @@ function setup(t,{count=2,failInvite=false,failConnect=false,control={}}={}){
  for(let i=1;i<count;i++){const id=String.fromCharCode(97+i);VFS.writeFile(tree,`/workspace/Player-${id}/基础信息.json`,JSON.stringify({姓名:id}));VFS.writeFile(tree,`/workspace/Player-${id}/背包.json`,'[]');}
  const save=Core.createSave('测试',tree);save.status='waiting';const saved=new Map([[save.id,structuredClone(save)]]);let calls=0,closed=false,options,incoming;const invites=[],revoked=[],sent=[];
  const transport={onHost(fn){incoming=fn;return ()=>{};},async sendToClient(id,packet){sent.push({id,packet});}};
- const ctx=vm.createContext({console,structuredClone,crypto:globalThis.crypto,setTimeout,clearTimeout,setInterval,clearInterval,queueMicrotask,URL,location:{href:'http://127.0.0.1:4173/index.html'},localStorage:{getItem:()=>null,setItem(){}},
+ const localRecords=new Map(),roomConfigs=new Map();
+ const ctx=vm.createContext({console,structuredClone,crypto:globalThis.crypto,setTimeout,clearTimeout,setInterval,clearInterval,queueMicrotask,URL,location:{href:'http://127.0.0.1:4173/index.html'},localStorage:{getItem:key=>localRecords.get(key)??null,setItem:(key,value)=>localRecords.set(key,value)},
  VFS,GameCore:Core,GameSlots:require('../../src/game-slots'),GameHistory:require('../../src/game-history'),GameInputs:require('../../src/game-input-history'),GameLocalInputs:require('../../src/game-local-inputs'),GameData:require('../../src/game-data'),GamePresentation:require('../../src/game-presentation'),MultiplayerHost:require('../../src/multiplayer-host'),MultiplayerSync:require('../../src/multiplayer-sync'),
- Lease:{create:()=>({available:false,isHeldByOther:()=>false})},GameStore:{create:()=>({open:async()=>{},getSettings:async()=>({}),putSettings:async()=>{},getSave:async id=>structuredClone(saved.get(id)),putSave:async s=>{if(control.failPersist)throw Error('quota');saved.set(s.id,structuredClone(s));},list:async()=>[...saved.values()]})},
- BridgeTransport:{validateServerUrl:x=>x,encodeInvitation:x=>Buffer.from(JSON.stringify(x)).toString('base64url'),async createHost(o){calls++;options=o;if(failConnect)throw Error('connection failed');return {transport,async invite(id){invites.push(id);if(failInvite)throw Error('authorization failed');return {version:1,url:o.url,roomId:o.roomId,memberId:id,token:'PRIVATE-TOKEN'};},async revoke(id){if(control.failRevoke)throw Error('revoke failed');revoked.push(id);},close(){closed=true;}};}}});
+ Lease:{create:()=>({available:false,isHeldByOther:()=>false})},GameStore:{create:()=>({open:async()=>{},getRoomConfig:async id=>structuredClone(roomConfigs.get(id)||null),putRoomConfig:async(id,value)=>{if(control.failRoomConfig)throw Error("room config quota");roomConfigs.set(id,structuredClone(value));},getSettings:async()=>({}),putSettings:async()=>{},getSave:async id=>structuredClone(saved.get(id)),putSave:async s=>{if(control.failPersist)throw Error('quota');saved.set(s.id,structuredClone(s));},list:async()=>[...saved.values()]})},
+ BridgeTransport:{parseInvitation:x=>JSON.parse(Buffer.from(x,'base64url').toString()),validateServerUrl:x=>x,encodeInvitation:x=>Buffer.from(JSON.stringify(x)).toString('base64url'),async createHost(o){calls++;options=o;if(failConnect)throw Error('connection failed');return {transport,credentials:()=>o.credentials||{token:'HOST-SECRET',epoch:'ROOM-EPOCH'},async invite(id){invites.push(id);if(failInvite)throw Error('authorization failed');return {version:1,url:o.url,roomId:o.roomId,memberId:id,token:'PRIVATE-TOKEN'};},async revoke(id){if(control.failRevoke)throw Error('revoke failed');revoked.push(id);},async reconnect(){await o.onState({status:'connected'});},close(){closed=true;}};}}});
  vm.runInContext(fs.readFileSync(require.resolve('../../src/game-app'),'utf8'),ctx);const app=vm.runInContext('GameApp',ctx);t.after(()=>{try{app.closeSave();}catch{}});return {app,save,invites,revoked,sent,receive:(id,packet)=>incoming(id,packet),get calls(){return calls;},get closed(){return closed;},get options(){return options;}};
 }
 test('opening saves stays offline; explicit real room creates private invitation without putting credentials in save',async t=>{
@@ -32,6 +33,22 @@ test('failed network room creation returns to offline without phantom online roo
 });
 
 async function ready(t,options){const f=setup(t,options);await f.app.init();await f.app.openSave(f.save.id);if(f.app.multiplayerState().status==='selecting')await f.app.configureSlots('a');return f;}
+
+test('a host network interruption preserves the collecting round and supports manual reconnect',async t=>{
+ const f=await ready(t),invite=await f.app.setInvitationSlot('b','player');await f.options.onMember({type:'joined',memberId:invite.memberId});
+ const before=f.app.multiplayerState();await f.app.dispatchMember('host',{type:'action.submit',requestId:'waiting',roomId:before.roomId,epoch:before.epoch,roundId:before.roundId,bindingVersion:before.members.host.bindingVersion,payload:{content:'甲等待乙'}});
+ await f.options.onState({status:'reconnecting',code:'ConnectionLost',backgroundRetry:true});await new Promise(r=>setTimeout(r,20));
+ const lost=f.app.multiplayerState();assert.equal(lost.members[invite.memberId].connected,false);assert.equal(lost.online,true);assert.equal(lost.roundId,before.roundId);assert.equal(lost.submissions.a.content,'甲等待乙');
+ await f.app.reconnectRoom();assert.equal(f.app.getState().network.status,'connected');assert.equal(f.calls,1);assert.equal(f.app.multiplayerState().roundId,before.roundId);
+});
+
+test('host restores hidden and disguise modes with empty drafts after reopening the save',async t=>{
+ const f=await ready(t),id=f.app.getState().active.id;
+ await f.app.saveDraft('',undefined,{privateContent:'',hiddenSend:true,disguiseSend:true});
+ f.app.closeSave();await f.app.openSave(id);
+ assert.equal(f.app.getState().active.hiddenSend,true);assert.equal(f.app.getState().active.disguiseSend,true);
+ assert.equal(f.app.getState().active.draft,'');assert.equal(f.app.getState().active.privateDraft,'');
+});
 
 test('host converts an occupied guest to AIPC, revokes their invitation, and rejects late commands',async t=>{
  const f=await ready(t),invite=await f.app.setInvitationSlot('b','player');await f.options.onMember({type:'joined',memberId:invite.memberId});
@@ -92,10 +109,10 @@ test('failed room connection leaves the requested slot unchanged and the domain 
  const f=await ready(t,{failConnect:true});await assert.rejects(f.app.setInvitationSlot('b','player'),/connection failed/);
  assert.equal(f.app.multiplayerState().online,false);assert.equal(f.app.getState().active.slots.find(s=>s.id==='b').kind,'disabled');assert.equal(f.invites.length,0);
 });
-test('closing and reopening a saved pending invitation clears its abandoned reservation',async t=>{
+test('closing and reopening a saved pending invitation clears its live reservation and restores its saved key on demand',async t=>{
  const f=await ready(t),invite=await f.app.setInvitationSlot('b','player');const id=f.app.getState().active.id;
  f.app.closeSave();await f.app.openSave(id);assert.equal(f.app.multiplayerState().members[invite.memberId],undefined);assert.equal(f.app.getState().active.slots.find(s=>s.id==='b').kind,'disabled');
- const reopened=await f.app.setInvitationSlot('b','player');assert.notEqual(reopened.memberId,invite.memberId);await f.app.closeRoom();assert.equal(f.app.getState().active.slots.find(s=>s.id==='b').kind,'disabled');
+ const reopened=await f.app.setInvitationSlot('b','player');assert.equal(reopened.memberId,invite.memberId);assert.equal(reopened.key,invite.key);await f.app.closeRoom();assert.equal(f.app.getState().active.slots.find(s=>s.id==='b').kind,'disabled');
 });
 
 test('failed cancellation persistence keeps the original invitation and does not revoke its authorization',async t=>{
@@ -114,4 +131,22 @@ test('host rollback app choice validates snapshots and opens a vote without a se
  const f=await ready(t);f.app.getState().active.snapshots=[];await assert.rejects(f.app.decideHostRollback('approve'),/没有可回退/);assert.equal(f.app.multiplayerState().vote,null);
  f.app.getState().active.snapshots=[{round:0,inputRoundId:'previous'}];await assert.rejects(f.app.decideHostRollback('vote'),{code:'NO_MULTIPLAYER_VOTE'});const invite=await f.app.setInvitationSlot('b','player');await f.options.onMember({type:'joined',memberId:invite.memberId});await f.app.decideHostRollback('vote');
  assert.equal(f.app.multiplayerState().vote.status,'voting');assert.equal(Object.keys(f.app.multiplayerState().vote.votes).length,0);assert.equal(f.app.multiplayerState().vote.targetRoundId,'previous');
+});
+
+test('room invitations survive host save reopen without an automatic connection and revoked slots get fresh keys',async t=>{
+ const f=await ready(t),first=await f.app.setInvitationSlot('b','player'),id=f.app.getState().active.id,roomId=f.app.multiplayerState().roomId;
+ assert.ok(!JSON.stringify(f.app.getState().active).includes('HOST-SECRET'));
+ f.app.closeSave();await f.app.openSave(id);assert.equal(f.calls,1);assert.equal(f.app.multiplayerState().online,false);
+ assert.equal(f.app.getState().savedInvites[0].key,first.key);
+ const resumed=await f.app.setInvitationSlot('b','player');assert.equal(resumed.key,first.key);assert.equal(resumed.memberId,first.memberId);assert.equal(f.app.multiplayerState().roomId,roomId);assert.equal(f.options.credentials.token,'HOST-SECRET');
+ await f.app.setInvitationSlot('b','disabled');f.app.closeSave();await f.app.openSave(id);
+ assert.equal(f.app.getState().savedInvites.length,0);const fresh=await f.app.setInvitationSlot('b','player');assert.notEqual(fresh.memberId,first.memberId);assert.notEqual(fresh.key,first.key);
+});
+
+test('failed credential storage cannot revoke a pending invitation or silently change its slot',async t=>{
+ const control={},f=await ready(t,{control}),invite=await f.app.setInvitationSlot('b','player');control.failRoomConfig=true;
+ await assert.rejects(f.app.setInvitationSlot('b','disabled'),/room config quota/);
+ assert.equal(f.revoked.length,0);assert.equal(f.app.getState().active.slots.find(s=>s.id==='b').kind,'player');
+ assert.equal(f.app.getState().network.invites[0].key,invite.key);
+ control.failRoomConfig=false;
 });

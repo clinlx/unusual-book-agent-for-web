@@ -57,10 +57,10 @@ test('connection lamp follows four states; nearby bubbles expire, preserve typin
  await set({status:'closed',code:'HostDisconnected',message:'房主已关闭房间'});await page.clock.runFor(70);assert.equal(await page.locator('#connection-lamp').getAttribute('data-status'),'purple');assert.match(await page.locator('.connection-bubble').innerText(),/房主/);
  assert.deepEqual(sockets,[]);assert.deepEqual(errors,[]);
 });
-test('invalid invitation errors stay nonblocking on home without a lamp or server connection',async t=>{
+test('invalid invitation errors open a safe result dialog on home without a lamp or server connection',async t=>{
  const context=await browser.newContext();t.after(()=>context.close());const page=await context.newPage(),sockets=[];page.on('websocket',s=>sockets.push(s.url()));await page.goto(origin+'/client.html');
- await page.locator('[name="invitation"]').fill('<img src=x onerror=alert(1)>');await page.locator('#join-room-form button').click();await page.locator('#toast').waitFor({state:'visible'});
- assert.equal(await page.locator('#connection-lamp').count(),0);assert.equal(await page.locator('[role="alertdialog"]').count(),0);assert.equal(await page.locator('#toast img').count(),0);assert.deepEqual(sockets,[]);
+ await page.locator('[name="invitation"]').fill('<img src=x onerror=alert(1)>');await page.locator('#join-room-form button').click();await page.locator('[role="alertdialog"]').waitFor();
+ assert.equal(await page.locator('#connection-lamp').count(),0);assert.match(await page.locator('[role="alertdialog"]').innerText(),/加入失败|格式无效/);assert.equal(await page.locator('[role="alertdialog"] img').count(),0);assert.deepEqual(sockets,[]);await page.getByRole('button',{name:'我知道了',exact:true}).click();assert.equal(await page.locator('[name="invitation"]').inputValue(),'<img src=x onerror=alert(1)>');
 });
 test('clients see private pending dice in purple but cannot roll them or submit unconscious actions',async t=>{
  const context=await browser.newContext();t.after(()=>context.close());const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto(origin+'/client.html');await page.locator('#join-room-form').waitFor();

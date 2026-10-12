@@ -118,7 +118,8 @@ const MultiplayerHost=(()=>{
         ).catch(()=>{if(room().execution?.id===token.id)room().status='interrupted';}).finally(()=>{execution=null;if(!disposed)checkAutomatic().catch(()=>{});});
       };
     }
-    function shouldRun(){const r=room();if(r.status!=='collecting'||r.vote||save().status==='new')return false;refresh();if(r.participants.some(p=>p.invalid))return false;const living=r.participants.filter(p=>p.alive),awake=living.filter(p=>p.enabled);return living.length>0&&(awake.length?awake.every(p=>r.submissions[p.actorId]):getSettings().autoAdvanceUnconscious!==false);}
+    function awaitingInvite(){return Object.values(room().members).some(m=>m.invitationActorId&&!m.actorId);}
+    function shouldRun(){const r=room();if(r.status!=='collecting'||r.vote||save().status==='new'||awaitingInvite())return false;refresh();if(r.participants.some(p=>p.invalid))return false;const living=r.participants.filter(p=>p.alive),awake=living.filter(p=>p.enabled);return living.length>0&&(awake.length?awake.every(p=>r.submissions[p.actorId]):getSettings().autoAdvanceUnconscious!==false);}
     function scope(m,command){const r=room();if(command.epoch!==r.epoch||command.roundId!==r.roundId)fail('STALE_ROUND','回合已更新，请同步后重试');if(command.bindingVersion!==m.bindingVersion)fail('STALE_BINDING','角色绑定已更新，请重新同步');if(command.roomId!==undefined&&command.roomId!==r.roomId)fail('STALE_ROOM','房间已更新');}
     function target(payload){
       const snapshots=save().snapshots||[];
@@ -162,7 +163,7 @@ const MultiplayerHost=(()=>{
           if(p.actorId!==undefined&&p.actorId!==m.actorId)fail('FORBIDDEN','不能取消其他角色的行动');
           const previous=r.submissions[m.actorId];if(!previous||previous.memberId!==memberId)fail('NOT_SUBMITTED','当前没有等待结算的行动');
           if(p.submissionRequestId!==undefined&&p.submissionRequestId!==previous.requestId)fail('STALE_ACTION','已提交的行动发生变化，请同步后重试');
-          cancelled={content:previous.content||'',privateContent:previous.privateContent||''};cancelledRequestId=previous.requestId;delete r.submissions[m.actorId];break;
+          cancelled={content:previous.content||'',privateContent:previous.privateContent||'',...previous.disguise?{disguise:true}:{}};cancelledRequestId=previous.requestId;delete r.submissions[m.actorId];break;
         }
         case 'action.submit':case 'action.skip':case 'action.hostSkip':{
           if(r.status!=='collecting'||r.vote||save().status==='new')fail('BUSY','当前不能提交行动');
@@ -173,11 +174,15 @@ const MultiplayerHost=(()=>{
           if(p.actorId!==undefined&&p.actorId!==bound.actorId)fail('FORBIDDEN','不能提交其他角色的行动');
           const skip=type!=='action.submit',content=skip?'':p.content??'',privateContent=skip?'':p.privateContent??'';
           if(typeof content!=='string'||typeof privateContent!=='string'||content.length+privateContent.length>120000||(!skip&&!content.trim()&&!privateContent.trim()))fail('INVALID_ACTION','行动内容为空或过长');
+          if(p.disguise!==undefined&&typeof p.disguise!=='boolean'||p.disguise===true&&(skip||!privateContent.trim()))fail('INVALID_ACTION','伪装需要真实的私密行动');
           const previous=r.submissions[entry.actorId];
-          r.submissions[entry.actorId]={actorId:entry.actorId,memberId:owner,requestId:command.requestId,content,privateContent,skip,automatic:false,submissionVersion:(previous?.submissionVersion||0)+1};
+          r.submissions[entry.actorId]={actorId:entry.actorId,memberId:owner,requestId:command.requestId,content,privateContent,...p.disguise===true?{disguise:true}:{},skip,automatic:false,submissionVersion:(previous?.submissionVersion||0)+1};
           if(shouldRun())start=launch();break;
         }
-        case 'round.start':host(memberId);if(save().status!=='new'||r.vote||r.status!=='collecting')fail('BUSY','不能重复开局');validateActors();start=launch({starting:true});break;
+        case 'round.start':host(memberId);if(save().status!=='new'||r.vote||r.status!=='collecting')fail('BUSY','不能重复开局');
+          if(awaitingInvite())fail('WAITING_PLAYERS','有开放给玩家的槽位，但是没有玩家加入。请等待玩家加入，或将空槽位设为 NPC 或关闭角色。');
+          if(r.online&&Object.entries(r.members).some(([id,m])=>id!=='host'&&m.actorId&&!m.connected))fail('WAITING_PLAYERS','有玩家已掉线，请等待所有玩家重连后再开始游戏。');
+          validateActors();start=launch({starting:true});break;
         case 'round.resume':host(memberId);if(r.status!=='interrupted'||r.vote)fail('BUSY','当前没有中断的回合');
           validateActors();if(r.automaticStalled){r.automaticStalled=false;r.status='collecting';start=launch({automatic:true});}else start=launch({resume:true});break;
         case 'round.advance':host(memberId);if(r.status!=='collecting'||r.vote||save().status==='new')fail('BUSY','当前不能手动推进');validateActors();
@@ -248,7 +253,7 @@ const MultiplayerHost=(()=>{
           suspendRemote();for(const [id,m]of Object.entries(r.members))if(m.invitationActorId&&!m.actorId){slots().setMode(save(),m.invitationActorId,'disabled');delete r.members[id];}
           if(r.suspendedRoom)r.suspendedRoom.bindings=r.suspendedRoom.bindings.filter(x=>r.members[x.memberId]);refresh();
         }await commit('room.initialized');return clone(r);}),
-      open:()=>transaction(async()=>{const r=room();if(r.status==='selecting')fail('SELECT_ACTOR','请先选择角色');if(['executing','rolling_back'].includes(r.status))fail('BUSY','请等待当前回合结束');if(!r.online){if(!r.vote&&r.status==='collecting')restoreRemote();r.online=true;r.roomId=uid();r.roundId=r.status==='interrupted'?r.roundId:uid();r.receipts=[];r.slotRequests=[];await commit('room.opened');}return clone(r);}),
+      open:({roomId}={})=>transaction(async()=>{const r=room();if(r.status==='selecting')fail('SELECT_ACTOR','请先选择角色');if(['executing','rolling_back'].includes(r.status))fail('BUSY','请等待当前回合结束');if(!r.online){if(!r.vote&&r.status==='collecting')restoreRemote();if(roomId!==undefined&&(typeof roomId!=='string'||!/^[A-Za-z0-9_-]{1,64}$/.test(roomId)))fail('INVALID_ROOM','房间标识无效');r.online=true;r.roomId=roomId||uid();r.roundId=r.status==='interrupted'?r.roundId:uid();r.receipts=[];r.slotRequests=[];await commit('room.opened');}return clone(r);}),
       close:()=>transaction(async()=>{const r=room();if(!['selecting','collecting','ended'].includes(r.status)||r.vote)fail('BUSY','请先完成当前回合或回退决策');const own=r.submissions[r.members.host?.actorId];if(own){save().draft=own.content||'';save().privateDraft=own.privateContent||'';save().draftRound=(save().round||0)+1;save().draftVersion=(save().draftVersion||0)+1;}
         for(const [id,m]of Object.entries(r.members))if(id!=='host'){const actorId=m.actorId||m.invitationActorId;if(actorId){delete actor(actorId).memberId;slots().setMode(save(),actorId,'disabled');}delete r.members[id];}
         r.online=false;r.roomId=null;r.roundId=uid();r.receipts=[];r.slotRequests=[];r.submissions={};delete r.suspendedRoom;refresh();await commit('room.closed');}),

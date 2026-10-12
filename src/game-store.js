@@ -3,7 +3,7 @@ const GameStore=(()=>{
   const core=typeof module!=='undefined'&&module.exports?require('./game-core.js'):GameCore;
   const lastRoundEnd=events=>events?.findLast(e=>e.type==='round_end')?.at??null;
   function create(factory=globalThis.indexedDB){
-    let db=null,memory=!factory;const mem=new Map();let config={};
+    let db=null,memory=!factory;const mem=new Map(),rooms=new Map();let config={};
     const counts=new Map(),fingerprints=new Map();
     const signature=value=>JSON.stringify(value);
     async function open(){if(!factory)return;await new Promise((resolve,reject)=>{
@@ -64,11 +64,13 @@ const GameStore=(()=>{
       }));
       return summaries.sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));}
 
-    async function deleteSave(id){if(memory){mem.delete(id);return;}const tx=db.transaction(['saves','messages','events'],'readwrite');const finish=done(tx);tx.objectStore('saves').delete(id);
+    async function deleteSave(id){if(memory){mem.delete(id);rooms.delete(id);return;}const tx=db.transaction(['saves','messages','events','config'],'readwrite');const finish=done(tx);tx.objectStore('saves').delete(id);tx.objectStore('config').delete('room:'+JSON.stringify(id));
       for(const name of ['messages','events'])tx.objectStore(name).delete(IDBKeyRange.bound([id,0],[id,Number.MAX_SAFE_INTEGER]));await finish;counts.delete(id);fingerprints.delete(id);}
     async function getSettings(){return memory?structuredClone(config):(await req(db.transaction('config').objectStore('config').get('settings')))?.value||{};}
     async function putSettings(value){if(memory){config=structuredClone(value);return;}const tx=db.transaction('config','readwrite'),finish=done(tx);tx.objectStore('config').put({id:'settings',value});await finish;}
-    return {open,putSave,getSave,list,deleteSave,getSettings,putSettings,get memoryMode(){return memory;}};
+    async function getRoomConfig(id){if(memory)return structuredClone(rooms.get(id)||null);return (await req(db.transaction('config').objectStore('config').get('room:'+JSON.stringify(id))))?.value||null;}
+    async function putRoomConfig(id,value){if(memory){if(value===null)rooms.delete(id);else rooms.set(id,structuredClone(value));return;}const tx=db.transaction('config','readwrite'),finish=done(tx),key='room:'+JSON.stringify(id);if(value===null)tx.objectStore('config').delete(key);else tx.objectStore('config').put({id:key,value});await finish;}
+    return {open,putSave,getSave,list,deleteSave,getSettings,putSettings,getRoomConfig,putRoomConfig,get memoryMode(){return memory;}};
   }return {create};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=GameStore;

@@ -17,6 +17,55 @@ function fakeSDK(){
  return {sdk:{...SDK,BridgeConnection:Connection},connections,setInitial:messages=>{initial=messages;}};
 }
 const tick=()=>new Promise(r=>setTimeout(r,20));
+async function flush(){for(let i=0;i<25;i++)await Promise.resolve();}
+
+for(const role of ['host','client'])test(role+' retries silently with exponential backoff, resets after success and allows immediate manual retry',async t=>{
+ const f=fakeSDK(),base=await Bridge.createHost({url:'ws://localhost',roomId:'retry',sdk:f.sdk});
+ const invitation=await base.invite('guest');let session=base;
+ if(role==='client'){session=await Bridge.createClient({invitation,sdk:f.sdk});base.close();}
+ t.after(()=>session.close());t.mock.timers.enable({apis:['setTimeout']});
+ const transport=session.transport,credentials=role==='host'?session.credentials():null;
+ let failures=6,attempts=0;const connect=f.sdk.BridgeConnection.connect;
+ f.sdk.BridgeConnection.connect=async(...args)=>{attempts++;if(failures-->0)throw new SDK.BridgeError(role==='host'?'RoomExists':'RoomNotFound');return connect(...args);};
+ f.connections.at(-1).fail(role==='host'?'HeartbeatTimeout':'HostDisconnected');await flush();
+ for(const delay of [5000,10000,20000,40000,80000,120000,120000]){
+   const before=attempts;t.mock.timers.tick(delay-1);await flush();assert.equal(attempts,before);
+   t.mock.timers.tick(1);await flush();assert.equal(attempts,before+1);
+ }
+ assert.equal(session.connected,true);assert.equal(session.transport,transport);
+ if(role==='host'){assert.deepEqual(session.credentials(),credentials);assert.deepEqual(f.connections.at(-1).hello.players,[{id:'guest',token:invitation.token}]);}
+ f.connections.at(-1).fail('ConnectionLost');await flush();const before=attempts;
+ t.mock.timers.tick(4999);await flush();assert.equal(attempts,before);t.mock.timers.tick(1);await flush();assert.equal(attempts,before+1);
+ f.connections.at(-1).fail('ConnectionLost');await flush();await session.reconnect();assert.equal(attempts,before+2);
+ session.close();t.mock.timers.tick(120000);await flush();assert.equal(attempts,before+2);
+});
+
+test('a host reconnect keeps transport subscribers and restores command delivery',async t=>{
+ const f=fakeSDK(),host=await Bridge.createHost({url:'ws://localhost',roomId:'room',sdk:f.sdk});t.after(()=>host.close());
+ const invitation=await host.invite('guest'),client=await Bridge.createClient({invitation,sdk:f.sdk});t.after(()=>client.close());
+ const got=[];host.transport.onHost((id,packet)=>got.push([id,packet]));await host.reconnect();
+ await client.transport.sendToHost('guest',{type:'after'});
+ for(const message of f.connections[1].messages)f.connections[2].emit({type:'ClientInvoke',clientId:'guest',functionId:1,payload:message.payload});
+ await tick();assert.deepEqual(got,[['guest',{type:'after'}]]);
+});
+
+for(const role of ['host','client'])test(role+' manual retry during an automatic handshake does not duplicate sockets or backoff',async t=>{
+ const f=fakeSDK(),base=await Bridge.createHost({url:'ws://localhost',roomId:'overlap',sdk:f.sdk}),invitation=await base.invite('guest');
+ const session=role==='host'?base:await Bridge.createClient({invitation,sdk:f.sdk});if(role==='client')base.close();t.after(()=>session.close());t.mock.timers.enable({apis:['setTimeout']});
+ let rejectHandshake,attempts=0;f.sdk.BridgeConnection.connect=async()=>{attempts++;return new Promise((_,reject)=>rejectHandshake=reject);};
+ f.connections.at(-1).fail('ConnectionLost');await flush();t.mock.timers.tick(5000);await flush();
+ const manual=session.reconnect();const rejected=assert.rejects(manual,{code:'ConnectionFailed'});rejectHandshake(new SDK.BridgeError('ConnectionFailed'));await rejected;await flush();
+ assert.equal(attempts,1);t.mock.timers.tick(9999);await flush();assert.equal(attempts,1);t.mock.timers.tick(1);await flush();assert.equal(attempts,2);
+});
+
+test('restored host credentials recreate the same invitation and restore its authorized player list',async t=>{
+ const f=fakeSDK(),first=await Bridge.createHost({url:'ws://localhost',roomId:'stable',sdk:f.sdk});
+ const invite=await first.invite('guest'),credentials=first.credentials();first.close();
+ const second=await Bridge.createHost({url:'ws://localhost',roomId:'stable',sdk:f.sdk,credentials,players:[invite]});t.after(()=>second.close());
+ assert.equal(f.connections[1].hello.token,f.connections[0].hello.token);assert.equal(f.connections[1].hello.epoch,f.connections[0].hello.epoch);
+ assert.deepEqual(await second.invite('guest'),invite);assert.deepEqual(f.connections[1].hello.players,[{id:'guest',token:invite.token}]);
+ assert.deepEqual(Bridge.parseInvitation('http://localhost/client.html?join='+Bridge.encodeInvitation(invite)),invite);
+});
 test('invitation probing authenticates before returning and closes its temporary connection',async t=>{
  const f=fakeSDK(),host=await Bridge.createHost({url:'ws://localhost',roomId:'room',sdk:f.sdk});t.after(()=>host.close());const invitation=await host.invite('guest');
  const parsed=await Bridge.probeInvitation(Bridge.encodeInvitation(invitation),{sdk:f.sdk});assert.deepEqual(parsed,invitation);assert.equal(f.connections[1].isClosed,true);assert.equal(f.connections[1].listeners.size,0);

@@ -6,14 +6,15 @@ const GameApp=(()=>{
   const emit=()=>{for(const fn of listeners)fn(S);};
   const scope=()=>S.active?.actorId?{gameId:S.active.id,memberId,actorId:S.active.actorId}:null;
   const sameScope=(a,b)=>a&&b&&a.gameId===b.gameId&&a.memberId===b.memberId&&a.actorId===b.actorId;
-  function inputState(value){return {inputHistory:value.inputHistory.map(r=>({...r,rolledBack:r.status==='retracted'})),draft:value.draft,privateDraft:value.privateDraft,draftRound:value.draftRound,draftVersion:value.draftVersion};}
+  function inputState(value){return {inputHistory:value.inputHistory.map(r=>({...r,rolledBack:r.status==='retracted'})),draft:value.draft,privateDraft:value.privateDraft,hiddenSend:value.hiddenSend??!!value.privateDraft,disguiseSend:value.disguiseSend??!!(value.privateDraft&&value.draft),draftRound:value.draftRound,draftVersion:value.draftVersion};}
   function refreshInputs(identity){if(sameScope(identity,scope()))Object.assign(S.active,inputState(local.load(identity)));}
-  function store(){if(!scope())return;const a=S.active;local.save(scope(),{epoch:S.room?.epoch||0,draft:a.draft||'',privateDraft:a.privateDraft||'',draftRound:a.draftRound,draftVersion:a.draftVersion||0});}
+  function store(){if(!scope())return;const a=S.active;local.save(scope(),{epoch:S.room?.epoch||0,draft:a.draft||'',privateDraft:a.privateDraft||'',hiddenSend:!!a.hiddenSend,disguiseSend:!!a.disguiseSend,draftRound:a.draftRound,draftVersion:a.draftVersion||0});}
   async function sync(){if(transport)await transport.sendToHost(memberId,{type:'sync.request',payload:cache.request()});}
   async function receive(packet){
     if(packet.type==='room.closed'){
       if(packet.roomId!==S.room?.roomId)return;
       closedRoomId=packet.roomId;
+      bridgeSession?.close();
       S.room={...S.room,online:false};if(S.active)S.active.room=S.room;S.running=false;S.error='房间已关闭';emit();return;
     }
     if(packet.type==='command.result'){const p=pending.get(packet.requestId);if(p){pending.delete(packet.requestId);clearTimeout(p.timer);packet.ok?p.resolve(packet):p.reject(Object.assign(Error(packet.message||'请求未执行'),{code:packet.error}));}return;}
@@ -48,15 +49,16 @@ const GameApp=(()=>{
     const c={type,payload,requestId,roomId:r.roomId,epoch:r.epoch,roundId:r.roundId,bindingVersion:r.bindingVersion};
     return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{pending.delete(requestId);reject(Error('房主尚未确认，请同步状态后重试'));},15000);pending.set(requestId,{resolve,reject,timer});Promise.resolve(transport.sendToHost(memberId,c)).catch(e=>{clearTimeout(timer);pending.delete(requestId);reject(e);});});
   }
-  async function send(text,privateContent=''){
+  async function send(text,privateContent='',options={}){
     if(S.network&&S.network.status!=='connected')throw Error('连接已中断，请等待重连或重新连接');if(!S.active||!S.room)throw Error('尚未连接房主');if(S.room.online===false)throw Error('房间已关闭');if(!S.active.actorId)throw Error('请先申请角色槽位');text=String(text);privateContent=String(privateContent);
     if(!text.trim()&&!privateContent.trim())return;
+    const hiddenSend=options.hiddenSend??!!privateContent,disguiseSend=hiddenSend&&(options.disguiseSend??!!text);
     const identity=scope(),r={...S.room},round=S.active.round+1,previous=local.load(identity),old=previous.inputHistory.find(x=>x.roundId===r.roundId);
-    const requestId=old?.status==='pending'&&old.text===text&&old.privateContent===privateContent?old.requestId:crypto.randomUUID();
+    const requestId=old?.status==='pending'&&old.text===text&&old.privateContent===privateContent&&(old.disguiseSend??!!(old.text&&old.privateContent))===disguiseSend?old.requestId:crypto.randomUUID();
     if(pending.has(requestId))throw Error('正在等待房主确认');
-    local.record(identity,{round,roundId:r.roundId,epoch:r.epoch,text,privateContent,requestId,status:'pending'});
-    local.save(identity,{draft:text,privateDraft:privateContent,draftRound:round,draftVersion:previous.draftVersion});refreshInputs(identity);emit();
-    const result=await command('action.submit',{content:text,privateContent},{requestId,room:r});
+    local.record(identity,{round,roundId:r.roundId,epoch:r.epoch,text,privateContent,hiddenSend,disguiseSend,requestId,status:'pending'});
+    local.save(identity,{draft:text,privateDraft:privateContent,hiddenSend,disguiseSend,draftRound:round,draftVersion:previous.draftVersion});refreshInputs(identity);emit();
+    const result=await command('action.submit',{content:text,privateContent,...options.disguiseSend===true?{disguise:true}:{}},{requestId,room:r});
     try{
       local.record(identity,{round,roundId:r.roundId,epoch:r.epoch,requestId,status:'accepted'});
       const current=local.load(identity);
@@ -69,18 +71,20 @@ const GameApp=(()=>{
     const identity=scope(),r={...S.room},submittedRequestId=identity?local.load(identity).inputHistory.find(x=>x.roundId===r.roundId)?.requestId:undefined,result=await command('action.cancel',submittedRequestId?{submissionRequestId:submittedRequestId}:{});
     if(!sameScope(identity,scope())||S.room?.epoch!==r.epoch||S.room?.roundId!==r.roundId)return result;
     try{
-      local.record(identity,{round:r.round,roundId:r.roundId,epoch:r.epoch,requestId:result.cancelledRequestId||submittedRequestId||'',text:result.cancelled.content,privateContent:result.cancelled.privateContent,status:'cancelled'});
+      const prior=local.load(identity).inputHistory.find(x=>x.roundId===r.roundId),hiddenSend=prior?.hiddenSend??!!result.cancelled.privateContent,disguiseSend=prior?.disguiseSend??!!(result.cancelled.privateContent&&result.cancelled.content);
+      local.record(identity,{round:r.round,roundId:r.roundId,epoch:r.epoch,requestId:result.cancelledRequestId||submittedRequestId||'',text:result.cancelled.content,privateContent:result.cancelled.privateContent,hiddenSend,disguiseSend,status:'cancelled'});
       const current=local.load(identity),restore=!current.draft&&!current.privateDraft;
-      local.save(identity,{draft:restore?result.cancelled.content:current.draft,privateDraft:restore?result.cancelled.privateContent:current.privateDraft,draftVersion:current.draftVersion+1});refreshInputs(identity);emit();
+      local.save(identity,{draft:restore?result.cancelled.content:current.draft,privateDraft:restore?result.cancelled.privateContent:current.privateDraft,...restore?{hiddenSend,disguiseSend}:{},draftVersion:current.draftVersion+1});refreshInputs(identity);emit();
     }catch(error){if(error.code!=='LOCAL_INPUT_STALE')throw error;}
     return result;
   }
   async function attach(t,id){disconnect();transport=t;memberId=id;closedRoomId=null;cache=MultiplayerSync.createClient();const attachedCache=cache;recoveryRequests.clear();S.active=null;S.room=null;stop=t.onClient(id,packet=>{if(transport!==t||memberId!==id||cache!==attachedCache)return;return receive(packet);});await sync();}
   function stopNetwork(){joinGeneration++;const previous=bridgeSession;bridgeSession=null;previous?.close();disconnect();}
   async function joinRoom(value){
-    const invitation=BridgeTransport.parseInvitation(value);stopNetwork();S.home=false;const generation=joinGeneration;
-    S.network={status:'connecting',message:'正在连接房间'};S.error=null;emit();
+    stopNetwork();S.home=false;S.active=null;S.room=null;const generation=joinGeneration;
+    S.joining={phase:'validate',message:'正在验证邀请…'};S.network={status:'connecting',message:'正在验证邀请'};S.error=null;emit();
     try{
+      const invitation=BridgeTransport.parseInvitation(value);S.joining={phase:'connect',message:'正在连接房间…'};emit();
       const session=await BridgeTransport.createClient({invitation,onState:async info=>{
         if(generation!==joinGeneration)return;
         S.network=info;
@@ -90,16 +94,22 @@ const GameApp=(()=>{
         if(info.status==='connected'&&transport)await sync();
       }});
       if(generation!==joinGeneration){session.close();return;}
-      bridgeSession=session;S.network={status:'connected',message:'已连接房间'};await attach(session.transport,session.memberId);emit();
-    }catch(error){if(generation===joinGeneration){stopNetwork();S.network={status:'disconnected',message:error.message,code:error.code};S.error=error.message;emit();}throw error;}
+      bridgeSession=session;S.network={status:'connected',message:'已连接房间'};S.joining={phase:'sync',message:'正在同步角色与故事…'};emit();await attach(session.transport,session.memberId);
+      if(!S.active?.actorId)await new Promise((resolve,reject)=>{
+        const check=()=>{if(generation!==joinGeneration||S.network?.status==='closed'||S.network?.status==='disconnected'){finish();reject(Error('房间连接已中断'));}else if(S.active?.actorId){finish();resolve();}};
+        const finish=()=>{clearTimeout(timer);listeners.delete(check);};
+        const timer=setTimeout(()=>{finish();reject(Error('房主未返回可用角色，请确认房间仍开放且槽位有效'));},15000);listeners.add(check);check();
+      });
+      if(generation===joinGeneration){S.joining=null;emit();}
+    }catch(error){if(generation===joinGeneration){stopNetwork();S.joining=null;S.active=null;S.room=null;S.network={status:'disconnected',message:error.message,code:error.code};S.error=error.message;emit();}throw error;}
   }
   async function reconnectRoom(){if(!bridgeSession)throw Error('请重新粘贴邀请链接加入房间');await bridgeSession.reconnect();}
   return {getState:()=>S,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},init:async()=>{try{S.settings=JSON.parse(localStorage.getItem('trpg-client-settings')||'{}');}catch(_){}},
     connect:async(t,id)=>{stopNetwork();S.network=null;await attach(t,id);},joinRoom,reconnectRoom,receive,sync,
-    send,cancelAction,profile:async actorId=>(await command('profile.request',{actorId})).profile,skip:()=>command('action.skip'),requestRollback:()=>command('rollback.request',{targetRound:Math.max(0,S.active.round-1)}),roomCommand:command,
+    send,cancelAction,profile:async actorId=>(await command('profile.request',{actorId})).profile,inventory:async actorId=>(await command('inventory.request',{actorId})).inventory,skip:()=>command('action.skip'),requestRollback:()=>command('rollback.request',{targetRound:Math.max(0,S.active.round-1)}),roomCommand:command,
     player:()=>({info:S.active?.info||{},items:S.active?.items||[],name:S.active?.playerName}),exportView:()=>cache.getState()?.view,
-    saveDraft:async(text,binding,options={})=>{if(S.active&&GameInputs.setDraft(S.active,options.private?'':text,binding)){S.active.privateDraft=options.private?String(text):String(options.privateContent||'');store();}},
+    saveDraft:async(text,binding,options={})=>{if(S.active&&GameInputs.setDraft(S.active,options.private?'':text,binding)){S.active.privateDraft=options.private?String(text):String(options.privateContent||'');S.active.hiddenSend=options.hiddenSend??!!S.active.privateDraft;S.active.disguiseSend=S.active.hiddenSend&&(options.disguiseSend??!!S.active.draft);store();}},
     updateSettings:async values=>{S.settings={reverseSendNewline:values.reverseSendNewline===true};localStorage.setItem('trpg-client-settings',JSON.stringify(S.settings));emit();},
-    setMode:()=>{},returnHome:()=>{S.home=true;emit();},returnToGame:()=>{if(S.active){S.home=false;emit();}},closeSave:()=>{stopNetwork();S.active=null;S.home=false;S.room=null;S.network=null;emit();}
+    setMode:()=>{},returnHome:()=>{S.home=true;emit();},returnToGame:()=>{if(S.active){S.home=false;emit();}},closeSave:()=>{stopNetwork();S.joining=null;S.active=null;S.home=false;S.room=null;S.network=null;emit();}
   };
 })();

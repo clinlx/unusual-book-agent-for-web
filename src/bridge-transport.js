@@ -3,6 +3,8 @@ const BridgeTransport=(()=>{
   const SDK=typeof module!=='undefined'&&module.exports?require('../vendor/room-bridge.js'):RoomBridgeSDK;
   const encoder=new TextEncoder(),decoder=new TextDecoder('utf-8',{fatal:true});
   const CHUNK_BYTES=45000,FRAME_BYTES=65536,COMMAND_BYTES=2*1024*1024,VIEW_BYTES=32*1024*1024;
+  const RECONNECT_DELAYS=[5000,10000,20000,40000,80000,120000];
+  const retryable=(cause,host=false)=>cause?.retryable===true||(host?['RoomExists']:['AlreadyConnected','HostDisconnected','HostUnavailable','RoomNotFound']).includes(cause?.code);
   const MANIFEST=Object.freeze({hostFunctions:Object.freeze([Object.freeze({id:1,schema:'book-agent.command-fragment:v1',maxPayloadBytes:FRAME_BYTES})]),clientFunctions:Object.freeze([Object.freeze({id:2,schema:'book-agent.view-fragment:v1',maxPayloadBytes:FRAME_BYTES})])});
   const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
   const validId=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,64}$/.test(value);
@@ -23,10 +25,11 @@ const BridgeTransport=(()=>{
     return {version:1,url:validateServerUrl(value.url),roomId:value.roomId,memberId:value.memberId,token:value.token};
   }
   function encodeInvitation(value){return encode(encoder.encode(JSON.stringify(invitation(value))));}
+  function invitationParameter(value){const url=new URL(value),hash=new URLSearchParams(url.hash.slice(1));return hash.has('join')?hash.get('join'):url.searchParams.get('join');}
   function parseInvitation(value){
     if(object(value))return invitation(value);
     if(typeof value!=='string'||value.length>8192)throw error();let code=value.trim();
-    if(code.includes('#'))code=new URLSearchParams(code.slice(code.indexOf('#')+1)).get('join')||'';
+    if(code.includes('#')||code.includes('?'))try{code=invitationParameter(code)||'';}catch(_){throw error();}
     try{return invitation(JSON.parse(decoder.decode(decode(code))));}catch(_){throw error();}
   }
   function serialize(packet,limit){if(!object(packet))throw error('InvalidMessage');const bytes=encoder.encode(JSON.stringify(packet));if(bytes.length>limit)throw error('PayloadTooLarge');return bytes;}
@@ -81,50 +84,69 @@ const BridgeTransport=(()=>{
     };
     const stop=connection.onMessage(enqueue);for(const message of connection.inbox.splice(0))enqueue(message);return stop;
   }
-  function notice(callback,status,cause){if(!callback)return;const message=cause?.message||({connected:'已连接房间',reconnecting:'正在重新连接',disconnected:'连接已断开',closed:'房间连接已关闭'}[status]);try{Promise.resolve(callback({status,message,...cause?.code?{code:cause.code}:{}})).catch(()=>{});}catch(_){}}
-  async function createHost({url,roomId,title='',onMember,onState,sdk=SDK}={}){
+  function notice(callback,status,cause,extra={}){if(!callback)return;const message=cause?.message||({connected:'已连接房间',reconnecting:'正在重新连接',disconnected:'连接已断开',closed:'房间连接已关闭'}[status]);try{Promise.resolve(callback({status,message,...cause?.code?{code:cause.code}:{},...extra})).catch(()=>{});}catch(_){}}
+  async function createHost({url,roomId,title='',onMember,onState,sdk=SDK,credentials:saved,players:authorized=[],reconnectDelays=RECONNECT_DELAYS}={}){
     url=validateServerUrl(url);if(!validId(roomId))throw error();
-    const token=sdk.randomToken(),epoch=sdk.randomToken(),players=new Map(),fragments=createFragments(COMMAND_BYTES),incoming=deliveries(VIEW_BYTES,id=>players.has(id));
-    let closed=false,revision=0,authorization=Promise.resolve(),connection,detach;
-    try{connection=await sdk.BridgeConnection.connect(url,'server',roomId,{token,epoch,version:'book-agent-v1',buildHash:'book-agent-fragments-v1',info:{title:String(title).slice(0,256)},manifest:MANIFEST,players:[]},{maxBufferedBytes:8*1024*1024,maxQueueMessages:512});}
-    catch(cause){incoming.close();notice(onState,'disconnected',cause);throw cause;}
-    revision=connection.ready.revision||0;
-    detach=attach(connection,async message=>{
-      if(closed)return;
-      if(['ClientJoined','ClientLeft'].includes(message.type)){if(member(message.clientId))await onMember?.({type:message.type==='ClientJoined'?'joined':'left',memberId:message.clientId});return;}
-      if(message.type!=='ClientInvoke'||message.functionId!==1||!member(message.clientId)||!players.has(message.clientId))return;
-      const complete=fragments.accept(message.clientId,message.payload);if(complete)await incoming.put(message.clientId,complete.packet,complete.size);
-    });
+    const token=saved?.token??sdk.randomToken(),epoch=saved?.epoch??sdk.randomToken(),players=new Map(),fragments=createFragments(COMMAND_BYTES),incoming=deliveries(VIEW_BYTES,id=>players.has(id));
+    if(decode(token).length!==32||decode(epoch).length!==32||!Array.isArray(authorized)||authorized.length>64)throw error();
+    for(const value of authorized){const item=invitation(value);if(item.url!==url||item.roomId!==roomId||players.has(item.memberId))throw error();players.set(item.memberId,item.token);}
+    let closed=false,revision=0,authorization=Promise.resolve(),connection=null,detach,retryTimer=null,attempt=0,opening=null,reconnecting=null,closing=Promise.resolve();
+    function retry(cause){
+      if(closed)return;if(!retryable(cause,true)){close(cause);return;}
+      notice(onState,'reconnecting',cause,{backgroundRetry:true});clearTimeout(retryTimer);
+      const delay=reconnectDelays[Math.min(attempt++,reconnectDelays.length-1)]??120000;
+      retryTimer=setTimeout(()=>{retryTimer=null;open().catch(retry);},Math.max(1,delay));
+    }
+    async function open(){
+      if(closed)throw error('ClientClosed');if(opening)return opening;
+      opening=(async()=>{
+        const current=await sdk.BridgeConnection.connect(url,'server',roomId,{token,epoch,version:'book-agent-v1',buildHash:'book-agent-fragments-v1',info:{title:String(title).slice(0,256)},manifest:MANIFEST,players:[...players].map(([id,token])=>({id,token}))},{maxBufferedBytes:8*1024*1024,maxQueueMessages:512});
+        if(closed){current.close();throw error('ClientClosed');}
+        connection=current;revision=current.ready.revision||0;attempt=0;fragments.clear();
+        detach=attach(current,async message=>{
+          if(closed||connection!==current)return;
+          if(['ClientJoined','ClientLeft'].includes(message.type)){if(member(message.clientId))await onMember?.({type:message.type==='ClientJoined'?'joined':'left',memberId:message.clientId});return;}
+          if(message.type!=='ClientInvoke'||message.functionId!==1||!member(message.clientId)||!players.has(message.clientId))return;
+          const complete=fragments.accept(message.clientId,message.payload);if(complete)await incoming.put(message.clientId,complete.packet,complete.size);
+        });
+        current.closed.then(({error:cause}={})=>{if(closed||connection!==current)return;connection=null;detach?.();fragments.clear();incoming.clear();retry(cause||error('ConnectionLost'));});
+        notice(onState,'connected');return current;
+      })();try{return await opening;}finally{opening=null;}
+    }
     const send=sender(()=>closed?null:connection,VIEW_BYTES,(c,id,fragment)=>c.invokeClient(id,2,fragment));
     const transport={onHost:fn=>incoming.add(fn),sendToClient:(id,packet)=>players.has(id)&&member(id)?send(id,packet):Promise.reject(error('Unauthorized'))};
-    function close(cause){if(closed)return;closed=true;detach?.();incoming.close();fragments.clear();connection.close();notice(onState,'closed',cause);}
-    connection.closed.then(({error:cause}={})=>{if(closed)return;closed=true;detach?.();incoming.close();fragments.clear();notice(onState,'closed',cause);});
+    function close(cause){if(closed)return closing;closed=true;clearTimeout(retryTimer);retryTimer=null;const old=connection;connection=null;detach?.();incoming.close();fragments.clear();old?.close();closing=old?.closed||Promise.resolve();notice(onState,'closed',cause);return closing;}
+    function reconnect(){
+      if(closed)return Promise.reject(error('ClientClosed'));if(reconnecting)return reconnecting;if(opening)return opening;clearTimeout(retryTimer);retryTimer=null;
+      reconnecting=(async()=>{notice(onState,'reconnecting');const old=connection;connection=null;detach?.();fragments.clear();incoming.clear();if(old){old.close();await old.closed;}return open();})().catch(cause=>{retry(cause);throw cause;}).finally(()=>{reconnecting=null;});return reconnecting;
+    }
     function change(id,remove){
       const operation=authorization.then(async()=>{
-        if(closed)throw error('ClientClosed');if(!member(id))throw error();
+        if(closed)throw error('ClientClosed');if(!connection)throw error('ConnectionLost');if(!member(id))throw error();
         if(remove&&!players.has(id))return;
         if(!remove&&players.has(id))return invitation({version:1,url,roomId,memberId:id,token:players.get(id)});
         const next=new Map(players);if(remove)next.delete(id);else next.set(id,await sdk.issueClientToken(token,roomId,epoch,id));
         if(closed)throw error('ClientClosed');
         let ack;
-        try{ack=await connection.request({type:'ReplaceAuthorization',expectedRevision:revision,players:[...next].map(([id,token])=>({id,token}))},'AuthorizationReplaced');}
-        catch(cause){if(['RequestTimeout','RevisionConflict'].includes(cause?.code))close({code:cause.code,message:'无法确认玩家授权是否更新。请关闭房间后重新开房，再开放槽位。'});throw cause;}
-        if(closed)throw error('ClientClosed');
+        const current=connection;if(!current)throw error('ConnectionLost');
+        try{ack=await current.request({type:'ReplaceAuthorization',expectedRevision:revision,players:[...next].map(([id,token])=>({id,token}))},'AuthorizationReplaced');}
+        catch(cause){if(['RequestTimeout','RevisionConflict'].includes(cause?.code)||retryable(cause,true))close({code:cause.code,message:'无法确认玩家授权是否更新。请关闭房间后重新开房，再开放槽位。'});throw cause;}
+        if(closed)throw error('ClientClosed');if(connection!==current){close();throw error('ConnectionLost');}
         revision=ack.revision;players.clear();for(const [id,token]of next)players.set(id,token);
         if(!remove)return invitation({version:1,url,roomId,memberId:id,token:players.get(id)});
       });authorization=operation.catch(()=>{});return operation;
     }
-    notice(onState,'connected');return {transport,roomId,invite:id=>change(id,false),revoke:id=>change(id,true),close,get closed(){return closed;}};
+    try{await open();}catch(cause){close(cause);notice(onState,'disconnected',cause);throw cause;}
+    return {transport,roomId,credentials:()=>({token,epoch}),invite:id=>change(id,false),revoke:id=>change(id,true),reconnect,close,get closed(){return closed;},get connected(){return !!connection&&!closed;}};
   }
-  async function createClient({invitation:value,onState,sdk=SDK,reconnectDelays=[500,1000,2000,5000,10000]}={}){
+  async function createClient({invitation:value,onState,sdk=SDK,reconnectDelays=RECONNECT_DELAYS}={}){
     const invite=parseInvitation(value),fragments=createFragments(VIEW_BYTES),incoming=deliveries(VIEW_BYTES);let connection=null,detach=null,closed=false,retryTimer=null,attempt=0,opening=null,closing=Promise.resolve();
     const hash=await sdk.contractHash(MANIFEST);
-    const retryable=cause=>cause?.retryable===true||cause?.code==='AlreadyConnected';
     function stop(cause){if(closed)return closing;closed=true;clearTimeout(retryTimer);retryTimer=null;const old=connection;connection=null;detach?.();incoming.close();fragments.clear();old?.close();closing=old?.closed||Promise.resolve();notice(onState,'closed',cause);return closing;}
     function retry(cause){
       if(closed)return;if(!retryable(cause)){stop(cause);return;}
-      notice(onState,'reconnecting',cause);clearTimeout(retryTimer);
-      const delay=reconnectDelays[Math.min(attempt++,reconnectDelays.length-1)]??10000;
+      notice(onState,'reconnecting',cause,{backgroundRetry:true});clearTimeout(retryTimer);
+      const delay=reconnectDelays[Math.min(attempt++,reconnectDelays.length-1)]??120000;
       retryTimer=setTimeout(()=>{retryTimer=null;open().catch(retry);},Math.max(1,delay));
     }
     async function open(){
@@ -145,7 +167,7 @@ const BridgeTransport=(()=>{
     const transport={onClient(id,fn){if(id!==invite.memberId)throw error('Unauthorized');return incoming.add((_,packet)=>fn(packet));},sendToHost:(id,packet)=>id===invite.memberId?send(id,packet):Promise.reject(error('IdentitySpoof'))};
     let reconnecting=null;
     function reconnect(){
-      if(closed)return Promise.reject(error('ClientClosed'));if(reconnecting)return reconnecting;clearTimeout(retryTimer);retryTimer=null;
+      if(closed)return Promise.reject(error('ClientClosed'));if(reconnecting)return reconnecting;if(opening)return opening;clearTimeout(retryTimer);retryTimer=null;
       reconnecting=(async()=>{notice(onState,'reconnecting');const old=connection;connection=null;detach?.();fragments.clear();if(old){old.close();await old.closed;}return open();})().catch(cause=>{retry(cause);throw cause;}).finally(()=>{reconnecting=null;});return reconnecting;
     }
     try{await open();}catch(cause){stop(cause);throw cause;}
@@ -155,6 +177,6 @@ const BridgeTransport=(()=>{
     const invite=parseInvitation(value),session=await createClient({...options,invitation:invite});
     await session.close();return invite;
   }
-  return {MANIFEST,validateServerUrl,encodeInvitation,parseInvitation,probeInvitation,createHost,createClient};
+  return {MANIFEST,validateServerUrl,encodeInvitation,parseInvitation,invitationParameter,probeInvitation,createHost,createClient};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=BridgeTransport;
