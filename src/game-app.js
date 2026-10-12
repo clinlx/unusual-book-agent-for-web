@@ -33,7 +33,7 @@ const GameApp=(()=>{
     });
     syncHost=MultiplayerSync.createHost({getSave:()=>{
       const stable=s.activeRound&&!s.activeRound.complete?publishedSave:s;
-      return {...stable,events:s.events,status:s.status,slots:s.slots,round:s.round};
+      return {...stable,events:s.events,status:s.status,slots:s.slots,round:s.round,snapshots:s.snapshots};
     },getRoom:()=>({...hostSession.state(),autoAdvanceUnconscious:S.settings.autoAdvanceUnconscious!==false})});
     hostSession.subscribe(()=>{emit();publishClients();});
     if(s.slotsConfigured!==false)await hostSession.initialize(s.actorId);
@@ -95,9 +95,13 @@ const GameApp=(()=>{
   async function submitAction(content,privateContent='',options={}){
     const s=active();if(!String(content).trim()&&!String(privateContent).trim())return;
     if(s.status==='new')return start();
+    if(GameInputs.submission(S))throw Error('本回合已提交，请先撤回提交');
     const r=hostSession.state(),round=s.round+1;
     GameInputs.ensure(s);const hiddenSend=options.hiddenSend??!!privateContent,disguiseSend=hiddenSend&&(options.disguiseSend??!!content),entry={round,roundId:r.roundId,text:String(content),privateContent:String(privateContent),hiddenSend,disguiseSend,epoch:r.epoch,status:'pending'};s.inputHistory=s.inputHistory.filter(x=>x.roundId!==r.roundId).concat(entry).slice(-10);s.hiddenSend=hiddenSend;s.disguiseSend=disguiseSend;saveLocalInputs();
-    const result=await roomCommand('action.submit',{content:String(content),privateContent:String(privateContent),...options.disguiseSend===true?{disguise:true}:{}});
+    const feedback=S.actionFeedback=GameInputs.feedback(S,{status:'pending',content:String(content),privateContent:String(privateContent),disguise:disguiseSend});emit();
+    let result;
+    try{result=await roomCommand('action.submit',{content:String(content),privateContent:String(privateContent),...options.disguiseSend===true?{disguise:true}:{}});feedback.status='accepted';}
+    catch(error){if(S.actionFeedback===feedback)S.actionFeedback=null;emit();throw error;}
     const accepted=s.inputHistory.find(x=>x.roundId===r.roundId);if(accepted)accepted.status='accepted';
     s.draft='';s.privateDraft='';s.draftRound=s.round+1;saveLocalInputs();await persist();emit();return result;
   }
@@ -338,7 +342,15 @@ const GameApp=(()=>{
     }
   }
   const send=(text,privateContent='',options={})=>submitAction(text,privateContent,options);
-  const skip=async()=>{if(active().status==='new')throw Error('请先开始故事');const flags=GameData.actorState(player().info);return roomCommand(flags.enabled?'action.skip':'round.advance');};
+  const skip=async()=>{
+    if(active().status==='new')throw Error('请先开始故事');
+    if(GameInputs.submission(S))throw Error('本回合已提交，请先撤回提交');
+    const flags=GameData.actorState(player().info);
+    if(!flags.enabled)return roomCommand('round.advance');
+    const feedback=S.actionFeedback=GameInputs.feedback(S,{status:'pending',content:'',privateContent:'',skip:true});emit();
+    try{const result=await roomCommand('action.skip');feedback.status='accepted';emit();return result;}
+    catch(error){if(S.actionFeedback===feedback)S.actionFeedback=null;emit();throw error;}
+  };
   const start=()=>roomCommand('round.start');
   const resume=()=>roomCommand('round.resume');
   function abort(){controller?.abort(Object.assign(Error('已中止本回合，可继续或回退'),{name:'AbortError'}));}
@@ -365,6 +377,7 @@ const GameApp=(()=>{
   async function cancelAction(){
     const s=active(),r=hostSession.state(),result=await roomCommand('action.cancel',{submissionRequestId:r.submissions?.[s.actorId]?.requestId});
     if(active()!==s||hostSession.state().roundId!==r.roundId||hostSession.state().epoch!==r.epoch)return result;
+    S.actionFeedback=null;
     const entry=s.inputHistory?.find(x=>x.roundId===r.roundId);if(entry)entry.status='cancelled';
     if(!s.draft&&!s.privateDraft){s.draft=result.cancelled.content;s.privateDraft=result.cancelled.privateContent;s.hiddenSend=entry?.hiddenSend??!!s.privateDraft;s.disguiseSend=entry?.disguiseSend??!!(s.privateDraft&&s.draft);}
     GameInputs.advance(s);saveLocalInputs();await persist();emit();return result;

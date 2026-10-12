@@ -16,9 +16,11 @@ async function pageFor(t){const context=await browser.newContext({viewport:{widt
 async function connectBridge(host,clients){
   await host.exposeFunction('deliverMultiplayerClient',async(memberId,packet)=>{const page=clients[memberId];if(page)await page.evaluate(packet=>window.testClientReceiver?.(packet),packet);});
   await host.evaluate(()=>GameApp.attachMultiplayerTransport({onHost(fn){window.testHostReceiver=fn;return ()=>{window.testHostReceiver=null;};},sendToClient:(id,packet)=>window.deliverMultiplayerClient(id,packet)}));
+  await host.evaluate(()=>{GameApp.getState().network={status:'connected'};GameApp.setMode('play');});
   for(const [memberId,page]of Object.entries(clients)){
     await page.exposeFunction('deliverMultiplayerHost',(id,packet)=>host.evaluate(({id,packet})=>window.testHostReceiver(id,packet),{id,packet}));
     await page.evaluate(memberId=>GameApp.connect({onClient(id,fn){window.testClientReceiver=fn;return ()=>{window.testClientReceiver=null;};},sendToHost:(id,packet)=>window.deliverMultiplayerHost(id,packet)},memberId),memberId);
+    await page.evaluate(()=>{GameApp.getState().network={status:'connected'};return GameApp.sync();});
     await page.waitForFunction(()=>GameApp.getState().active!==null);
   }
 }
@@ -101,6 +103,11 @@ test('host and isolated clients use authoritative rounds, private projections, r
     if(!route.request().url().startsWith('https://multiplayer.invalid/'))return route.abort();modelRequests++;
     const opening=modelRequests===1;
     assert.ok(modelRequests<=2,'a collected multiplayer round calls the model once');
+    if(!opening){
+      await guest.waitForFunction(()=>document.querySelector('.live-status')?.textContent.includes('等待 AI 返回结果'));
+      assert.equal(await guest.locator('.request-progress').count(),0,'client does not display host-only percentages');
+      assert.equal(await guest.locator('#connection-lamp').getAttribute('data-turn-state'),'thinking');
+    }
     const calls=opening?[call('append_story',{content:'雨停以后，两位旅人来到同一座车站。',one_line_summary_of_content:'二人抵达车站'},'opening'),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环',Game_World_Time:'上午九点'}},'opening-end')]:[
       call('trigger_next_round',{phase_plan:{Countdowns:'无',Pending_Triggers:[],Forced_Checks:'无'}},'trigger'),
       call('private_append_story',{entries:[{id:'a',story:'只给甲的密语：月亮藏在井底。'},{id:'b',story:'只给乙的密语：钥匙藏在钟楼。'}]},'private'),
@@ -129,8 +136,7 @@ test('host and isolated clients use authoritative rounds, private projections, r
   const lobby=await guest.evaluate(()=>GameApp.getState().active);assert.equal(lobby.actorId,null);assert.deepEqual(lobby.events,[]);assert.deepEqual(lobby.info,{});assert.deepEqual(lobby.items,[]);
   await guest.evaluate(()=>GameApp.roomCommand('slot.claim.request',{actorId:'b'}));
   await host.waitForFunction(()=>GameApp.multiplayerState().slotRequests.length===1);
-  if(await host.locator('[data-action="close-modal"]').count())await host.locator('[data-action="close-modal"]').first().click();
-  await host.locator('[data-action="room-panel"]').click();await host.locator('[data-action="slot-decide"][data-decision="approve"]').click();
+  await host.locator('[data-action="slot-decide"][data-decision="approve"]').click();
   await guest.waitForFunction(()=>GameApp.getState().active.actorId==='b');
   for(const page of [host,guest])if(await page.locator('[data-action="close-modal"]').count())await page.locator('[data-action="close-modal"]').first().click();
   await guest.waitForFunction(()=>document.querySelector('#action-input')?.disabled===false&&document.querySelector('.character')?.textContent.includes('乙'));
@@ -142,19 +148,66 @@ test('host and isolated clients use authoritative rounds, private projections, r
   await host.locator('[data-slot="b"] [data-presence="online"]').waitFor();
   await host.locator('[data-action="close-modal"]').first().click();
   assert.equal(await guest.locator('#action-private-input').count(),0);
+  assert.equal(await guest.locator('[data-action="rollback"]').innerText(),'请求回退 (1)');
+  await host.evaluate(()=>GameApp.send('甲先等待列车'));
+  await guest.waitForFunction(()=>document.querySelector('.pending-actions')?.textContent.includes('甲先等待列车'));
+  assert.match(await guest.locator('.submission-status').innerText(),/还差 1 人/);
+  await host.evaluate(()=>GameApp.cancelAction());
+  await guest.waitForFunction(()=>!document.querySelector('.pending-actions')?.textContent.includes('甲先等待列车'));
+  await guest.evaluate(()=>GameApp.send('乙先查看站台'));
+  await host.waitForFunction(()=>document.querySelector('.pending-actions')?.textContent.includes('乙先查看站台'));
+  assert.match(await host.locator('.submission-status').innerText(),/还差 1 人/);
+  await guest.waitForFunction(()=>document.querySelector('#connection-lamp')?.dataset.turnState==='submitted');
+  assert.equal(await host.locator('#connection-lamp').getAttribute('data-turn-state'),'waiting');
+  await guest.evaluate(()=>GameApp.cancelAction());
+  await host.waitForFunction(()=>!document.querySelector('.pending-actions')?.textContent.includes('乙先查看站台'));
+  assert.match(await host.locator('.submission-status').innerText(),/还差 2 人/);
+  await guest.waitForFunction(()=>document.querySelector('#connection-lamp')?.dataset.turnState==='waiting');
   await guest.locator('#hidden-send-toggle').check();
   assert.equal(await guest.locator('#action-private-input').count(),0);
+  assert.match(await guest.locator('#action-input').getAttribute('placeholder'),/隐秘.*不向其他玩家公开/);
+  assert.ok(!(await guest.locator('#action-form').innerText()).includes('仅你可见'));
   await guest.locator('#action-input').fill('乙暗中藏起钥匙');
   await guest.locator('#disguise-send-toggle').check();
   await guest.locator('#action-private-input').fill('乙说自己在等车');
+  const colors=await guest.evaluate(()=>({private:getComputedStyle(document.querySelector('#action-input')).color,public:getComputedStyle(document.querySelector('#action-private-input')).color,label:getComputedStyle(document.querySelector('.disguise-composer')).color}));
+  assert.equal(colors.private,'rgb(128, 98, 159)');assert.notEqual(colors.public,colors.private);assert.notEqual(colors.label,colors.private);
+  await host.evaluate(()=>{const receive=window.testHostReceiver;window.testHostReceiver=async(id,packet)=>{if(packet.type==='action.submit'){window.testHostReceiver=receive;await new Promise(resolve=>window.releaseSubmission=resolve);}return receive(id,packet);};});
   await guest.locator('#action-form button[type="submit"]').click();
+  await host.waitForFunction(()=>typeof window.releaseSubmission==='function');
+  await guest.locator('.pending-actions').filter({hasText:'乙暗中藏起钥匙'}).waitFor();
+  assert.match(await guest.locator('.pending-actions').innerText(),/等待房主确认/);
+  assert.equal(await guest.locator('#action-form button[type="submit"]').isDisabled(),true);
+  assert.equal(await guest.locator('#action-form button[type="submit"]').innerText(),'等待确认');
+  await host.evaluate(()=>window.releaseSubmission());
   await host.waitForFunction(()=>GameApp.multiplayerState().submissions.b?.privateContent==='乙暗中藏起钥匙');
+  await guest.waitForFunction(()=>document.querySelector('#action-form button[type="submit"]')?.textContent==='已提交');
+  assert.equal(await guest.locator('#action-form button[type="submit"]').isDisabled(),true);
+  assert.equal(await guest.locator('[data-action="cancel-action"]').innerText(),'撤回提交');
+  assert.equal(await guest.locator('.pending-actions [data-key="pending-b"]').count(),1);
+  for(const width of [1440,390]){
+    await guest.setViewportSize({width,height:960});
+    assert.ok(await guest.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    const bounds=await guest.locator('.composer-bottom').evaluate(el=>{const hint=el.querySelector('.composer-hint').getBoundingClientRect(),actions=el.querySelector('.composer-actions').getBoundingClientRect(),meta=el.querySelector('.composer-meta').getBoundingClientRect();return {hint:{left:hint.left,right:hint.right,top:hint.top,bottom:hint.bottom},actions:{left:actions.left,right:actions.right,top:actions.top,bottom:actions.bottom},meta:{left:meta.left,right:meta.right}};});
+    assert.ok(bounds.hint.right<=bounds.actions.left||bounds.hint.top>=bounds.actions.bottom||bounds.hint.bottom<=bounds.actions.top,'hint and buttons do not overlap');
+    await guest.screenshot({path:'tests/artifacts/private-composer-'+width+'.png'});
+  }
+  await guest.setViewportSize({width:1440,height:960});
   assert.equal(await host.evaluate(()=>GameApp.multiplayerState().submissions.b.content),'乙说自己在等车');
   assert.equal(await host.evaluate(()=>GameApp.multiplayerState().submissions.b.disguise),true);
+  await host.waitForFunction(()=>document.querySelector('.pending-actions')?.textContent.includes('乙说自己在等车'));
+  assert.ok(!(await host.locator('#history').innerText()).includes('乙暗中藏起钥匙'));
   await guest.locator('[data-action="cancel-action"]').click();
+  await host.waitForFunction(()=>!document.querySelector('.pending-actions')?.textContent.includes('乙说自己在等车'));
   await guest.waitForFunction(()=>document.querySelector('#action-input')?.value==='乙暗中藏起钥匙');
   assert.equal(await guest.locator('#hidden-send-toggle').isChecked(),true);
   assert.equal(await guest.locator('#disguise-send-toggle').isChecked(),true);
+  assert.equal(await guest.locator('#action-private-input').inputValue(),'乙说自己在等车');
+  await host.evaluate(()=>{const receive=window.testHostReceiver;window.testHostReceiver=(id,packet)=>{if(packet.type==='action.submit'){window.testHostReceiver=receive;throw Error('测试提交失败');}return receive(id,packet);};});
+  await guest.locator('#action-form button[type="submit"]').click();
+  await guest.waitForFunction(()=>!GameApp.getState().actionFeedback&&document.querySelector('#action-input')?.value==='乙暗中藏起钥匙');
+  assert.equal(await guest.locator('.pending-actions [data-key="pending-b"]').count(),0);
+  assert.equal(await guest.locator('#action-form button[type="submit"]').isDisabled(),false);
   assert.equal(await guest.locator('#action-private-input').inputValue(),'乙说自己在等车');
   await guest.locator('#hidden-send-toggle').uncheck();
   assert.equal(await guest.locator('#action-private-input').count(),0);

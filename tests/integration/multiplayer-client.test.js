@@ -11,10 +11,50 @@ function setup(t){
  let receiver,action;let syncs=0;const transport={onClient(id,fn){receiver=fn;return ()=>{};},async sendToHost(id,command){if(command.type==='sync.request'){syncs++;return receiver(await host.sync(id,command.payload));}if(command.type==='sync.ack')return;if(action)return action(command);}};
  return {ctx,app,save,room,host,storage,entries,transport,get syncs(){return syncs;},setAction:fn=>{action=fn;},receive:packet=>receiver(packet),scope:{gameId:'game',memberId:'guest',actorId:'a'}};
 }
+
+test('a submission immediately exposes scoped feedback and blocks resubmitting or skipping until retracted',async t=>{
+ const f=setup(t);await f.app.connect(f.transport,'guest');let command;
+ f.setAction(c=>{command=c;});
+ const sending=f.app.send('等车','藏起钥匙',{hiddenSend:true,disguiseSend:true});
+ assert.equal(Inputs.submission(f.app.getState()).status,'pending');
+ assert.equal(f.app.getState().actionFeedback.privateContent,'藏起钥匙');
+ await assert.rejects(f.app.send('重复行动'),/提交|确认/);await assert.rejects(f.app.skip(),/提交|确认/);
+ await f.receive({type:'command.result',requestId:command.requestId,ok:true});await sending;
+ assert.equal(Inputs.submission(f.app.getState()).status,'accepted');
+ await assert.rejects(f.app.skip(),/提交|确认/);
+ f.setAction(c=>f.receive({type:'command.result',requestId:c.requestId,ok:true,cancelled:{content:'等车',privateContent:'藏起钥匙'}}));
+ await f.app.cancelAction();assert.equal(Inputs.submission(f.app.getState()),null);
+});
+
+test('a failed submission clears optimistic feedback while retaining retryable input',async t=>{
+ const f=setup(t);await f.app.connect(f.transport,'guest');f.setAction(()=>{throw Error('offline');});
+ await assert.rejects(f.app.send('查看窗户'),/offline/);
+ assert.equal(Inputs.submission(f.app.getState()),null);assert.equal(f.app.getState().actionFeedback,null);
+ assert.equal(f.app.getState().active.inputHistory.at(-1).text,'查看窗户');
+});
+
+test('skipping after retracting an action uses the new skip identity for a later retraction',async t=>{
+ const f=setup(t);await f.app.connect(f.transport,'guest');let skipId;
+ f.setAction(c=>{
+   if(c.type==='action.skip')skipId=c.requestId;
+   if(c.type==='action.cancel'&&skipId)assert.equal(c.payload.submissionRequestId,skipId);
+   return f.receive({type:'command.result',requestId:c.requestId,ok:true,...c.type==='action.cancel'?{cancelledRequestId:c.payload.submissionRequestId,cancelled:{content:'',privateContent:''}}:{}});
+ });
+ await f.app.send('查看窗户');await f.app.cancelAction();await f.app.skip();
+ assert.equal(f.app.getState().actionFeedback.skip,true);await f.app.cancelAction();
+ assert.equal(Inputs.submission(f.app.getState()),null);
+});
 test('client requests another bound player inventory through the host without local world access',async t=>{
  const f=setup(t);await f.app.connect(f.transport,'guest');assert.equal(typeof f.app.inventory,'function');
  f.setAction(async c=>{assert.equal(c.type,'inventory.request');assert.equal(c.payload.actorId,'b');assert.equal(c.roomId,f.room.roomId);assert.equal(c.epoch,f.room.epoch);assert.equal(c.bindingVersion,1);await f.receive({type:'command.result',requestId:c.requestId,ok:true,inventory:{actorId:'b',name:'乙',items:[{名称:'公用地图'}]}});});
  const result=await f.app.inventory('b');assert.equal(result.items[0].名称,'公用地图');assert.equal(f.app.getState().active.tree,undefined);
+});
+
+test('client requests the actual available rollback target for an interrupted unfinished round',async t=>{
+ const f=setup(t);f.save.status='interrupted';f.room.status='interrupted';f.save.snapshots=[{round:f.save.round,inputRoundId:'unfinished'}];
+ await f.app.connect(f.transport,'guest');assert.equal(f.app.getState().active.rollbackCount,1);
+ f.setAction(async command=>{assert.equal(command.type,'rollback.request');assert.equal(command.payload.targetRound,f.save.round);await f.receive({type:'command.result',requestId:command.requestId,ok:true});});
+ await f.app.requestRollback();
 });
 
 test('disguised action options survive cancellation and rollback locally',async t=>{
@@ -114,6 +154,7 @@ test('late cancellation confirmation cannot replace a newer submission or its dr
    await f.receive({type:'command.result',requestId:c.requestId,ok:true,cancelledRequestId:submitted.requestId,cancelled:{content:'旧行动',privateContent:'旧秘密'}});
  });await f.app.cancelAction();
  assert.equal(local.load(f.scope).inputHistory.at(-1).requestId,'newer-submit');assert.equal(local.load(f.scope).inputHistory.at(-1).status,'pending');assert.equal(local.load(f.scope).draft,'新的草稿');
+ assert.notEqual(f.app.getState().actionFeedback?.status,'cancelled');
 });
 test('a receive awaiting hash verification cannot write into a newly attached member session',async t=>{
  const f=setup(t);await f.app.connect(f.transport,'guest');f.save.events.push({type:'story',audience:['a'],round:2,content:'old-session-secret'});const oldPacket=await f.host.sync('guest');

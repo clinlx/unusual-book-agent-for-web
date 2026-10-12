@@ -4,6 +4,16 @@ const assert=require('node:assert/strict');
 const VFS=require('../../src/vfs'),Core=require('../../src/game-core');
 const Inputs=require('../../src/game-input-history');
 const IO=require('../../src/game-import');
+test('submission feedback is scoped to the current player and collecting round',()=>{
+  const s={client:true,active:{id:'save',actorId:'a'},room:{roomId:'room',roundId:'r2',epoch:0,status:'collecting'}};
+  const feedback={saveId:'save',actorId:'a',roomId:'room',roundId:'r2',epoch:0,status:'pending',content:'查看窗户',privateContent:'藏钥匙'};
+  s.actionFeedback=feedback;assert.equal(Inputs.submission(s).status,'pending');
+  feedback.status='accepted';assert.equal(Inputs.submission(s).status,'accepted');
+  for(const patch of [{roundId:'r3'},{epoch:1},{status:'executing'},{bindingVersion:1}])assert.equal(Inputs.submission({...s,room:{...s.room,...patch}}),null);
+  assert.equal(Inputs.submission({...s,active:{...s.active,actorId:'b'}}),null);
+  feedback.status='cancelled';s.room.submitted=true;assert.equal(Inputs.submission(s),null);
+  s.actionFeedback=null;assert.equal(Inputs.submission(s).status,'accepted');
+});
 function save(){const tree=VFS.createTree();VFS.writeFile(tree,'/workspace/Player-p/基础信息.json','{"姓名":"玩家"}');VFS.writeFile(tree,'/workspace/Player-p/背包.json','[]');return Core.createSave('输入记录',tree);}
 function finish(s){s.round=s.activeRound.number;s.activeRound.complete=true;s.status='waiting';}
 test('last ten player rounds remain accessible after consecutive rollbacks with the correct restored input',()=>{

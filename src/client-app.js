@@ -41,7 +41,10 @@ const GameApp=(()=>{
     }catch(error){S.storageWarning=error.message;inputs=same?previous:{inputHistory:[],draft:'',privateDraft:'',draftRound:view.round+1,draftVersion:0};}
     S.active={...view,...inputState(inputs),cache:{Game_World_Time:view.events.at(-1)?.worldTime||''},snapshots:[],room:view.room};
     S.baseline=same&&before?.scope.epoch===next.scope.epoch?{info:before.view.info,items:before.view.items}:{info:view.info,items:view.items};
-    S.room=view.room;S.running=view.room?.status==='executing';S.error=null;emit();
+    S.room=view.room;S.running=view.room?.status==='executing';
+    const feedback=GameInputs.currentFeedback(S);
+    if(!feedback||feedback.status==='accepted'&&S.room.submitted||feedback.status==='cancelled'&&!S.room.submitted)S.actionFeedback=null;
+    S.error=null;emit();
     if(transport)await transport.sendToHost(memberId,{type:'sync.ack',payload:cache.request()});
   }
   async function command(type,payload={},options={}){
@@ -49,16 +52,20 @@ const GameApp=(()=>{
     const c={type,payload,requestId,roomId:r.roomId,epoch:r.epoch,roundId:r.roundId,bindingVersion:r.bindingVersion};
     return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{pending.delete(requestId);reject(Error('房主尚未确认，请同步状态后重试'));},15000);pending.set(requestId,{resolve,reject,timer});Promise.resolve(transport.sendToHost(memberId,c)).catch(e=>{clearTimeout(timer);pending.delete(requestId);reject(e);});});
   }
-  async function send(text,privateContent='',options={}){
+  async function submitInput(text,privateContent='',options={},skip=false){
     if(S.network&&S.network.status!=='connected')throw Error('连接已中断，请等待重连或重新连接');if(!S.active||!S.room)throw Error('尚未连接房主');if(S.room.online===false)throw Error('房间已关闭');if(!S.active.actorId)throw Error('请先申请角色槽位');text=String(text);privateContent=String(privateContent);
-    if(!text.trim()&&!privateContent.trim())return;
+    if(!skip&&!text.trim()&&!privateContent.trim())return;
+    if(GameInputs.submission(S))throw Error('本回合已提交，请先撤回提交');
     const hiddenSend=options.hiddenSend??!!privateContent,disguiseSend=hiddenSend&&(options.disguiseSend??!!text);
     const identity=scope(),r={...S.room},round=S.active.round+1,previous=local.load(identity),old=previous.inputHistory.find(x=>x.roundId===r.roundId);
     const requestId=old?.status==='pending'&&old.text===text&&old.privateContent===privateContent&&(old.disguiseSend??!!(old.text&&old.privateContent))===disguiseSend?old.requestId:crypto.randomUUID();
     if(pending.has(requestId))throw Error('正在等待房主确认');
     local.record(identity,{round,roundId:r.roundId,epoch:r.epoch,text,privateContent,hiddenSend,disguiseSend,requestId,status:'pending'});
-    local.save(identity,{draft:text,privateDraft:privateContent,hiddenSend,disguiseSend,draftRound:round,draftVersion:previous.draftVersion});refreshInputs(identity);emit();
-    const result=await command('action.submit',{content:text,privateContent,...options.disguiseSend===true?{disguise:true}:{}},{requestId,room:r});
+    local.save(identity,{draft:text,privateDraft:privateContent,hiddenSend,disguiseSend,draftRound:round,draftVersion:previous.draftVersion});refreshInputs(identity);
+    const feedback=S.actionFeedback=GameInputs.feedback(S,{status:'pending',content:text,privateContent,disguise:disguiseSend,requestId,skip});emit();
+    let result;
+    try{result=await command(skip?'action.skip':'action.submit',skip?{}:{content:text,privateContent,...options.disguiseSend===true?{disguise:true}:{}},{requestId,room:r});feedback.status='accepted';}
+    catch(error){if(S.actionFeedback===feedback)S.actionFeedback=null;emit();throw error;}
     try{
       local.record(identity,{round,roundId:r.roundId,epoch:r.epoch,requestId,status:'accepted'});
       const current=local.load(identity);
@@ -73,12 +80,13 @@ const GameApp=(()=>{
     try{
       const prior=local.load(identity).inputHistory.find(x=>x.roundId===r.roundId),hiddenSend=prior?.hiddenSend??!!result.cancelled.privateContent,disguiseSend=prior?.disguiseSend??!!(result.cancelled.privateContent&&result.cancelled.content);
       local.record(identity,{round:r.round,roundId:r.roundId,epoch:r.epoch,requestId:result.cancelledRequestId||submittedRequestId||'',text:result.cancelled.content,privateContent:result.cancelled.privateContent,hiddenSend,disguiseSend,status:'cancelled'});
+      S.actionFeedback=GameInputs.feedback(S,{status:'cancelled'});
       const current=local.load(identity),restore=!current.draft&&!current.privateDraft;
       local.save(identity,{draft:restore?result.cancelled.content:current.draft,privateDraft:restore?result.cancelled.privateContent:current.privateDraft,...restore?{hiddenSend,disguiseSend}:{},draftVersion:current.draftVersion+1});refreshInputs(identity);emit();
     }catch(error){if(error.code!=='LOCAL_INPUT_STALE')throw error;}
     return result;
   }
-  async function attach(t,id){disconnect();transport=t;memberId=id;closedRoomId=null;cache=MultiplayerSync.createClient();const attachedCache=cache;recoveryRequests.clear();S.active=null;S.room=null;stop=t.onClient(id,packet=>{if(transport!==t||memberId!==id||cache!==attachedCache)return;return receive(packet);});await sync();}
+  async function attach(t,id){disconnect();S.actionFeedback=null;transport=t;memberId=id;closedRoomId=null;cache=MultiplayerSync.createClient();const attachedCache=cache;recoveryRequests.clear();S.active=null;S.room=null;stop=t.onClient(id,packet=>{if(transport!==t||memberId!==id||cache!==attachedCache)return;return receive(packet);});await sync();}
   function stopNetwork(){joinGeneration++;const previous=bridgeSession;bridgeSession=null;previous?.close();disconnect();}
   async function joinRoom(value){
     stopNetwork();S.home=false;S.active=null;S.room=null;const generation=joinGeneration;
@@ -106,7 +114,7 @@ const GameApp=(()=>{
   async function reconnectRoom(){if(!bridgeSession)throw Error('请重新粘贴邀请链接加入房间');await bridgeSession.reconnect();}
   return {getState:()=>S,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},init:async()=>{try{S.settings=JSON.parse(localStorage.getItem('trpg-client-settings')||'{}');}catch(_){}},
     connect:async(t,id)=>{stopNetwork();S.network=null;await attach(t,id);},joinRoom,reconnectRoom,receive,sync,
-    send,cancelAction,profile:async actorId=>(await command('profile.request',{actorId})).profile,inventory:async actorId=>(await command('inventory.request',{actorId})).inventory,skip:()=>command('action.skip'),requestRollback:()=>command('rollback.request',{targetRound:Math.max(0,S.active.round-1)}),roomCommand:command,
+    send:(text,privateContent,options)=>submitInput(text,privateContent,options),cancelAction,profile:async actorId=>(await command('profile.request',{actorId})).profile,inventory:async actorId=>(await command('inventory.request',{actorId})).inventory,skip:()=>submitInput('','',{},true),requestRollback:()=>command('rollback.request',{targetRound:S.active.rollbackTargetRound??Math.max(0,S.active.round-1)}),roomCommand:command,
     player:()=>({info:S.active?.info||{},items:S.active?.items||[],name:S.active?.playerName}),exportView:()=>cache.getState()?.view,
     saveDraft:async(text,binding,options={})=>{if(S.active&&GameInputs.setDraft(S.active,options.private?'':text,binding)){S.active.privateDraft=options.private?String(text):String(options.privateContent||'');S.active.hiddenSend=options.hiddenSend??!!S.active.privateDraft;S.active.disguiseSend=S.active.hiddenSend&&(options.disguiseSend??!!S.active.draft);store();}},
     updateSettings:async values=>{S.settings={reverseSendNewline:values.reverseSendNewline===true};localStorage.setItem('trpg-client-settings',JSON.stringify(S.settings));emit();},

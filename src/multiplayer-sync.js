@@ -74,6 +74,24 @@ const MultiplayerSync=(()=>{
     }
     return out;
   }
+  function collection(room,slots){
+    const people=members(room),eligible=(slots||[]).filter(s=>!['ai','disabled','kpc'].includes(s.kind)&&s.alive!==false&&s.enabled!==false&&(s.occupied||people.some(([,m])=>m.actorId===s.id||m.invitationActorId===s.id)));
+    const submitted=eligible.filter(s=>s.submitted??!!room?.submissions?.[s.id]).length;
+    return {total:eligible.length,submitted,remaining:eligible.length-submitted};
+  }
+  function pendingActions(save,actorId,{room=save.multiplayer}={}){
+    if(room?.status!=='collecting')return [];
+    const actions=[];
+    for(const [id,e]of Object.entries(room.submissions||{})){
+      const content=String(e.content||'');
+      if(id!==actorId&&!content.trim()&&String(e.privateContent||'').trim()&&!e.skip)continue;
+      const slot=save.slots?.find(s=>s.id===id);if(!slot)continue;
+      const action={id:'pending-'+id,type:'player',actorId:id,round:room.round||save.round+1,content,skip:!!e.skip,pending:true};
+      if(id===actorId&&String(e.privateContent||'').trim()){action.private=true;action.privateContent=String(e.privateContent);if(e.disguise===true)action.disguise=true;}
+      actions.push(action);
+    }
+    return actions;
+  }
   function project(save,actorId,{memberId,room,keyMap,allowUnassigned=false}={}){
     // Only the host calls this entry point; the reducer below has no world dependencies.
     const Core=typeof module!=='undefined'&&module.exports?require('./game-core.js'):GameCore;
@@ -101,9 +119,10 @@ const MultiplayerSync=(()=>{
     const ownMember=people.find(([id])=>id===memberId)?.[1];
     const roomView=room?{...pick(room,['roomId','epoch','roundId','round','status','online','autoAdvanceUnconscious']),memberId,actorId,bindingVersion:ownMember?.bindingVersion||0,submitted:!!room.submissions?.[actorId],members:people.map(([id,m])=>({memberId:id,actorId:m.actorId,connected:m.connected===true||m.online===true})),vote:room.vote?{...pick(room.vote,['id','requester','targetRound','targetRoundId','status','expiresAt']),eligible:(room.vote.eligible||[]).includes(memberId),voted:Object.hasOwn(room.vote.votes||{},memberId),yes:Object.values(room.vote.votes||{}).filter(Boolean).length,required:Math.ceil((room.vote.eligible||[]).length/2)}:null}:null;
     if(roomView)roomView.slotRequests=(room.slotRequests||[]).map(request=>pick(request,['id','memberId','actorId','at']));
-    return {id:save.id,name:save.name,actorId,round:save.round||0,status:save.status,events,info:own.info,items:own.items,itemKeys:slot?itemKeys(save,slot,Data,keyMap):[],playerName:own.name,slots:publicSlots,room:roomView};
+    if(roomView)roomView.collection=collection(room,publicSlots);
+    return {id:save.id,name:save.name,actorId,round:save.round||0,status:save.status,events,pendingActions:slot?pendingActions(save,actorId,{room}):[],rollbackCount:Math.min(10,save.snapshots?.length||0),rollbackTargetRound:save.snapshots?.at(-1)?.round??null,info:own.info,items:own.items,itemKeys:slot?itemKeys(save,slot,Data,keyMap):[],playerName:own.name,slots:publicSlots,room:roomView};
   }
-  function meta(view){return pick(view,['id','name','actorId','round','status','playerName','slots','room']);}
+  function meta(view){return pick(view,['id','name','actorId','round','status','playerName','slots','room','pendingActions','rollbackCount','rollbackTargetRound']);}
   async function hashes(view){const [history,info,items,state]=await Promise.all([hash(view.events),hash(view.info),hash({items:view.items,itemKeys:view.itemKeys}),hash(meta(view))]);return {history,info,items,state};}
   const same=(a,b)=>canonical(a)===canonical(b);
   function createHost({getSave,getRoom,pageSize=200}){
@@ -205,6 +224,6 @@ const MultiplayerSync=(()=>{
     function enqueue(memberId,args){pending.push({memberId,args:clone(args)});if(autoFlush)return flush(pending.length-1);return Promise.resolve();}
     return {onHost(fn){host.add(fn);return ()=>host.delete(fn);},onClient(memberId,fn){if(!clients.has(memberId))clients.set(memberId,new Set());clients.get(memberId).add(fn);return ()=>clients.get(memberId)?.delete(fn);},sendToHost:(memberId,message)=>enqueue(null,[memberId,message]),sendToClient:(memberId,message)=>enqueue(memberId,[message]),flush,drop(index=0){return !!pending.splice(index,1).length;},pending:()=>clone(pending)};
   }
-  return {project,profile,inventory,hash,canonical,createHost,createClient,createMemoryTransport};
+  return {project,profile,inventory,collection,pendingActions,hash,canonical,createHost,createClient,createMemoryTransport};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=MultiplayerSync;

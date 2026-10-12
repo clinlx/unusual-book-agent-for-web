@@ -9,6 +9,13 @@ test('ready host and bound client are green, initial synchronization and retries
   for(const status of ['connecting','reconnecting'])assert.equal(Status.describe({network:{status}}).color,'yellow');
   assert.equal(Status.describe({client:true,network:{status:'connected'}}).color,'yellow');
 });
+
+test('connected lamp reflects collecting, submitted and thinking states without reporting a connection fault',()=>{
+ const state={client:true,network:{status:'connected'},room:{online:true,status:'collecting',submitted:false,collection:{total:3,submitted:1,remaining:2}}};
+ let info=Status.describe(state);assert.equal(info.color,'green');assert.equal(info.turnState,'waiting');assert.match(info.message,/还差 2 人/);assert.equal(info.abnormal,false);
+ state.room.submitted=true;info=Status.describe(state);assert.equal(info.turnState,'submitted');assert.match(info.message,/已提交/);
+ state.room.status='executing';info=Status.describe(state);assert.equal(info.turnState,'thinking');assert.match(info.message,/AI/);
+});
 test('transport failures are red; missing host, revoked invitations and protocol failures are purple',()=>{
   for(const code of ['ConnectionLost','ConnectFailed','HandshakeTimeout'])assert.equal(Status.describe({network:{status:'closed',code}}).color,'red');
   for(const code of ['HostDisconnected','RoomNotFound','Unauthorized','ContractMismatch'])assert.equal(Status.describe({network:{status:'disconnected',code}}).color,'purple');

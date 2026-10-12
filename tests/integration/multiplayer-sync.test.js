@@ -15,6 +15,33 @@ function fixture(){
   return {save,room,host:Sync.createHost({getSave:()=>save,getRoom:()=>room})};
 }
 
+test('pending actions update a separate partition, remove cancelled actions and filter private text',async()=>{
+ const {save,room,host}=fixture(),client=Sync.createClient();
+ room.submissions.a={actorId:'a',content:'公开等车',privateContent:'偷偷藏钥匙',disguise:true};
+ save.snapshots=[{round:0,inputRoundId:'r1',tree:{secret:'snapshot-world'}}];
+ await client.apply(await host.sync('two'));let view=client.getState().view;
+ assert.equal(view.pendingActions[0].content,'公开等车');assert.equal(view.pendingActions[0].privateContent,undefined);
+ assert.equal(view.pendingActions[0].disguise,undefined);assert.equal(view.rollbackCount,1);assert.equal(view.rollbackTargetRound,0);
+ assert.deepEqual(view.room.collection,{total:2,submitted:1,remaining:1});
+ assert.ok(!JSON.stringify(view).includes('偷偷藏钥匙'));assert.ok(!JSON.stringify(view).includes('snapshot-world'));
+ const before=client.request();room.submissions.a.privateContent='新的秘密';
+ assert.equal(await host.sync('two',{...before,onlyIfChanged:true}),null);
+ delete room.submissions.a;const cancelled=await host.sync('two',before);
+ assert.equal(cancelled.type,'incremental');assert.deepEqual(cancelled.events,[]);await client.apply(cancelled);
+ assert.deepEqual(client.getState().view.pendingActions,[]);assert.equal(client.getState().view.room.collection.remaining,2);
+ room.submissions.a={actorId:'a',content:'',privateContent:'隐秘的行动'};
+ const own=Sync.project(save,'a',{room,memberId:'one'}),other=Sync.project(save,'b',{room,memberId:'two'});
+ assert.equal(own.pendingActions[0].privateContent,'隐秘的行动');assert.deepEqual(other.pendingActions,[]);
+ room.status='executing';assert.deepEqual(Sync.project(save,'a',{room,memberId:'one'}).pendingActions,[]);
+});
+
+test('submission counts exclude incapacitated players but still wait for disconnected awake players',()=>{
+ const {save,room}=fixture();room.members.two.connected=false;
+ let view=Sync.project(save,'a',{room,memberId:'one'});assert.equal(view.room.collection.remaining,1);
+ VFS.writeFile(save.tree,'/workspace/Player-b/基础信息.json',JSON.stringify({姓名:'b',状态:{Alive:true,Enabled:false}}));
+ view=Sync.project(save,'a',{room,memberId:'one'});assert.deepEqual(view.room.collection,{total:1,submitted:1,remaining:0});
+});
+
 test('disguised actions expose only their public cover to other players and private edits preserve their hashes',async()=>{
   const {save,host}=fixture(),a=Sync.createClient(),b=Sync.createClient();
   save.events.push({type:'player',round:1,actorId:'a',content:'我在等车',privateContent:'暗中藏好钥匙',disguise:true});

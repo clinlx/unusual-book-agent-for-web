@@ -108,6 +108,13 @@ test('real sockets recover both sides without losing submissions or interrupting
   await host.waitForFunction(()=>document.querySelector('#toast')?.textContent.includes('没有玩家加入'));assert.equal(modelRequests,0);
   await guest.goto(invite.link);await guest.waitForFunction(()=>GameApp.getState().active?.actorId==='b');
   await host.evaluate(()=>GameApp.start());await waitHost(host,1);await guest.waitForFunction(()=>GameApp.getState().active?.round===1);
+  await guest.waitForFunction(()=>document.querySelector('[data-action="rollback"]')?.textContent==='请求回退 (1)');
+  await host.evaluate(()=>GameApp.send('甲公开等待同伴'));
+  await guest.waitForFunction(()=>document.querySelector('.pending-actions')?.textContent.includes('甲公开等待同伴'));
+  assert.match(await guest.locator('.submission-status').innerText(),/还差 1 人/);
+  await host.evaluate(()=>GameApp.cancelAction());
+  await guest.waitForFunction(()=>!document.querySelector('.pending-actions')?.textContent.includes('甲公开等待同伴'));
+  assert.match(await guest.locator('.submission-status').innerText(),/还差 2 人/);
   await guest.evaluate(()=>GameApp.send('乙已经提交'));await host.waitForFunction(()=>!!GameApp.multiplayerState().submissions.b);
   const roundId=await host.evaluate(()=>GameApp.multiplayerState().roundId);
   await guest.evaluate(()=>window.testSockets.at(-1).close(4000,'模拟掉线'));
@@ -117,6 +124,8 @@ test('real sockets recover both sides without losing submissions or interrupting
   assert.equal(modelRequests,2,'已提交的掉线玩家不阻止结算');
   await guest.waitForFunction(()=>GameApp.getState().network.status==='reconnecting');await guest.locator('#connection-lamp').click();
   await guest.waitForFunction(()=>GameApp.getState().network.status==='connected');assert.equal(await guest.evaluate(()=>GameApp.getState().room.roundId),roundId);
+  await guest.waitForFunction(()=>document.querySelector('.live-status')?.textContent.includes('等待 AI 返回结果'));
+  assert.equal(await guest.locator('.request-progress').count(),0);
   await host.evaluate(()=>window.testSockets.at(-1).close(4000,'模拟房主掉线'));
   await host.waitForFunction(()=>GameApp.getState().network.status==='reconnecting');
   assert.equal(await host.evaluate(()=>GameApp.getState().running),true);
