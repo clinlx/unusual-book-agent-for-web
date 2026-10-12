@@ -1,6 +1,7 @@
 'use strict';
 const BridgeTransport=(()=>{
   const SDK=typeof module!=='undefined'&&module.exports?require('../vendor/room-bridge.js'):RoomBridgeSDK;
+  const Recovery=typeof module!=='undefined'&&module.exports?require('./connection-recovery.js'):ConnectionRecovery;
   const encoder=new TextEncoder(),decoder=new TextDecoder('utf-8',{fatal:true});
   const CHUNK_BYTES=45000,FRAME_BYTES=65536,COMMAND_BYTES=2*1024*1024,VIEW_BYTES=32*1024*1024;
   const RECONNECT_DELAYS=[5000,10000,20000,40000,80000,120000];
@@ -75,32 +76,45 @@ const BridgeTransport=(()=>{
       }).finally(()=>{pendingBytes-=bytes.length;});chain=operation.catch(()=>{});return operation;
     };
   }
-  function attach(connection,handler){
+  function attach(connection,handler,report){
     let chain=Promise.resolve(),queued=0,queuedBytes=0;const enqueue=message=>{
       const size=encoder.encode(JSON.stringify(message)).length;
-      if(queued>=512||queuedBytes+size>8*1024*1024){connection.close();return;}
+      if(queued>=512||queuedBytes+size>8*1024*1024){report?.({event:'transport.receive-overflow',connectionId:connection.connectionId,queued,queuedBytes,incomingBytes:size});connection.close();return;}
       queued++;queuedBytes+=size;
-      chain=chain.then(()=>handler(message)).catch(()=>{}).finally(()=>{queued--;queuedBytes-=size;});
+      chain=chain.then(()=>handler(message)).catch(cause=>report?.({event:'transport.handler-failed',connectionId:connection.connectionId,error:SDK.diagnosticError(cause)})).finally(()=>{queued--;queuedBytes-=size;});
     };
     const stop=connection.onMessage(enqueue);for(const message of connection.inbox.splice(0))enqueue(message);return stop;
   }
   function notice(callback,status,cause,extra={}){if(!callback)return;const message=cause?.message||({connected:'已连接房间',reconnecting:'正在重新连接',disconnected:'连接已断开',closed:'房间连接已关闭'}[status]);try{Promise.resolve(callback({status,message,...cause?.code?{code:cause.code}:{},...extra})).catch(()=>{});}catch(_){}}
-  async function createHost({url,roomId,title='',onMember,onState,sdk=SDK,credentials:saved,players:authorized=[],reconnectDelays=RECONNECT_DELAYS}={}){
+  function reporter(role,url,roomId,logger){
+    const sessionId=crypto.randomUUID();
+    return record=>{try{const method=['connection.ready','reconnect.start','page.recovery'].includes(record.event)?'info':'warn';logger?.[method]?.('[BookAgent WS]',{sessionId,role,endpoint:url,timestamp:new Date().toISOString(),roomId,...record});}catch(_){}};
+  }
+  async function waitForClose(connection,bounded,report){
+    if(!bounded)return connection.closed;
+    let timer;
+    try{await Promise.race([connection.closed,new Promise(resolve=>{timer=setTimeout(()=>{report({event:'websocket.close-wait-timeout',connectionId:connection.connectionId,waitMs:1000});resolve();},1000);})]);}
+    finally{clearTimeout(timer);}
+  }
+  async function createHost({url,roomId,title='',onMember,onState,sdk=SDK,credentials:saved,players:authorized=[],reconnectDelays=RECONNECT_DELAYS,environment=globalThis,logger=console}={}){
     url=validateServerUrl(url);if(!validId(roomId))throw error();
+    const report=reporter('host',url,roomId,logger);
     const token=saved?.token??sdk.randomToken(),epoch=saved?.epoch??sdk.randomToken(),players=new Map(),fragments=createFragments(COMMAND_BYTES),incoming=deliveries(VIEW_BYTES,id=>players.has(id));
     if(decode(token).length!==32||decode(epoch).length!==32||!Array.isArray(authorized)||authorized.length>64)throw error();
     for(const value of authorized){const item=invitation(value);if(item.url!==url||item.roomId!==roomId||players.has(item.memberId))throw error();players.set(item.memberId,item.token);}
-    let closed=false,revision=0,authorization=Promise.resolve(),connection=null,detach,retryTimer=null,attempt=0,opening=null,reconnecting=null,closing=Promise.resolve();
+    let closed=false,revision=0,authorization=Promise.resolve(),connection=null,detach,retryTimer=null,attempt=0,opening=null,reconnecting=null,closing=Promise.resolve(),stopRecovery=()=>{};
     function retry(cause){
       if(closed)return;if(!retryable(cause,true)){close(cause);return;}
       notice(onState,'reconnecting',cause,{backgroundRetry:true});clearTimeout(retryTimer);
       const delay=reconnectDelays[Math.min(attempt++,reconnectDelays.length-1)]??120000;
+      report({event:'reconnect.scheduled',retryAttempt:attempt,retryDelayMs:delay,error:SDK.diagnosticError(cause)});
       retryTimer=setTimeout(()=>{retryTimer=null;open().catch(retry);},Math.max(1,delay));
     }
     async function open(){
       if(closed)throw error('ClientClosed');if(opening)return opening;
       opening=(async()=>{
-        const current=await sdk.BridgeConnection.connect(url,'server',roomId,{token,epoch,version:'book-agent-v1',buildHash:'book-agent-fragments-v1',info:{title:String(title).slice(0,256)},manifest:MANIFEST,players:[...players].map(([id,token])=>({id,token}))},{maxBufferedBytes:8*1024*1024,maxQueueMessages:512});
+        report({event:'reconnect.start',retryAttempt:attempt});
+        const current=await sdk.BridgeConnection.connect(url,'server',roomId,{token,epoch,version:'book-agent-v1',buildHash:'book-agent-fragments-v1',info:{title:String(title).slice(0,256)},manifest:MANIFEST,players:[...players].map(([id,token])=>({id,token}))},{maxBufferedBytes:8*1024*1024,maxQueueMessages:512,onDiagnostic:report});
         if(closed){current.close();throw error('ClientClosed');}
         connection=current;revision=current.ready.revision||0;attempt=0;fragments.clear();
         detach=attach(current,async message=>{
@@ -108,17 +122,18 @@ const BridgeTransport=(()=>{
           if(['ClientJoined','ClientLeft'].includes(message.type)){if(member(message.clientId))await onMember?.({type:message.type==='ClientJoined'?'joined':'left',memberId:message.clientId});return;}
           if(message.type!=='ClientInvoke'||message.functionId!==1||!member(message.clientId)||!players.has(message.clientId))return;
           const complete=fragments.accept(message.clientId,message.payload);if(complete)await incoming.put(message.clientId,complete.packet,complete.size);
-        });
+        },report);
         current.closed.then(({error:cause}={})=>{if(closed||connection!==current)return;connection=null;detach?.();fragments.clear();incoming.clear();retry(cause||error('ConnectionLost'));});
-        notice(onState,'connected');return current;
+        report({event:'connection.ready',connectionId:current.connectionId});notice(onState,'connected');return current;
       })();try{return await opening;}finally{opening=null;}
     }
     const send=sender(()=>closed?null:connection,VIEW_BYTES,(c,id,fragment)=>c.invokeClient(id,2,fragment));
     const transport={onHost:fn=>incoming.add(fn),sendToClient:(id,packet)=>players.has(id)&&member(id)?send(id,packet):Promise.reject(error('Unauthorized'))};
-    function close(cause){if(closed)return closing;closed=true;clearTimeout(retryTimer);retryTimer=null;const old=connection;connection=null;detach?.();incoming.close();fragments.clear();old?.close();closing=old?.closed||Promise.resolve();notice(onState,'closed',cause);return closing;}
-    function reconnect(){
+    function close(cause){if(closed)return closing;closed=true;stopRecovery();clearTimeout(retryTimer);retryTimer=null;const old=connection;connection=null;detach?.();incoming.close();fragments.clear();old?.close();closing=old?.closed||Promise.resolve();if(cause)report({event:'connection.stopped',error:SDK.diagnosticError(cause)});notice(onState,'closed',cause);return closing;}
+    function reconnect({resetBackoff=false,background=false}={}){
+      if(resetBackoff)attempt=0;
       if(closed)return Promise.reject(error('ClientClosed'));if(reconnecting)return reconnecting;if(opening)return opening;clearTimeout(retryTimer);retryTimer=null;
-      reconnecting=(async()=>{notice(onState,'reconnecting');const old=connection;connection=null;detach?.();fragments.clear();incoming.clear();if(old){old.close();await old.closed;}return open();})().catch(cause=>{retry(cause);throw cause;}).finally(()=>{reconnecting=null;});return reconnecting;
+      reconnecting=(async()=>{notice(onState,'reconnecting',null,background?{backgroundRetry:true}:{});const old=connection;connection=null;detach?.();fragments.clear();incoming.clear();if(old){old.close();await waitForClose(old,resetBackoff,report);}return open();})().catch(cause=>{retry(cause);throw cause;}).finally(()=>{reconnecting=null;});return reconnecting;
     }
     function change(id,remove){
       const operation=authorization.then(async()=>{
@@ -137,40 +152,46 @@ const BridgeTransport=(()=>{
       });authorization=operation.catch(()=>{});return operation;
     }
     try{await open();}catch(cause){close(cause);notice(onState,'disconnected',cause);throw cause;}
+    stopRecovery=Recovery.watch({environment,onDiagnostic:report,onRecover:()=>reconnect({resetBackoff:true,background:true})});
     return {transport,roomId,credentials:()=>({token,epoch}),invite:id=>change(id,false),revoke:id=>change(id,true),reconnect,close,get closed(){return closed;},get connected(){return !!connection&&!closed;}};
   }
-  async function createClient({invitation:value,onState,sdk=SDK,reconnectDelays=RECONNECT_DELAYS}={}){
+  async function createClient({invitation:value,onState,sdk=SDK,reconnectDelays=RECONNECT_DELAYS,environment=globalThis,logger=console}={}){
     const invite=parseInvitation(value),fragments=createFragments(VIEW_BYTES),incoming=deliveries(VIEW_BYTES);let connection=null,detach=null,closed=false,retryTimer=null,attempt=0,opening=null,closing=Promise.resolve();
+    const report=reporter('client',invite.url,invite.roomId,logger);let stopRecovery=()=>{};
     const hash=await sdk.contractHash(MANIFEST);
-    function stop(cause){if(closed)return closing;closed=true;clearTimeout(retryTimer);retryTimer=null;const old=connection;connection=null;detach?.();incoming.close();fragments.clear();old?.close();closing=old?.closed||Promise.resolve();notice(onState,'closed',cause);return closing;}
+    function stop(cause){if(closed)return closing;closed=true;stopRecovery();clearTimeout(retryTimer);retryTimer=null;const old=connection;connection=null;detach?.();incoming.close();fragments.clear();old?.close();closing=old?.closed||Promise.resolve();if(cause)report({event:'connection.stopped',error:SDK.diagnosticError(cause)});notice(onState,'closed',cause);return closing;}
     function retry(cause){
       if(closed)return;if(!retryable(cause)){stop(cause);return;}
       notice(onState,'reconnecting',cause,{backgroundRetry:true});clearTimeout(retryTimer);
       const delay=reconnectDelays[Math.min(attempt++,reconnectDelays.length-1)]??120000;
+      report({event:'reconnect.scheduled',retryAttempt:attempt,retryDelayMs:delay,error:SDK.diagnosticError(cause)});
       retryTimer=setTimeout(()=>{retryTimer=null;open().catch(retry);},Math.max(1,delay));
     }
     async function open(){
       if(closed)throw error('ClientClosed');if(opening)return opening;
       opening=(async()=>{
-        const current=await sdk.BridgeConnection.connect(invite.url,'client',invite.roomId,{token:invite.token,contractHash:hash},{maxBufferedBytes:8*1024*1024,maxQueueMessages:512});
+        report({event:'reconnect.start',retryAttempt:attempt});
+        const current=await sdk.BridgeConnection.connect(invite.url,'client',invite.roomId,{token:invite.token,contractHash:hash},{maxBufferedBytes:8*1024*1024,maxQueueMessages:512,onDiagnostic:report});
         if(closed){current.close();throw error('ClientClosed');}
         connection=current;attempt=0;fragments.clear();
         detach=attach(current,async message=>{
           if(closed||connection!==current||message.type!=='Invoke'||message.functionId!==2)return;
           const complete=fragments.accept(invite.memberId,message.payload);if(complete)await incoming.put(invite.memberId,complete.packet,complete.size);
-        });
+        },report);
         current.closed.then(({error:cause}={})=>{if(closed||connection!==current)return;connection=null;detach?.();fragments.clear();retry(cause||error('ConnectionLost'));});
-        notice(onState,'connected');return current;
+        report({event:'connection.ready',connectionId:current.connectionId});notice(onState,'connected');return current;
       })();try{return await opening;}finally{opening=null;}
     }
     const send=sender(()=>closed?null:connection,COMMAND_BYTES,(c,id,fragment)=>c.invoke(1,fragment));
     const transport={onClient(id,fn){if(id!==invite.memberId)throw error('Unauthorized');return incoming.add((_,packet)=>fn(packet));},sendToHost:(id,packet)=>id===invite.memberId?send(id,packet):Promise.reject(error('IdentitySpoof'))};
     let reconnecting=null;
-    function reconnect(){
+    function reconnect({resetBackoff=false,background=false}={}){
+      if(resetBackoff)attempt=0;
       if(closed)return Promise.reject(error('ClientClosed'));if(reconnecting)return reconnecting;if(opening)return opening;clearTimeout(retryTimer);retryTimer=null;
-      reconnecting=(async()=>{notice(onState,'reconnecting');const old=connection;connection=null;detach?.();fragments.clear();if(old){old.close();await old.closed;}return open();})().catch(cause=>{retry(cause);throw cause;}).finally(()=>{reconnecting=null;});return reconnecting;
+      reconnecting=(async()=>{notice(onState,'reconnecting',null,background?{backgroundRetry:true}:{});const old=connection;connection=null;detach?.();fragments.clear();if(old){old.close();await waitForClose(old,resetBackoff,report);}return open();})().catch(cause=>{retry(cause);throw cause;}).finally(()=>{reconnecting=null;});return reconnecting;
     }
     try{await open();}catch(cause){stop(cause);throw cause;}
+    stopRecovery=Recovery.watch({environment,onDiagnostic:report,onRecover:()=>reconnect({resetBackoff:true,background:true})});
     return {transport,memberId:invite.memberId,reconnect,close:()=>stop(),get closed(){return closed;},get connected(){return !!connection&&!closed;}};
   }
   async function probeInvitation(value,options={}){

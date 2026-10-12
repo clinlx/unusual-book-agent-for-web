@@ -19,6 +19,34 @@ function fakeSDK(){
 const tick=()=>new Promise(r=>setTimeout(r,20));
 async function flush(){for(let i=0;i<25;i++)await Promise.resolve();}
 
+function browserLifecycle(){
+ let at=100000,callback,focused=true;const document=new EventTarget(),window=new EventTarget();document.visibilityState='visible';document.hasFocus=()=>focused;
+ const environment={document,window,Date:{now:()=>at},performance:{now:()=>at},setInterval:fn=>{callback=fn;return 1;},clearInterval:()=>{callback=null;}};
+ return {environment,pause:()=>{at+=60000;callback?.();},focus:()=>window.dispatchEvent(new Event('focus')),hasWatcher:()=>!!callback};
+}
+for(const role of ['host','client'])test(role+' page recovery immediately retries and resets the first failed retry to five seconds',async t=>{
+ const f=fakeSDK(),browser=browserLifecycle(),logs=[],logger={info:(_,r)=>logs.push(r),warn:(_,r)=>logs.push(r)},states=[];
+ const base=await Bridge.createHost({url:'ws://localhost',roomId:'recovery',sdk:f.sdk,...role==='host'?{environment:browser.environment,logger,onState:s=>states.push(s)}:{logger}});
+ const invite=await base.invite('guest');const session=role==='host'?base:await Bridge.createClient({invitation:invite,sdk:f.sdk,environment:browser.environment,logger,onState:s=>states.push(s)});
+ if(role==='client')base.close();t.after(()=>session.close());t.mock.timers.enable({apis:['setTimeout']});
+ let attempts=0;f.sdk.BridgeConnection.connect=async()=>{attempts++;throw new SDK.BridgeError('ConnectionFailed');};
+ f.connections.at(-1).fail('ConnectionLost');await flush();
+ for(const delay of [5000,10000,20000]){t.mock.timers.tick(delay);await flush();}
+ assert.equal(attempts,3);browser.pause();browser.focus();await flush();assert.equal(attempts,4,'resume bypasses the current 40-second delay');
+ const retry=logs.filter(r=>r.event==='reconnect.scheduled').at(-1);assert.equal(retry.retryDelayMs,5000);assert.equal(retry.retryAttempt,1);assert.equal(retry.role,role);
+ assert.equal(states.at(-1).backgroundRetry,true);t.mock.timers.tick(4999);await flush();assert.equal(attempts,4);t.mock.timers.tick(1);await flush();assert.equal(attempts,5);
+ session.close();assert.equal(browser.hasWatcher(),false);browser.pause();browser.focus();t.mock.timers.tick(120000);await flush();assert.equal(attempts,5);
+});
+for(const role of ['host','client'])test(role+' recovery does not wait indefinitely for a stale socket close handshake',async t=>{
+ const f=fakeSDK(),browser=browserLifecycle(),logger={info(){},warn(){}};
+ const base=await Bridge.createHost({url:'ws://localhost',roomId:'stale',sdk:f.sdk,...role==='host'?{environment:browser.environment}:{},logger});
+ const invitation=await base.invite('guest'),session=role==='host'?base:await Bridge.createClient({invitation,sdk:f.sdk,environment:browser.environment,logger});if(role==='client')base.close();t.after(()=>session.close());
+ const old=f.connections.at(-1);old.close=()=>{old.isClosed=true;};t.after(()=>old.resolveClosed({error:null}));
+ t.mock.timers.enable({apis:['setTimeout']});const before=f.connections.length;browser.pause();await flush();assert.equal(f.connections.length,before);
+ t.mock.timers.tick(1000);await flush();assert.equal(f.connections.length,before+1);assert.equal(session.connected,true);
+ old.resolveClosed({error:null});await flush();assert.equal(session.connected,true);
+});
+
 for(const role of ['host','client'])test(role+' retries silently with exponential backoff, resets after success and allows immediate manual retry',async t=>{
  const f=fakeSDK(),base=await Bridge.createHost({url:'ws://localhost',roomId:'retry',sdk:f.sdk});
  const invitation=await base.invite('guest');let session=base;

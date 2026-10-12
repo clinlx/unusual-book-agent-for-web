@@ -47,6 +47,49 @@ async function pageFor(t,errors,sockets){const context=await browser.newContext(
 async function waitHost(page,round){await page.waitForFunction(round=>GameApp.getState().active.round===round&&GameApp.multiplayerState().status==='collecting',round);}
 async function closeModal(page){if(await page.locator('[data-action="close-modal"]').count())await page.locator('[data-action="close-modal"]').first().click();}
 
+test('both browser pages recover long clock gaps once and print safe socket diagnostics', {timeout:60000},async t=>{
+  const errors=[],hostSockets=[],guestSockets=[],host=await pageFor(t,errors,hostSockets),guest=await pageFor(t,errors,guestSockets);
+  for(const page of [host,guest]){
+    await page.clock.install();
+    await page.addInitScript(()=>{
+      window.wsDiagnostics=[];
+      for(const name of ['info','warn']){const original=console[name].bind(console);console[name]=(...args)=>{if(args[0]==='[BookAgent WS]')window.wsDiagnostics.push(structuredClone(args[1]));original(...args);};}
+    });
+    const cdp=await page.context().newCDPSession(page);await cdp.send('Emulation.setFocusEmulationEnabled',{enabled:true});
+  }
+  await host.goto(site.origin+'/index.html');await host.locator('[data-action="import"]').waitFor();assert.equal(hostSockets.length,0);
+  const original=await host.evaluate(async bridgeUrl=>{
+    await GameApp.updateSettings({bridgeUrl});
+    const files=['a','b'].flatMap(id=>[{name:`Player-${id}/基础信息.json`,text:JSON.stringify({姓名:id,'.秘密':'private-body-never-in-console'})},{name:`Player-${id}/背包.json`,text:'[]'}]);
+    await GameApp.importSave(new File([ZIP.makeZip(files)],'恢复诊断.zip'));await GameApp.configureSlots('a');const invitation=await GameApp.setInvitationSlot('b','player');
+    const store=GameStore.create();await store.open();const record=await store.getRoomConfig(GameApp.getState().active.id);
+    return {invitation,root:record.credentials.token};
+  },bridge.url);
+  await guest.goto(original.invitation.link);await guest.waitForFunction(()=>GameApp.getState().active?.actorId==='b');
+  for(const [page,sockets]of [[guest,guestSockets],[host,hostSockets]]){
+    const before=sockets.length;await page.clock.fastForward(60000);
+    await page.waitForFunction(()=>GameApp.getState().network.status==='connected');
+    await page.waitForFunction(()=>window.wsDiagnostics.some(r=>r.event==='page.recovery'));
+    assert.equal(sockets.length,before+1,'one replacement socket per page recovery');
+    await page.evaluate(()=>{window.dispatchEvent(new Event('focus'));document.dispatchEvent(new Event('resume'));});
+    assert.equal(sockets.length,before+1,'duplicate recovery events do not reconnect again');
+  }
+  await guest.waitForFunction(()=>GameApp.getState().network.status==='connected'&&GameApp.getState().active.actorId==='b');
+  await host.waitForFunction(()=>Object.values(GameApp.multiplayerState().members).some(m=>m.actorId==='b'&&m.connected));
+  const invitation=await guest.evaluate(key=>BridgeTransport.parseInvitation(key),original.invitation.key);
+  for(const page of [host,guest]){
+    const logs=await page.evaluate(()=>window.wsDiagnostics),json=JSON.stringify(logs);
+    const close=logs.find(r=>r.event==='websocket.closed');assert.ok(close);assert.ok(Number.isInteger(close.closeCode));assert.equal(typeof close.wasClean,'boolean');assert.ok(close.connectionId);
+    assert.ok(logs.some(r=>r.event==='page.pause-detected'&&r.gapMs>=45000));
+    for(const secret of [original.root,invitation.token,original.invitation.key,'private-body-never-in-console'])assert.ok(!json.includes(secret));
+  }
+  await host.evaluate(()=>GameApp.closeRoom());
+  try{await guest.waitForFunction(()=>GameApp.getState().network.status==='closed');}
+  catch(error){for(const [role,page]of [['host',host],['client',guest]])t.diagnostic(JSON.stringify({role,...await page.evaluate(()=>({status:GameApp.getState().network?.status,roomOnline:GameApp.getState().room?.online,logs:window.wsDiagnostics.slice(-12)}))}));throw error;}
+  for(const [page,sockets]of [[host,hostSockets],[guest,guestSockets]]){const before=sockets.length;await page.clock.fastForward(120000);assert.equal(sockets.length,before,'closed rooms stay offline');}
+  assert.deepEqual(errors,[]);
+});
+
 test('real sockets recover both sides without losing submissions or interrupting model execution', {timeout:60000},async t=>{
   const errors=[],host=await pageFor(t,errors,[]),guest=await pageFor(t,errors,[]);
   for(const page of [host,guest])await page.addInitScript(()=>{const Native=WebSocket;window.testSockets=[];window.WebSocket=class extends Native{constructor(...args){super(...args);window.testSockets.push(this);}};});

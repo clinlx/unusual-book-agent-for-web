@@ -1,6 +1,6 @@
 'use strict';
 // Vendored from Bridge/sdk/errors.mjs and Bridge/sdk/room-bridge.mjs (2026-10-11).
-// Source: C:/Users/Administrator/source/repos/Bridge. Only ES-module wrapping is changed.
+// Source: C:/Users/Administrator/source/repos/Bridge.
 const RoomBridgeSDK=(()=>{
 // Stable machine codes; messages are safe to show as textContent, never as HTML.
 const definitions = {
@@ -128,6 +128,30 @@ async function contractHash(manifest) {
   return Array.from(new Uint8Array(await subtle.digest('SHA-256', utf8.encode(JSON.stringify(tuples)))), n => n.toString(16).padStart(2, '0')).join('');
 }
 
+function diagnosticError(error, depth = 0) {
+  if (!error || depth > 2) return null;
+  const names = ['Error', 'BridgeError', 'TypeError', 'SyntaxError', 'RangeError', 'DOMException', 'OperationError', 'DataError', 'InvalidStateError', 'SecurityError', 'AbortError', 'NetworkError'];
+  const result = { name: names.includes(error.name) ? error.name : 'Error' };
+  if (Object.hasOwn(definitions, error.code)) result.code = error.code;
+  if (['configuration', 'connecting', 'handshake', 'session'].includes(error.phase)) result.phase = error.phase;
+  if (['network', 'local', 'room', 'capacity', 'authorization', 'protocol', 'conflict', 'server'].includes(error.category)) result.category = error.category;
+  if (Object.hasOwn(definitions, error.serverCode)) result.serverCode = error.serverCode;
+  else if (error.serverCode) { result.serverCodeOmitted = true; result.serverCodeLength = String(error.serverCode).length; }
+  for (const key of ['fatal', 'retryable']) if (typeof error[key] === 'boolean') result[key] = error[key];
+  if (Number.isFinite(error.closeCode)) result.closeCode = error.closeCode;
+  if (Number.isFinite(error.code)) result.nativeCode = error.code;
+  if (error instanceof BridgeError) result.message = definitions[error.code]?.[0] ?? definitions.UnknownServerError[0];
+  else result.messageOmitted = true;
+  const frames = [];
+  for (const line of String(error.stack || '').split('\n').slice(1, 6)) {
+    const location = line.match(/((?:https?:\/\/|file:\/\/\/)[^\s()]+):(\d+):(\d+)/);
+    if (!location) continue;
+    try { const url = new URL(location[1]); frames.push({ file: url.origin + url.pathname, line: Number(location[2]), column: Number(location[3]) }); } catch (_) {}
+  }
+  if (frames.length) result.frames = frames;
+  if (error.cause) result.cause = diagnosticError(error.cause, depth + 1);
+  return result;
+}
 class BridgeConnection {
   /** Connect returns only after authenticated encrypted Ready is received.
    * hello: host {token,epoch,manifest,players}; client {token,contractHash}.
@@ -150,8 +174,12 @@ class BridgeConnection {
     catch (cause) { throw new BridgeError('ConnectionFailed', { phase: 'connecting', cause }); }
     try {
       bridge.ready = await bridge.next('Ready', options.timeoutMs ?? 10000);
+      bridge.lastHeartbeatTick = Date.now();
       bridge.timer = setInterval(() => {
+        bridge.heartbeatDelayMs = Math.max(0, Date.now() - bridge.lastHeartbeatTick - (options.pingMs ?? 15000));
+        bridge.lastHeartbeatTick = Date.now();
         if (Date.now() - bridge.lastReceived > (options.idleMs ?? 45000)) { bridge.fail(new BridgeError('HeartbeatTimeout')); return; }
+        bridge.lastHeartbeatSent = Date.now();
         bridge.send({ type: 'Ping', requestId: '__heartbeat' }).catch(() => {});
       }, options.pingMs ?? 15000);
       return bridge;
@@ -159,6 +187,10 @@ class BridgeConnection {
   }
 
   constructor(url, hello, options) {
+    this.connectionId = crypto.randomUUID(); this.startedAt = Date.now(); this.lastSent = null; this.lastHeartbeatSent = null; this.lastPong = null;
+    this.heartbeatDelayMs = 0; this.pingMs = options.pingMs ?? 15000; this.idleMs = options.idleMs ?? 45000;
+    this.onDiagnostic = options.onDiagnostic;
+    const endpoint = new URL(url); this.endpoint = endpoint.origin + endpoint.pathname; this.role = endpoint.pathname.startsWith('/server/') ? 'host' : 'client';
     this.ws = new WebSocket(url);
     this.ws.binaryType = 'arraybuffer';
     this.inbox = []; this.waiters = []; this.listeners = new Set();
@@ -181,7 +213,8 @@ class BridgeConnection {
     });
     // Browsers deliberately hide HTTP upgrade status/TLS/DNS details. Wait for close,
     // and drain already queued decryptions before assigning a generic transport error.
-    this.ws.addEventListener('error', () => {
+    this.ws.addEventListener('error', event => {
+      this.diagnose('websocket.error', event.error, { browserErrorDetailsAvailable: !!event.error, networkDetails: 'Browser WebSocket API does not expose HTTP upgrade status, TLS or DNS failure details.' });
       this.receiveChain.then(() => {
         if (!this.failure && !this.localClose)
           this.fail(new BridgeError(this.phase === 'session' ? 'ConnectionLost' : 'ConnectionFailed', { phase: this.phase }));
@@ -189,6 +222,8 @@ class BridgeConnection {
     });
     this.ws.addEventListener('close', event => {
       this.receiveChain.finally(() => {
+        const knownReason = Object.hasOwn(definitions, event.reason) || ['Client closing', 'Closed'].includes(event.reason);
+        this.diagnose('websocket.closed', this.failure, { closeCode: event.code, closeReason: !event.reason ? '' : knownReason ? event.reason : '[redacted: non-protocol close reason]', closeReasonLength: event.reason?.length ?? 0, wasClean: event.wasClean });
         if (!this.failure) {
           const serverReason = !this.localClose && event.code === 1008 && event.reason;
           const code = serverReason || (this.localClose ? 'ClientClosed' : this.phase === 'session' ? 'ConnectionLost' : 'ConnectionFailed');
@@ -197,6 +232,23 @@ class BridgeConnection {
         this.resolveClosed({ code: event.code, reason: event.reason, error: this.failure?.code === 'ClientClosed' ? null : this.failure });
       });
     });
+  }
+
+  diagnose(event, error, details = {}) {
+    try {
+      const at = Date.now();
+      const record = { event, connectionId: this.connectionId, timestamp: new Date(at).toISOString(), endpoint: this.endpoint, role: this.role, phase: this.phase,
+        lifetimeMs: Math.max(0, at - this.startedAt), readyState: this.ws.readyState, bufferedAmount: this.ws.bufferedAmount,
+        lastReceivedAgoMs: Math.max(0, at - this.lastReceived), lastSentAgoMs: this.lastSent === null ? null : Math.max(0, at - this.lastSent),
+        lastHeartbeatSentAgoMs: this.lastHeartbeatSent === null ? null : Math.max(0, at - this.lastHeartbeatSent), lastPongAgoMs: this.lastPong === null ? null : Math.max(0, at - this.lastPong),
+        heartbeatDelayMs: this.heartbeatDelayMs, pingMs: this.pingMs, idleMs: this.idleMs,
+        pendingSends: this.pendingSends, pendingBytes: this.pendingBytes, pendingReceiveBytes: this.pendingReceiveBytes,
+        sendSequence: String(this.sendSequence), receiveSequence: String(this.receiveSequence),
+        visibility: globalThis.document?.visibilityState ?? null, focused: globalThis.document?.hasFocus?.() ?? null, online: globalThis.navigator?.onLine ?? null,
+        localClose: !!this.localClose, error: diagnosticError(error), ...details };
+      if (this.onDiagnostic) this.onDiagnostic(record);
+      else console.warn('[BookAgent WS]', record);
+    } catch (_) {}
   }
 
   async receive(data, hello) {
@@ -229,7 +281,7 @@ class BridgeConnection {
     const message = JSON.parse(text.decode(plaintext));
     if (message.type === 'Ready') this.phase = 'session';
     this.lastReceived = Date.now();
-    if (message.type === 'Pong' && message.requestId === '__heartbeat') return;
+    if (message.type === 'Pong' && message.requestId === '__heartbeat') { this.lastPong = Date.now(); return; }
     const error = message.type === 'Error' || message.type === 'Disconnected'
       ? new BridgeError(message.code, { phase: this.phase, fatal: message.type === 'Disconnected', requestId: message.requestId, revision: message.revision, server: true }) : null;
     const request = this.requests.get(message.requestId);
@@ -245,7 +297,7 @@ class BridgeConnection {
       this.inbox.push(message);
     }
     if (error?.fatal) this.fail(error);
-    else if (error) this.emitError(error);
+    else if (error) { this.diagnose('server.error', error); this.emitError(error); }
     for (const listener of this.listeners) listener(message);
   }
 
@@ -289,6 +341,7 @@ class BridgeConnection {
       const nonce = new Uint8Array(12); nonce.set(aad, 4);
       const ciphertext = await subtle.encrypt({ name: 'AES-GCM', iv: nonce, additionalData: aad, tagLength: 128 }, this.sendKey, plaintext);
       this.ws.send(concat(aad, new Uint8Array(ciphertext)));
+      this.lastSent = Date.now();
       this.sendSequence++;
     }).catch(error => { throw error instanceof BridgeError ? error : new BridgeError('SendFailed', { cause: error }); })
       .finally(() => { this.pendingSends--; this.pendingBytes -= plaintext.length; });
@@ -320,6 +373,7 @@ class BridgeConnection {
   fail(error, notify = true) {
     if (this.failure) return;
     if (!(error instanceof BridgeError)) error = new BridgeError('InvalidMessage', { phase: this.phase, cause: error });
+    this.diagnose('connection.failed', error);
     this.failure = error; clearInterval(this.timer);
     for (const waiter of this.waiters.splice(0)) { clearTimeout(waiter.timer); waiter.reject(error); }
     for (const request of this.requests.values()) { clearTimeout(request.timer); request.reject(error); }
@@ -331,6 +385,6 @@ class BridgeConnection {
   close() { this.localClose = true; clearInterval(this.timer); if (this.ws.readyState < WebSocket.CLOSING) this.ws.close(1000, 'Client closing'); }
 }
 
-return {BridgeError,BridgeConnection,randomToken,issueClientToken,contractHash};
+return {BridgeError,BridgeConnection,randomToken,issueClientToken,contractHash,diagnosticError};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=RoomBridgeSDK;
