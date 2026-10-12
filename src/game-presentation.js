@@ -80,7 +80,7 @@ const GamePresentation=(()=>{
       const own=!e.actorId||e.actorId===save.actorId,privateEvent=isPrivate(e),dark=isDark(e);
       const title=e.type==='player'?(own?'你的行动':actorName(e)+'的行动'):e.type==='dice'?((privateEvent?'私密':'')+(dark?'暗骰':'检定')):e.type==='note'?'注释':privateEvent?'私密故事':'故事';
       const cls=e.type+(dark?' secret-dice':'')+(privateEvent?(e.type==='dice'?' private-dice':' private-story'):'')+(e.type==='player'?(own?' player-self':' player-other'):'');
-      const text=dark?'[主持人进行了一次暗骰]':eventContent(save,e);
+      const text=dark?'[AI 进行了一次暗骰]':eventContent(save,e);
       let content=e.type==='story'?renderStory(text):'<p class="plain">'+esc(text)+'</p>';
       if(e.type==='player'&&save.actorId&&e.actorId===save.actorId&&e.privateContent)content+='<section class="private-story"><small>私密行动</small><p class="plain">'+esc(e.privateContent)+'</p></section>';
       return `<article class="${cls}" data-round="${esc(e.round)}"><header>${esc(title)} · ${esc(metadata(e))}</header>${content}</article>`;

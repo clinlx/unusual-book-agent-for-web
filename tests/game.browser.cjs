@@ -29,7 +29,7 @@ const call=(name,args,id)=>({id,type:'function',function:{name,arguments:JSON.st
     await page.goto(pathToFileURL(path.resolve(__dirname,'../dist/index.html')).href);
     await page.locator('[data-action="import"]').waitFor();
     assert.equal(await page.evaluate(()=>GameApp.getState().settings.maxOutputTokens),16384);
-    assert.equal(await page.locator('.brand-seal svg.brand-die').count(),1);
+    assert.equal(await page.locator('.brand-seal svg[aria-label="异闻手记"]').count(),1);
     await page.route('https://probe.invalid/**',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({choices:[{message:{content:'OK'},finish_reason:'stop'}]})}));
     await page.locator('[data-action="settings"]').click();
     assert.ok(!(await page.locator('[role="dialog"]').innerText()).includes('上下文达到上限时'));
@@ -136,10 +136,10 @@ const call=(name,args,id)=>({id,type:'function',function:{name,arguments:JSON.st
     let liveCalls=0;
     await page.route('https://test.invalid/**',async route=>{
       liveCalls++;let calls;
-      if(liveCalls===1){await page.waitForFunction(()=>document.querySelector('.live-status')?.textContent.includes('正在请求'));calls=[call('trigger_next_round',{phase_plan:{Countdowns:'无',Pending_Triggers:[],Forced_Checks:'无'}},'live-trigger'),call('read_file',{path:referencePath},'live-old')];}
-      else if(liveCalls===2){await page.waitForFunction(()=>document.querySelector('.live-status')?.textContent.includes('正在思考'));await page.evaluate(id=>(GameApp.getState().settings.promptOverrides[id]='实时更新参考'),referenceId);calls=[call('read_file',{path:referencePath},'live-new')];}
+      if(liveCalls===1){await page.waitForFunction(()=>document.querySelector('.live-status')?.textContent.includes('等待 AI 返回结果'));calls=[call('trigger_next_round',{phase_plan:{Countdowns:'无',Pending_Triggers:[],Forced_Checks:'无'}},'live-trigger'),call('read_file',{path:referencePath},'live-old')];}
+      else if(liveCalls===2){await page.waitForFunction(()=>document.querySelector('.live-status')?.textContent.includes('AI 正在思考'));await page.evaluate(id=>(GameApp.getState().settings.promptOverrides[id]='实时更新参考'),referenceId);calls=[call('read_file',{path:referencePath},'live-new')];}
       else if(liveCalls===3){await page.evaluate(id=>delete GameApp.getState().settings.promptOverrides[id],referenceId);calls=[call('read_file',{path:referencePath},'live-default'),call('append_story',{content:'夜色渐深。',one_line_summary_of_content:'夜色渐深'},'live-story')];}
-      else if(liveCalls===4){await page.waitForFunction(()=>document.querySelector('.live-status')?.textContent.includes('主持人正在收尾和处理变更'));await page.screenshot({path:path.join(__dirname,'artifacts/game-finishing.png')});calls=[call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'live-end')];}
+      else if(liveCalls===4){await page.waitForFunction(()=>document.querySelector('.live-status')?.textContent.includes('AI 正在收尾和处理变更'));await page.screenshot({path:path.join(__dirname,'artifacts/game-finishing.png')});calls=[call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'live-end')];}
       else throw Error('Unexpected live reference request');
       await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({choices:[{message:{content:'',tool_calls:calls},finish_reason:'tool_calls'}]})});
     });

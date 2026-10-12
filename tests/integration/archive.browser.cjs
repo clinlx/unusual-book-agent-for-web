@@ -47,7 +47,7 @@ for (const [name, status] of [
       await page.goto(pathToFileURL(file).href);
       assert.equal(await page.locator('.history article.revealed').count(), 3, 'first round is revealed on entry');
       assert.doesNotMatch(await page.locator('.history').innerText(), /SECRET_DICE/);
-      assert.match(await page.locator('.history').innerText(), /主持人进行了一次暗骰/);
+      assert.match(await page.locator('.history').innerText(), /AI 进行了一次暗骰/);
       assert.doesNotMatch(await page.locator('.history').innerText(), /第二回合正文/);
       await page.locator('#archive-vitals .resource').first().waitFor();
       assert.equal(await page.locator('#archive-vitals .resource').count(), 3);
@@ -93,7 +93,7 @@ test('offline archive distinguishes private dice and actor actions without discl
     await page.goto(pathToFileURL(file).href);
     assert.equal(await page.locator('.history article').count(),4);
     assert.match(await page.locator('.private-dice').first().innerText(),/私密检定.*可见骰点：42/s);
-    assert.match(await page.locator('.secret-dice').innerText(),/私密暗骰.*主持人进行了一次暗骰/s);
+    assert.match(await page.locator('.secret-dice').innerText(),/私密暗骰.*AI 进行了一次暗骰/s);
     assert.match(await page.locator('.player-other header').innerText(),/秋的行动/);
     assert.equal(await page.locator('.private-dice').first().evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(243, 236, 255)');
     assert.equal(await page.locator('.player-self').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(209, 231, 221)');

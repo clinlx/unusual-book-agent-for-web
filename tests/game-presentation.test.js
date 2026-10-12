@@ -23,7 +23,7 @@ test('reader cache is per save, flags stale data, recovers and can invalidate',(
 test('replay archive masks secret dice, excludes model internals and escapes user HTML',()=>{
  const html=P.historyHTML(save('<script>evil</script>',[{type:'story',content:'<img src=x onerror=evil()>',round:1,worldTime:'秋夜',at:1},{type:'dice',secret:true,content:'SECRET_DICE'},{type:'assistant',content:'INTERNAL_MODEL'},{type:'tool',content:'INTERNAL_TOOL'},{type:'player',content:'开门'}]));
  a.doesNotMatch(html,/<script>evil|<img|INTERNAL_MODEL|INTERNAL_TOOL/);
- a.match(html,/&lt;script&gt;evil/);a.match(html,/&lt;img/);a.doesNotMatch(html,/SECRET_DICE/);a.match(html,/主持人进行了一次暗骰/);a.match(html,/class="dice secret-dice"/);a.match(html,/秋夜/);a.match(html,/开门/);
+ a.match(html,/&lt;script&gt;evil/);a.match(html,/&lt;img/);a.doesNotMatch(html,/SECRET_DICE/);a.match(html,/AI 进行了一次暗骰/);a.match(html,/class="dice secret-dice"/);a.match(html,/秋夜/);a.match(html,/开门/);
  const scripts=[...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];a.equal(scripts.length,1);a.doesNotThrow(()=>new vm.Script(scripts[0][1]));
 });
 

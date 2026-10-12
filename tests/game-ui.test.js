@@ -10,9 +10,9 @@ test('round end uses a single timestamp without repeated round or world time',()
 });
 test('run phase uses current round calls and published stories',()=>{
  const api=ui(),s={running:true,active:{activeRound:{number:2,published:0},messages:[{round:1,tool_calls:[{}]}],events:[]},stream:{tools:[]}};
- assert.equal(api.runPhase(s),'正在请求');s.stream.tools=[{}];assert.equal(api.runPhase(s),'正在思考');
- s.stream.tools=[];s.active.messages.push({round:2,tool_calls:[{}]});assert.equal(api.runPhase(s),'正在思考');
- s.active.activeRound.published=1;assert.equal(api.runPhase(s),'主持人正在收尾和处理变更');s.running=false;assert.equal(api.runPhase(s),'');
+ assert.equal(api.runPhase(s),'等待 AI 返回结果');s.stream.tools=[{}];assert.equal(api.runPhase(s),'AI 正在思考');
+ s.stream.tools=[];s.active.messages.push({round:2,tool_calls:[{}]});assert.equal(api.runPhase(s),'AI 正在思考');
+ s.active.activeRound.published=1;assert.equal(api.runPhase(s),'AI 正在收尾和处理变更');s.running=false;assert.equal(api.runPhase(s),'');
 });
 test('continue appears only for an idle interrupted unfinished round',()=>{
  const api=ui();
@@ -25,7 +25,7 @@ test('play includes player dice with a spoiler-free placeholder for secret resul
  assert.deepEqual(Array.from(api.visibleEvents(events,'play'),e=>e.type), ['player','story','dice','round_end','dice']);
  assert.equal(api.visibleEvents(events,'debug').length,8);
  const placeholder=api.eventHTML(secret,'play');
- assert.match(placeholder,/主持人进行了一次暗骰/);assert.doesNotMatch(placeholder,/SECRET_RESULT|37|dice-detail/);
+ assert.match(placeholder,/AI 进行了一次暗骰/);assert.doesNotMatch(placeholder,/SECRET_RESULT|37|dice-detail/);
  assert.match(api.eventHTML(secret,'debug'),/SECRET_RESULT/);
 });
 
