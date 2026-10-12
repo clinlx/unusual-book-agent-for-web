@@ -1,7 +1,7 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const { root, safeJSON, scripts, compose } = require('./build-common.js');
+const { root, read, safeJSON, scripts, compose, svgDataUri } = require('./build-common.js');
 const { buildSnapshot } = require('./bundle-skills.js');
 const { bundleDocuments } = require('./bundle-documents.js');
 const SKILLS = ['write-novel', 'desire-analysis', 'grilling', 'game-world-builder'];
@@ -29,11 +29,12 @@ function buildWorldDesigner() {
   const source = scripts(['vendor/marked.min.js', 'skills/game-world-builder/scripts/validate_game_structure.js', 'src/shared/file-write-validation.js', 'src/shared/api-url.js', 'src/shared/world-handoff.js', 'src/shared/transfer-dialog.js', 'src/shared/designer-projects.js', 'src/shared/back-navigation.js','src/shared/send-shortcut.js',
     ...modules.map(name => 'src/world-designer/' + name + '.js')]);
   const schema = JSON.parse(fs.readFileSync(path.join(root, 'skills/game-world-builder/scripts/world-schema.json'), 'utf8'));
-  const prefix = 'const BUNDLED_SKILLS = ' + safeJSON(bundled.snapshot) + ';\n'
+  const prefix = 'const BUNDLED_DESIGNER_ICON = ' + safeJSON(read('assets/icons/designer.svg')) + ';\n' + 'const BUNDLED_SKILLS = ' + safeJSON(bundled.snapshot) + ';\n'
     + 'const WORLD_BUILDER_SCHEMA = ' + safeJSON(schema) + ';\n'
     + 'const DOCUMENT_ASSETS = ' + safeJSON(bundleDocuments()) + ';\n';
   const settings = 'const WORLD_DESIGNER_STANDALONE = true;\n';
-  const html = compose('src/world-designer/template.html', 'src/world-designer/styles.css', prefix + settings + source);
+  const html = compose('src/world-designer/template.html', 'src/world-designer/styles.css', prefix + settings + source)
+    .replace('/*__FAVICON__*/', svgDataUri('assets/icons/designer.svg'));
   fs.writeFileSync(path.join(root, 'dist/designer.html'), html);
   // Only remove the former generated designer artifacts, never source skills or other dist files.
   const dist = path.resolve(root, 'dist');
