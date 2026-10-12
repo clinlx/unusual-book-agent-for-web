@@ -670,7 +670,7 @@
   }
   function worldLogo() {
     const mark = el('span', { class: 'world-logo', role: 'img', 'aria-label': '书本环抱地球' });
-    mark.innerHTML = '<svg viewBox="0 0 32 34" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"><circle cx="16" cy="10" r="7.5"/><ellipse cx="16" cy="10" rx="3" ry="7.5"/><path d="M8.5 10h15M10 5.5c4 2 8 2 12 0M10 14.5c4-2 8-2 12 0M3 14c5-1 9 1 13 5 4-4 8-6 13-5v13c-5-1-9 .5-13 4-4-3.5-8-5-13-4V14Z M16 19v12M6 18c3 0 5 1 7 3M6 22c3 0 5 1 7 3M26 18c-3 0-5 1-7 3M26 22c-3 0-5 1-7 3"/></svg>';
+    mark.innerHTML = BUNDLED_DESIGNER_ICON;
     return mark;
   }
   function validationButton() {
