@@ -53,7 +53,7 @@ test('archive names other actors and distinguishes own, other and private action
   {type:'story',private:true,content:'AUTHORIZED_SAFE_PRIVATE'},
  ]});
  a.match(html,/<article class="player player-self"/);a.match(html,/<article class="player player-other"[^>]*><header>秋的行动/);
- a.match(html,/\.player-other\{[^}]*background:#cff4fc/);a.match(html,/\.private-dice[^}]*#f3ecff/);
+ a.match(html,/\.player-other\{[^}]*background:#cbd9dd/);a.match(html,/\.private-dice[^}]*#e5dcea/);
  a.match(html,/OWN_PRIVATE|AUTHORIZED_SAFE_PRIVATE/);a.doesNotMatch(html,/DO_NOT_EXPORT/);
 });
 

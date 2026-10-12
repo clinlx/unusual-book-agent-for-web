@@ -33,6 +33,15 @@ const BridgeTransport=(()=>{
     if(code.includes('#')||code.includes('?'))try{code=invitationParameter(code)||'';}catch(_){throw error();}
     try{return invitation(JSON.parse(decoder.decode(decode(code))));}catch(_){throw error();}
   }
+  async function prepareHostAuthorization({url,roomId,credentials,players=[],memberIds=[],sdk=SDK}){
+    url=validateServerUrl(url);if(!validId(roomId)||!Array.isArray(players)||!Array.isArray(memberIds))throw error();
+    const saved={token:credentials?.token??sdk.randomToken(),epoch:credentials?.epoch??sdk.randomToken()};
+    if(decode(saved.token).length!==32||decode(saved.epoch).length!==32)throw error();
+    const authorized=new Map();
+    for(const value of players){const p=invitation(value);if(p.url!==url||p.roomId!==roomId||authorized.has(p.memberId))throw error();authorized.set(p.memberId,p);}
+    for(const id of memberIds){if(!member(id))throw error();if(!authorized.has(id))authorized.set(id,invitation({version:1,url,roomId,memberId:id,token:await sdk.issueClientToken(saved.token,roomId,saved.epoch,id)}));}
+    if(authorized.size>64)throw error();return {credentials:saved,players:[...authorized.values()]};
+  }
   function serialize(packet,limit){if(!object(packet))throw error('InvalidMessage');const bytes=encoder.encode(JSON.stringify(packet));if(bytes.length>limit)throw error('PayloadTooLarge');return bytes;}
   function createFragments(limit){
     const partial=new Map();let totalBytes=0;
@@ -198,6 +207,6 @@ const BridgeTransport=(()=>{
     const invite=parseInvitation(value),session=await createClient({...options,invitation:invite});
     await session.close();return invite;
   }
-  return {MANIFEST,validateServerUrl,encodeInvitation,parseInvitation,invitationParameter,probeInvitation,createHost,createClient};
+  return {MANIFEST,validateServerUrl,encodeInvitation,parseInvitation,invitationParameter,probeInvitation,prepareHostAuthorization,createHost,createClient};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=BridgeTransport;

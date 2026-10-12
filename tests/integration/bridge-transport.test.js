@@ -17,6 +17,13 @@ function fakeSDK(){
  return {sdk:{...SDK,BridgeConnection:Connection},connections,setInitial:messages=>{initial=messages;}};
 }
 const tick=()=>new Promise(r=>setTimeout(r,20));
+test('room authorization can be prepared locally and uploaded completely in the first connection',async t=>{
+ const f=fakeSDK(),options={url:'ws://localhost',roomId:'offline-config',memberIds:['guest_a','guest_b'],sdk:f.sdk};
+ const prepared=await Bridge.prepareHostAuthorization(options);assert.equal(f.connections.length,0);assert.equal(prepared.players.length,2);
+ const session=await Bridge.createHost({...options,...prepared});t.after(()=>session.close());
+ assert.deepEqual(f.connections[0].hello.players,prepared.players.map(p=>({id:p.memberId,token:p.token})));
+ const again=await Bridge.prepareHostAuthorization({...options,...prepared});assert.deepEqual(again,prepared);
+});
 async function flush(){for(let i=0;i<25;i++)await Promise.resolve();}
 
 function browserLifecycle(){

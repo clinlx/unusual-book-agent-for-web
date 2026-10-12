@@ -56,20 +56,20 @@ const GameApp=(()=>{
     if(S.network&&S.network.status!=='connected')throw Error('连接已中断，请等待重连或重新连接');if(!S.active||!S.room)throw Error('尚未连接房主');if(S.room.online===false)throw Error('房间已关闭');if(!S.active.actorId)throw Error('请先申请角色槽位');text=String(text);privateContent=String(privateContent);
     if(!skip&&!text.trim()&&!privateContent.trim())return;
     if(GameInputs.submission(S))throw Error('本回合已提交，请先撤回提交');
-    const hiddenSend=options.hiddenSend??!!privateContent,disguiseSend=hiddenSend&&(options.disguiseSend??!!text);
+    const hiddenSend=options.hiddenSend??!!privateContent,disguiseSend=options.disguiseSend??!!(privateContent&&text),draftState=GameInputs.draftState(options.draftState||{draft:text,privateDraft:privateContent,hiddenSend,disguiseSend});
     const identity=scope(),r={...S.room},round=S.active.round+1,previous=local.load(identity),old=previous.inputHistory.find(x=>x.roundId===r.roundId);
     const requestId=old?.status==='pending'&&old.text===text&&old.privateContent===privateContent&&(old.disguiseSend??!!(old.text&&old.privateContent))===disguiseSend?old.requestId:crypto.randomUUID();
     if(pending.has(requestId))throw Error('正在等待房主确认');
-    local.record(identity,{round,roundId:r.roundId,epoch:r.epoch,text,privateContent,hiddenSend,disguiseSend,requestId,status:'pending'});
-    local.save(identity,{draft:text,privateDraft:privateContent,hiddenSend,disguiseSend,draftRound:round,draftVersion:previous.draftVersion});refreshInputs(identity);
+    local.record(identity,{round,roundId:r.roundId,epoch:r.epoch,text,privateContent,hiddenSend,disguiseSend,draftState,requestId,status:'pending'});
+    local.save(identity,{...draftState,draftRound:round,draftVersion:previous.draftVersion});refreshInputs(identity);
     const feedback=S.actionFeedback=GameInputs.feedback(S,{status:'pending',content:text,privateContent,disguise:disguiseSend,requestId,skip});emit();
     let result;
-    try{result=await command(skip?'action.skip':'action.submit',skip?{}:{content:text,privateContent,...options.disguiseSend===true?{disguise:true}:{}},{requestId,room:r});feedback.status='accepted';}
+    try{result=await command(skip?'action.skip':'action.submit',skip?{}:{content:text,privateContent,...hiddenSend&&disguiseSend?{disguise:true}:{}},{requestId,room:r});feedback.status='accepted';}
     catch(error){if(S.actionFeedback===feedback)S.actionFeedback=null;emit();throw error;}
     try{
       local.record(identity,{round,roundId:r.roundId,epoch:r.epoch,requestId,status:'accepted'});
       const current=local.load(identity);
-      if(current.draftRound===round&&current.draft===text&&current.privateDraft===privateContent)local.save(identity,{draft:'',privateDraft:'',draftRound:sameScope(identity,scope())?S.active.round+1:round,draftVersion:current.draftVersion+1});
+      if(current.draftRound===round&&current.draft===draftState.draft&&current.privateDraft===draftState.privateDraft)local.save(identity,{draft:'',privateDraft:'',draftRound:sameScope(identity,scope())?S.active.round+1:round,draftVersion:current.draftVersion+1});
     }catch(error){if(error.code!=='LOCAL_INPUT_STALE')throw error;}
     refreshInputs(identity);emit();await sync();return result;
   }
@@ -82,7 +82,7 @@ const GameApp=(()=>{
       local.record(identity,{round:r.round,roundId:r.roundId,epoch:r.epoch,requestId:result.cancelledRequestId||submittedRequestId||'',text:result.cancelled.content,privateContent:result.cancelled.privateContent,hiddenSend,disguiseSend,status:'cancelled'});
       S.actionFeedback=GameInputs.feedback(S,{status:'cancelled'});
       const current=local.load(identity),restore=!current.draft&&!current.privateDraft;
-      local.save(identity,{draft:restore?result.cancelled.content:current.draft,privateDraft:restore?result.cancelled.privateContent:current.privateDraft,...restore?{hiddenSend,disguiseSend}:{},draftVersion:current.draftVersion+1});refreshInputs(identity);emit();
+      local.save(identity,{...restore?(prior?.draftState||{draft:result.cancelled.content,privateDraft:result.cancelled.privateContent,hiddenSend,disguiseSend}):{},draftVersion:current.draftVersion+1});refreshInputs(identity);emit();
     }catch(error){if(error.code!=='LOCAL_INPUT_STALE')throw error;}
     return result;
   }
@@ -114,9 +114,9 @@ const GameApp=(()=>{
   async function reconnectRoom(){if(!bridgeSession)throw Error('请重新粘贴邀请链接加入房间');await bridgeSession.reconnect();}
   return {getState:()=>S,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},init:async()=>{try{S.settings=JSON.parse(localStorage.getItem('trpg-client-settings')||'{}');}catch(_){}},
     connect:async(t,id)=>{stopNetwork();S.network=null;await attach(t,id);},joinRoom,reconnectRoom,receive,sync,
-    send:(text,privateContent,options)=>submitInput(text,privateContent,options),cancelAction,profile:async actorId=>(await command('profile.request',{actorId})).profile,inventory:async actorId=>(await command('inventory.request',{actorId})).inventory,skip:()=>submitInput('','',{},true),requestRollback:()=>command('rollback.request',{targetRound:S.active.rollbackTargetRound??Math.max(0,S.active.round-1)}),roomCommand:command,
+    send:(text,privateContent,options)=>submitInput(text,privateContent,options),cancelAction,profile:async actorId=>(await command('profile.request',{actorId})).profile,inventory:async actorId=>(await command('inventory.request',{actorId})).inventory,skip:(options={})=>submitInput('','',{draftState:GameInputs.draftState(S.active||{}),...options},true),requestRollback:()=>command('rollback.request',{targetRound:S.active.rollbackTargetRound??Math.max(0,S.active.round-1)}),roomCommand:command,
     player:()=>({info:S.active?.info||{},items:S.active?.items||[],name:S.active?.playerName}),exportView:()=>cache.getState()?.view,
-    saveDraft:async(text,binding,options={})=>{if(S.active&&GameInputs.setDraft(S.active,options.private?'':text,binding)){S.active.privateDraft=options.private?String(text):String(options.privateContent||'');S.active.hiddenSend=options.hiddenSend??!!S.active.privateDraft;S.active.disguiseSend=S.active.hiddenSend&&(options.disguiseSend??!!S.active.draft);store();}},
+    saveDraft:async(text,binding,options={})=>{if(S.active&&GameInputs.setDraft(S.active,options.private?'':text,binding)){S.active.privateDraft=options.private?String(text):String(options.privateContent||'');S.active.hiddenSend=options.hiddenSend??!!S.active.privateDraft;S.active.disguiseSend=options.disguiseSend??!!(S.active.privateDraft&&S.active.draft);store();}},
     updateSettings:async values=>{S.settings={reverseSendNewline:values.reverseSendNewline===true};localStorage.setItem('trpg-client-settings',JSON.stringify(S.settings));emit();},
     setMode:()=>{},returnHome:()=>{S.home=true;emit();},returnToGame:()=>{if(S.active){S.home=false;emit();}},closeSave:()=>{stopNetwork();S.joining=null;S.active=null;S.home=false;S.room=null;S.network=null;emit();}
   };

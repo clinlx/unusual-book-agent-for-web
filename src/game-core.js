@@ -114,6 +114,7 @@ const GameCore = (() => {
     s.tree=copy(snap.tree);s.messages.length=snap.messageCount;s.events.length=snap.eventCount;
     s.round=snap.round;s.cache=copy(snap.cache);s.summaries.length=snap.summaryCount;s.status=snap.status;
     s.draft=input?.text??(snap.draftRound==null||snap.draftRound===snap.round+1?snap.draft||'':'');s.draftRound=snap.round+1;inputs.advance(s);
+    if(input?.draftState)Object.assign(s,input.draftState);
     s.contextFromRound=snap.contextFromRound;s.lastChanges=copy(snap.lastChanges);s.activeRound=null;s.error=null;
     const previous=s.snapshots.at(-1);
     if(previous&&!previous.tree){previous.tree=restoreTreeDelta(s.tree,previous.reverseDelta);delete previous.reverseDelta;}

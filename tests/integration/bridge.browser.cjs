@@ -211,6 +211,8 @@ test('real Bridge sockets preserve host authority, private views, fragmented syn
   assert.equal(await host.locator('[data-action="slot-choose"]').count(),0);
   assert.match(await host.locator('body').innerText(),/只有房主产生 token 消耗/);
   await host.locator('#slot-mode-b').selectOption('player');await host.locator('[data-action="slot-mode"][data-actor="b"]').click();
+  assert.deepEqual(hostSockets,[],'应用玩家槽位仅保存本地配置');
+  await host.locator('[data-action="connect-room"]').click();
   await host.locator('#room-invitation-b').waitFor({state:'attached'});
   await host.locator('[data-slot="b"] [data-presence="waiting"]').waitFor();
   assert.equal(await host.locator('[data-action="copy-invitation"][data-actor="b"]').count(),1);
@@ -289,7 +291,7 @@ test('real Bridge sockets preserve host authority, private views, fragmented syn
   for(const hidden of ['甲的私密线索','甲的隐秘行动','不公开人物','内部推理与草稿'])assert.ok(!guestView.includes(hidden),hidden+'未进入客户端或本地缓存');
   assert.ok(guestView.includes('乙的私密线索'));assert.ok(guestView.includes('乙的私密骰理由'));assert.ok(!guestView.includes('甲的私密骰理由'));assert.ok(!guestView.includes('暗骰原因保密'));assert.ok(!guestView.includes('密骰属性保密'));
   assert.ok(await guest.evaluate(()=>GameApp.getState().active.events.some(e=>e.type==='dice'&&e.rollerId==='b'&&!e.private)),'其他玩家的公开骰标有实际角色');
-  assert.equal(await guest.locator('.dice.private-dice').count(),1);assert.equal(await guest.locator('.secret-dice-notice.private-dice').count(),1);assert.equal(await guest.locator('.dice.private-dice').evaluate(e=>getComputedStyle(e).backgroundColor),'rgb(243, 236, 255)');
+  assert.equal(await guest.locator('.dice.private-dice').count(),1);assert.equal(await guest.locator('.secret-dice-notice.private-dice').count(),1);assert.equal(await guest.locator('.dice.private-dice').evaluate(e=>getComputedStyle(e).backgroundColor),'rgb(229, 220, 234)');
   for(const p of [host,guest])assert.equal(await p.locator('#connection-lamp').getAttribute('data-status'),'green');
   const guestHomeSockets=guestSockets.length;await guest.locator('.home-button').click();await guest.locator('#join-room-form').waitFor();assert.equal(await guest.locator('#connection-lamp').count(),0);
   await guest.evaluate(()=>GameApp.sync());await guest.locator('[data-action="return-game"]').click();await guest.locator('#history').waitFor();assert.equal(guestSockets.length,guestHomeSockets);assert.equal(await guest.locator('#connection-lamp').getAttribute('data-status'),'green');
@@ -373,7 +375,7 @@ test('closing and reopening a player slot invalidates its previous invitation', 
   },bridge.url);
   await closeModal(host);await host.locator('[data-action="room-panel"]').click();
   const mode=async kind=>{await host.locator('#slot-mode-b').selectOption(kind);await host.locator('[data-action="slot-mode"][data-actor="b"]').click();};
-  await mode('player');await host.locator('#room-invitation-b').waitFor({state:'attached'});
+  await mode('player');assert.equal(sockets.length,0,'applying offline slots does not open sockets');await host.locator('[data-action="connect-room"]').click();await host.locator('#room-invitation-b').waitFor({state:'attached'});
   const oldKey=await host.locator('#room-invitation-b').inputValue();
   await mode('disabled');await host.waitForFunction(()=>!GameApp.getState().network?.invites.some(invite=>invite.actorId==='b'));
   await mode('player');await host.locator('#room-invitation-b').waitFor({state:'attached'});
@@ -409,6 +411,7 @@ test('host reload and explicit reopen preserve invitation keys and keep credenti
   await closeModal(host);await host.locator('[data-action="room-panel"]').click();
   assert.equal(await host.locator('#room-invitation-b').inputValue(),original.b.key);
   await host.locator('#slot-mode-b').selectOption('player');await host.locator('[data-action="slot-mode"][data-actor="b"]').click();
+  assert.equal(sockets.length,socketCount);assert.equal(await host.evaluate(()=>GameApp.multiplayerState().online),false);await host.locator('[data-action="connect-room"]').click();
   await host.waitForFunction(()=>GameApp.getState().network?.status==='connected');
   assert.equal(await host.evaluate(()=>GameApp.multiplayerState().roomId),original.roomId);
   assert.deepEqual(await host.evaluate(()=>GameApp.getState().network.invites.map(i=>i.key)),[original.b.key,original.c.key]);

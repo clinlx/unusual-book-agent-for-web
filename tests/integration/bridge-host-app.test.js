@@ -9,7 +9,7 @@ function setup(t,{count=2,failInvite=false,failConnect=false,control={}}={}){
  const ctx=vm.createContext({console,structuredClone,crypto:globalThis.crypto,setTimeout,clearTimeout,setInterval,clearInterval,queueMicrotask,URL,location:{href:'http://127.0.0.1:4173/index.html'},localStorage:{getItem:key=>localRecords.get(key)??null,setItem:(key,value)=>localRecords.set(key,value)},
  VFS,GameCore:Core,GameSlots:require('../../src/game-slots'),GameHistory:require('../../src/game-history'),GameInputs:require('../../src/game-input-history'),GameLocalInputs:require('../../src/game-local-inputs'),GameData:require('../../src/game-data'),GamePresentation:require('../../src/game-presentation'),MultiplayerHost:require('../../src/multiplayer-host'),MultiplayerSync:require('../../src/multiplayer-sync'),
  Lease:{create:()=>({available:false,isHeldByOther:()=>false})},GameStore:{create:()=>({open:async()=>{},getRoomConfig:async id=>structuredClone(roomConfigs.get(id)||null),putRoomConfig:async(id,value)=>{if(control.failRoomConfig)throw Error("room config quota");roomConfigs.set(id,structuredClone(value));},getSettings:async()=>({}),putSettings:async()=>{},getSave:async id=>structuredClone(saved.get(id)),putSave:async s=>{if(control.failPersist)throw Error('quota');saved.set(s.id,structuredClone(s));},list:async()=>[...saved.values()]})},
- BridgeTransport:{parseInvitation:x=>JSON.parse(Buffer.from(x,'base64url').toString()),validateServerUrl:x=>x,encodeInvitation:x=>Buffer.from(JSON.stringify(x)).toString('base64url'),async createHost(o){calls++;options=o;if(failConnect)throw Error('connection failed');return {transport,credentials:()=>o.credentials||{token:'HOST-SECRET',epoch:'ROOM-EPOCH'},async invite(id){invites.push(id);if(failInvite)throw Error('authorization failed');return {version:1,url:o.url,roomId:o.roomId,memberId:id,token:'PRIVATE-TOKEN'};},async revoke(id){if(control.failRevoke)throw Error('revoke failed');revoked.push(id);},async reconnect(){await o.onState({status:'connected'});},close(){closed=true;}};}}});
+ BridgeTransport:{prepareHostAuthorization:async o=>({credentials:o.credentials||{token:'HOST-SECRET',epoch:'ROOM-EPOCH'},players:[...o.players,...o.memberIds.map(memberId=>({version:1,url:o.url,roomId:o.roomId,memberId,token:'PRIVATE-TOKEN'}))]}),parseInvitation:x=>JSON.parse(Buffer.from(x,'base64url').toString()),validateServerUrl:x=>x,encodeInvitation:x=>Buffer.from(JSON.stringify(x)).toString('base64url'),async createHost(o){calls++;options=o;if(failConnect)throw Error('connection failed');return {transport,credentials:()=>o.credentials||{token:'HOST-SECRET',epoch:'ROOM-EPOCH'},async invite(id){invites.push(id);if(failInvite)throw Error('authorization failed');return {version:1,url:o.url,roomId:o.roomId,memberId:id,token:'PRIVATE-TOKEN'};},async revoke(id){if(control.failRevoke)throw Error('revoke failed');revoked.push(id);},async reconnect(){await o.onState({status:'connected'});},close(){closed=true;}};}}});
  vm.runInContext(fs.readFileSync(require.resolve('../../src/game-app'),'utf8'),ctx);const app=vm.runInContext('GameApp',ctx);t.after(()=>{try{app.closeSave();}catch{}});return {app,save,invites,revoked,sent,receive:(id,packet)=>incoming(id,packet),get calls(){return calls;},get closed(){return closed;},get options(){return options;}};
 }
 test('opening saves stays offline; explicit real room creates private invitation without putting credentials in save',async t=>{
@@ -33,6 +33,32 @@ test('failed network room creation returns to offline without phantom online roo
 });
 
 async function ready(t,options){const f=setup(t,options);await f.app.init();await f.app.openSave(f.save.id);if(f.app.multiplayerState().status==='selecting')await f.app.configureSlots('a');return f;}
+
+test('offline Apply persists open slots, and explicit Connect uploads all authorizations in the first handshake',async t=>{
+ const f=await ready(t,{count:3});
+ await f.app.configureInvitationSlot('b','player');await f.app.configureInvitationSlot('c','player');
+ assert.equal(f.calls,0);assert.equal(f.app.multiplayerState().online,false);
+ const id=f.app.getState().active.id;f.app.closeSave();await f.app.openSave(id);
+ assert.deepEqual(Array.from(f.app.getState().openPlayerSlots),['b','c']);assert.equal(f.calls,0);
+ await f.app.connectRoom();assert.equal(f.calls,1);assert.equal(f.options.players.length,2);
+ assert.equal(f.app.getState().network.invites.length,2);
+ await f.app.configureInvitationSlot('c','disabled');assert.equal(f.calls,1);assert.equal(f.app.getState().network.invites.length,1);
+});
+
+test('Connect rejects a room without configured open player slots and never calls Bridge',async t=>{
+ const f=await ready(t);await assert.rejects(f.app.connectRoom(),/开放.*玩家|玩家.*槽位/);assert.equal(f.calls,0);
+});
+
+test('host skip retains dormant drafts in its round cache for cancellation and rollback',async t=>{
+ const f=await ready(t),invite=await f.app.setInvitationSlot('b','player');await f.options.onMember({type:'joined',memberId:invite.memberId});
+ f.app.getState().settings.apiKey='test';
+ const draftState={draft:'',privateDraft:'暂存的隐秘行动',hiddenSend:false,disguiseSend:true};
+ await f.app.saveDraft('',undefined,{privateContent:draftState.privateDraft,hiddenSend:false,disguiseSend:true});
+ await f.app.skip({draftState});const s=f.app.getState().active;
+ assert.deepEqual(JSON.parse(JSON.stringify(s.inputHistory.at(-1).draftState)),draftState);
+ const action=f.app.multiplayerState().submissions.a;assert.equal(action.privateContent,'');
+ await f.app.cancelAction();for(const [key,value]of Object.entries(draftState))assert.equal(s[key],value);
+});
 
 test('a host network interruption preserves the collecting round and supports manual reconnect',async t=>{
  const f=await ready(t),invite=await f.app.setInvitationSlot('b','player');await f.options.onMember({type:'joined',memberId:invite.memberId});

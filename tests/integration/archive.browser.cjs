@@ -95,9 +95,10 @@ test('offline archive distinguishes private dice and actor actions without discl
     assert.match(await page.locator('.private-dice').first().innerText(),/私密检定.*可见骰点：42/s);
     assert.match(await page.locator('.secret-dice').innerText(),/私密暗骰.*AI 进行了一次暗骰/s);
     assert.match(await page.locator('.player-other header').innerText(),/秋的行动/);
-    assert.equal(await page.locator('.private-dice').first().evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(243, 236, 255)');
+    assert.equal(await page.locator('.private-dice').first().evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(229, 220, 234)');
     assert.equal(await page.locator('.player-self').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(209, 231, 221)');
-    assert.equal(await page.locator('.player-other').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(207, 244, 252)');
+    assert.equal(await page.locator('.player-other').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(203, 217, 221)');
+    await page.screenshot({path:path.resolve(__dirname,'../artifacts/archive-player-colors.png')});
   }finally{await page.close();}
 });
 

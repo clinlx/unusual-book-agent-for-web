@@ -32,6 +32,15 @@ test('a failed submission clears optimistic feedback while retaining retryable i
  assert.equal(Inputs.submission(f.app.getState()),null);assert.equal(f.app.getState().actionFeedback,null);
  assert.equal(f.app.getState().active.inputHistory.at(-1).text,'查看窗户');
 });
+test('private-only submission caches its unsent cover and modes for retraction and rollback',async t=>{
+ const f=setup(t);await f.app.connect(f.transport,'guest');
+ const draftState={draft:'没有公开的说辞',privateDraft:'真实行动',hiddenSend:true,disguiseSend:false};
+ f.setAction(c=>{assert.ok(!JSON.stringify(c).includes('没有公开的说辞'));return f.receive({type:'command.result',requestId:c.requestId,ok:true,...c.type==='action.cancel'?{cancelled:{content:'',privateContent:'真实行动'}}:{}});});
+ await f.app.send('','真实行动',{...draftState,draftState});await f.app.cancelAction();
+ for(const [key,value]of Object.entries(draftState))assert.equal(f.app.getState().active[key],value);
+ f.room.epoch++;await f.receive(await f.host.sync('guest'));
+ for(const [key,value]of Object.entries(draftState))assert.equal(f.app.getState().active[key],value);
+});
 
 test('skipping after retracting an action uses the new skip identity for a later retraction',async t=>{
  const f=setup(t);await f.app.connect(f.transport,'guest');let skipId;
@@ -43,6 +52,17 @@ test('skipping after retracting an action uses the new skip identity for a later
  await f.app.send('查看窗户');await f.app.cancelAction();await f.app.skip();
  assert.equal(f.app.getState().actionFeedback.skip,true);await f.app.cancelAction();
  assert.equal(Inputs.submission(f.app.getState()),null);
+});
+
+test('skip keeps dormant private input and checkbox modes locally without sending them',async t=>{
+ const f=setup(t);await f.app.connect(f.transport,'guest');
+ const draftState={draft:'',privateDraft:'尚未发送的私密想法',hiddenSend:false,disguiseSend:true};
+ await f.app.saveDraft('',undefined,{privateContent:draftState.privateDraft,hiddenSend:false,disguiseSend:true});
+ f.setAction(c=>{assert.ok(!JSON.stringify(c).includes(draftState.privateDraft));return f.receive({type:'command.result',requestId:c.requestId,ok:true,...c.type==='action.cancel'?{cancelled:{content:'',privateContent:''}}:{}});});
+ await f.app.skip({draftState});await f.app.cancelAction();
+ for(const [key,value]of Object.entries(draftState))assert.equal(f.app.getState().active[key],value);
+ f.room.epoch++;await f.receive(await f.host.sync('guest'));
+ for(const [key,value]of Object.entries(draftState))assert.equal(f.app.getState().active[key],value);
 });
 test('client requests another bound player inventory through the host without local world access',async t=>{
  const f=setup(t);await f.app.connect(f.transport,'guest');assert.equal(typeof f.app.inventory,'function');
