@@ -24,4 +24,5 @@ function compose(template, styles, source) {
   return read(template).replace('/*__STYLES__*/', () => read(styles))
     .replace('/*__SCRIPTS__*/', () => source.replace(/<\/script/gi, '<\\/script'));
 }
-module.exports = { root, read, safeJSON, scripts, compose };
+const svgDataUri = file => 'data:image/svg+xml,' + encodeURIComponent(read(file).trim());
+module.exports = { root, read, safeJSON, scripts, compose, svgDataUri };
