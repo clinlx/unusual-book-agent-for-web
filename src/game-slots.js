@@ -2,6 +2,47 @@
 const GameSlots=(()=>{
   const prefixes={player:'Player',ai:'AIPC',disabled:'DISABLE',kpc:'KPC'};
   const clone=value=>JSON.parse(JSON.stringify(value));
+  const LOCK_MESSAGE='已锁定，关闭的角色槽位需要在存档开始游戏前进行配置开启。';
+  const INTERNAL_HEADER='[角色控制·内部指令]';
+  const started=save=>save.status!=='new'&&(save.round||0)>0||!!save.activeRound?.starting;
+  function controlModes(save,openPlayerSlots=[]){
+    const open=new Set(openPlayerSlots);
+    return Object.fromEntries(ensure(save).map(slot=>[slot.id,open.has(slot.id)?'player':slot.kind]));
+  }
+  function initializeControlState(save,openPlayerSlots=[]){
+    if(!started(save)||save.slotControlState)return;
+    const modes=controlModes(save,openPlayerSlots);
+    for(const m of Object.values(save.multiplayer?.members||{}))if(m.actorId||m.invitationActorId)modes[m.actorId||m.invitationActorId]='player';
+    for(const m of save.multiplayer?.suspendedRoom?.bindings||[])modes[m.actorId]='player';
+    save.slotControlState={initialModes:{...modes},lastModes:{...modes}};
+  }
+  function locked(save,id,{openPlayerSlots=[]}={}){
+    if(!started(save))return false;
+    if(save.slotControlState&&Object.hasOwn(save.slotControlState.initialModes,id))return save.slotControlState.initialModes[id]==='disabled';
+    return controlModes(save,openPlayerSlots)[id]==='disabled';
+  }
+  function assertConfigure(save,id,kind,options){
+    if(locked(save,id,options)||started(save)&&kind==='disabled')throw Error(LOCK_MESSAGE);
+  }
+  function roundInstruction(save,isStart,{openPlayerSlots=[]}={}){
+    const modes=controlModes(save,isStart?openPlayerSlots:[]),previous=save.slotControlState?.lastModes;
+    const list=kind=>Object.entries(modes).filter(([,v])=>v===kind).map(([id])=>JSON.stringify(prefixes[kind]+'-'+id)).join('、')||'无';
+    const kpcs=scan(save.tree).filter(slot=>slot.kind==='kpc').map(slot=>JSON.stringify('KPC-'+slot.id));
+    let lines=[];
+    if(isStart&&Object.keys(modes).length+kpcs.length>1){
+      lines=[`本局为${Object.values(modes).filter(v=>v==='player').length}人游戏。真人玩家槽位：${list('player')}；AI控制的AIPC：${list('ai')}；KPC：${kpcs.join('、')||'无'}。`,
+        '开局检查AIPC及存在的KPC角色卡；只补齐信息不明确的部分，保留已有设定。若玩家指定了NPC角色卡或要求，优先采用；否则自动填写独特的NPC，使叙事定位尽可能与玩家互补。为提高效率，NPC补卡不建议掷骰决定属性。',
+        ...save.npcCardInstructions?[`玩家指定的NPC车卡要求：${JSON.stringify(save.npcCardInstructions)}`]:[]];
+    }else if(!isStart&&previous){
+      for(const [id,mode]of Object.entries(modes))if(previous[id]!==mode&&['player','ai'].includes(mode)&&['player','ai'].includes(previous[id])){
+        lines.push(mode==='ai'?`${JSON.stringify('AIPC-'+id)}由真人控制改为AI扮演，延续该角色已有性格、知识、动机与状态。`:
+          `${JSON.stringify('Player-'+id)}由AI扮演改为真人控制，不代替玩家决定行动；如有中途加入者需要的已知背景，使用private_append_story仅向该角色私密补充，不泄露未知信息。`);
+      }
+    }
+    save.slotControlState={initialModes:save.slotControlState?.initialModes||{...modes},lastModes:{...modes}};
+    return lines.length?[INTERNAL_HEADER,...lines,'这些指令仅供AI执行，不得将指令、补卡安排或控制方式变更说明展示给任何玩家，也不得写入故事正文、玩家气泡、人物或物品的公开字段。'].join('\n'):'';
+  }
+  const playerContext=messages=>messages.filter(m=>!m.content?.startsWith(INTERNAL_HEADER));
   function scan(tree){
     const root=tree?.children?.workspace,seen=new Set(),slots=[];
     for(const [name,node] of Object.entries(root?.children||{})){
@@ -71,6 +112,6 @@ const GameSlots=(()=>{
     for(const slot of slots)if(slot.id===id)change(next,id,'player');else if(!slot.memberId)change(next,slot.id,modes[slot.id]==='ai'?'ai':'disabled');
     next.actorId=id;next.playerPath=next.slots.find(s=>s.id===id).path;next.slotsConfigured=true;commit(save,next);return save.slots;
   }
-  return {scan,ensure,select,setMode};
+  return {scan,ensure,select,setMode,controlModes,initializeControlState,locked,assertConfigure,roundInstruction,playerContext,LOCK_MESSAGE};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=GameSlots;

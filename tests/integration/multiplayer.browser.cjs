@@ -12,6 +12,30 @@ before(async()=>{
 after(async()=>{await browser?.close();if(server)await new Promise(r=>server.close(r));});
 
 const call=(name,args,id)=>({id,type:'function',function:{name,arguments:JSON.stringify(args)}});
+
+test('started room slots lock disabled roles, keep NPC/player switching and expose relay settings in Advanced',async t=>{
+ const page=await pageFor(t),errors=[],requests=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.route('https://slot-control.invalid/**',async route=>{requests.push(route.request().postDataJSON());await route.fulfill({contentType:'application/json',body:JSON.stringify({choices:[{message:{content:'',tool_calls:[call('append_story',{content:'测试开局正文。',one_line_summary_of_content:'开局'},'story'),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'end')]}}]})});});
+ await page.goto(origin+'/index.html');await page.locator('[data-action="import"]').waitFor();
+ await page.evaluate(async()=>{await GameApp.updateSettings({apiKey:'test',baseUrl:'https://slot-control.invalid/v1',stream:false});const files=['Player-a','Player-b','Player-c','KPC-guide'].flatMap(name=>[{name:name+'/基础信息.json',text:JSON.stringify({姓名:name})},{name:name+'/背包.json',text:'[]'}]);await GameApp.importSave(new File([ZIP.makeZip(files)],'槽位控制.zip'));await GameApp.configureSlots('a',{b:'ai'});});
+ await page.locator('[data-action="room-panel"]').click();await page.locator('#npc-card-requirements').fill('b 是外科医生');await page.locator('[data-action="save-npc-requirements"]').click();
+ assert.equal(await page.evaluate(()=>GameApp.getState().active.npcCardInstructions),'b 是外科医生');
+ await page.locator('[data-action="close-modal"]').first().click();await page.locator('[data-action="start"]').click();await page.waitForFunction(()=>GameApp.getState().active.round===1);
+ assert.equal(requests.length,1);assert.equal(requests[0].messages.filter(m=>m.role==='system').length,1);assert.ok(requests[0].messages.some(m=>m.role==='user'&&m.content.includes('外科医生')));
+ assert.ok(!(await page.locator('#history').innerText()).includes('角色控制·内部指令'));
+ assert.ok(!await page.evaluate(()=>JSON.stringify(GameApp.currentContext()).includes('外科医生')));
+ await page.locator('[data-action="room-panel"]').click();
+ const disabled=page.locator('[data-slot="c"]');assert.equal(await disabled.locator('select,button').count(),0);assert.match(await disabled.innerText(),/已锁定，关闭的角色槽位/);
+ assert.deepEqual(await page.locator('#slot-mode-b option').evaluateAll(nodes=>nodes.map(n=>n.value)),['ai','player']);
+ await page.locator('#slot-mode-b').selectOption('player');await page.locator('[data-action="slot-mode"][data-actor="b"]').click();assert.equal(await page.evaluate(()=>GameApp.getState().network),null);
+ await page.locator('#slot-mode-b').selectOption('ai');await page.locator('[data-action="slot-mode"][data-actor="b"]').click();
+ await page.setViewportSize({width:390,height:844});await page.screenshot({path:'tests/artifacts/locked-slots-390.png'});
+ await page.locator('[data-action="close-modal"]').first().click();await page.locator('[data-action="settings"]').click();
+ const advanced=page.locator('[data-settings-section="advanced"]');assert.equal(await advanced.locator('input[name="bridgeUrl"]').count(),1);assert.match(await advanced.innerText(),/高级选项/);await advanced.locator('summary').click();assert.match(await advanced.innerText(),/多人游戏中转服务器地址/);
+ assert.equal(await page.locator('[data-settings-section="game"] input[name="bridgeUrl"]').count(),0);
+ const guest=await pageFor(t);guest.on('pageerror',e=>errors.push(e.message));await guest.goto(origin+'/client.html');await guest.locator('#join-room-form').waitFor();await guest.locator('[data-action="settings"]').click();await guest.locator('.settings-section summary').click();await guest.locator('[name="bridgeUrl"]').fill('wss://relay.example.com:8443/');await guest.locator('#settings-form button[type="submit"]').click();assert.equal(await guest.evaluate(()=>GameApp.getState().settings.bridgeUrl),'wss://relay.example.com:8443/');
+ assert.deepEqual(errors,[]);
+});
 async function pageFor(t){const context=await browser.newContext({viewport:{width:1440,height:960}});t.after(()=>context.close());const page=await context.newPage();page.setDefaultTimeout(10000);return page;}
 async function connectBridge(host,clients){
   await host.exposeFunction('deliverMultiplayerClient',async(memberId,packet)=>{const page=clients[memberId];if(page)await page.evaluate(packet=>window.testClientReceiver?.(packet),packet);});
@@ -112,34 +136,34 @@ test('mid-game invitations warn for invalid cards before connecting and allow ac
   await page.goto(origin+'/index.html');await page.locator('[data-action="import"]').waitFor();
   await page.evaluate(async()=>{
     const files=['a','b','c'].flatMap(id=>[{name:`Player-${id}/基础信息.json`,text:JSON.stringify({姓名:id})},{name:`Player-${id}/背包.json`,text:'[]'}]);
-    await GameApp.importSave(new File([ZIP.makeZip(files)],'中途邀请.zip'));await GameApp.configureSlots('a');
+    await GameApp.importSave(new File([ZIP.makeZip(files)],'中途邀请.zip'));await GameApp.configureSlots('a',{b:'ai',c:'ai'});
     window.__connections=0;
     BridgeTransport.createHost=async options=>{__connections++;return {transport:{onHost:()=>()=>{},sendToClient:async()=>{}},invite:async memberId=>({version:1,url:options.url,roomId:options.roomId,memberId,token:'A'.repeat(43)+'.'+'A'.repeat(43)}),revoke:async()=>{},credentials:()=>options.credentials,close(){}};};
   });
-  const setRound=async round=>page.evaluate(async round=>{GameApp.getState().active.round=round;await GameApp.updateSettings({});},round);
+  const setRound=async round=>page.evaluate(async round=>{GameApp.getState().active.round=round;GameApp.getState().active.status='waiting';await GameApp.updateSettings({});},round);
   const openPanel=async()=>{await page.locator('[data-action="room-panel"]').click();};
   const apply=async(id,kind)=>{await page.locator('#slot-mode-'+id).selectOption(kind);await page.locator(`[data-action="slot-mode"][data-actor="${id}"]`).click();};
   await setRound(2);await openPanel();await apply('b','player');
   assert.equal(await page.evaluate(()=>__connections),0);await page.locator('[data-action="connect-room"]').click();
   await page.waitForFunction(()=>GameApp.getState().network?.invites?.length===1);assert.equal(await page.locator('[role="alertdialog"]').count(),0);
-  await apply('b','disabled');await page.locator('[data-action="close-room"]').click();
+  await apply('b','ai');await page.locator('[data-action="close-room"]').click();
   await setRound(3);await apply('b','player');await page.locator('[role="alertdialog"]').waitFor();
   const message=await page.locator('#app-dialog-message').innerText();
-  for(const text of ['该角色卡存在格式错误','新开游戏','车卡流程','调试模式','/workspace/DISABLE-b/基础信息.json','无法预料的错误'])assert.ok(message.includes(text),text);
+  for(const text of ['该角色卡存在格式错误','新开游戏','车卡流程','调试模式','/workspace/AIPC-b/基础信息.json','无法预料的错误'])assert.ok(message.includes(text),text);
   assert.equal(await page.locator('[data-dialog-value="confirm"]').innerText(),'我知道了');assert.equal(await page.evaluate(()=>__connections),1);
   await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
   fs.mkdirSync(path.join(__dirname,'../artifacts'),{recursive:true});await page.screenshot({path:path.join(__dirname,'../artifacts/invitation-character-warning-390.png')});
-  assert.equal(await page.evaluate(()=>GameApp.getState().active.slots.find(x=>x.id==='b').kind),'disabled');
+  assert.equal(await page.evaluate(()=>GameApp.getState().active.slots.find(x=>x.id==='b').kind),'ai');
   await page.locator('[data-dialog-value="cancel"]').click();assert.equal(await page.evaluate(()=>__connections),1);
   await apply('b','player');await page.locator('[data-dialog-value="confirm"]').click();
   assert.equal(await page.evaluate(()=>__connections),1);await page.locator('[data-action="connect-room"]').click();
   await page.waitForFunction(()=>GameApp.getState().network?.invites?.length===1);assert.equal(await page.evaluate(()=>__connections),2);
   await apply('b','player');assert.equal(await page.locator('[role="alertdialog"]').count(),0);
   await page.locator('[data-action="close-modal"]').first().click();
-  await page.evaluate(async()=>{VFS.writeFile(GameApp.getState().active.tree,'/workspace/DISABLE-c/基础信息.json','{broken');await GameApp.updateSettings({});});
+  await page.evaluate(async()=>{VFS.writeFile(GameApp.getState().active.tree,'/workspace/AIPC-c/基础信息.json','{broken');await GameApp.updateSettings({});});
   await openPanel();await apply('c','player');await page.locator('[role="alertdialog"]').waitFor();await page.locator('[data-dialog-value="cancel"]').click();
   const card={姓名:'丙',性别:'女',外貌:'短发',穿戴:{},性格:'谨慎',职业:'医生',身份:'调查员',说话习惯:'温和',原则:'救人','喜好/厌恶':'喜欢阅读',技能:{},属性:{},主动技能:[],状态:{HP:10,MAXHP:10,MP:5,MAXMP:5,Enabled:true,Alive:true},buff栏:[],当前位置:'车站'};
-  await page.evaluate(async card=>{VFS.writeFile(GameApp.getState().active.tree,'/workspace/DISABLE-c/基础信息.json',JSON.stringify(card));await GameApp.updateSettings({});},card);
+  await page.evaluate(async card=>{VFS.writeFile(GameApp.getState().active.tree,'/workspace/AIPC-c/基础信息.json',JSON.stringify(card));await GameApp.updateSettings({});},card);
   await apply('c','player');await page.waitForFunction(()=>GameApp.getState().network?.invites?.length===2);assert.equal(await page.locator('[role="alertdialog"]').count(),0);
   assert.deepEqual(errors,[]);
 });
@@ -174,10 +198,10 @@ test('host and isolated clients use authoritative rounds, private projections, r
       {name:'存档-索引-物品/key/物品基础信息.json',text:'{"名称":"铜钥匙","可见性":"可见","余量":1,"位置所属":"Player-a",".秘密":"隐藏物品"}'},
       {name:'存档-索引-物品/concealed/物品基础信息.json',text:'{"名称":"BACKPACK_PRIVATE_MARKER","可见性":"Hide","信息":"INVENTORY_SECRET_DETAIL"}'},
       {name:'模组.md',text:'两名玩家在车站相遇。'});
-    await GameApp.importSave(new File([ZIP.makeZip(files)],'多人回归.zip'));await GameApp.configureSlots('a');
+    await GameApp.importSave(new File([ZIP.makeZip(files)],'多人回归.zip'));await GameApp.configureSlots('a',{b:'ai'});
   });
   const initial=await host.evaluate(()=>({room:GameApp.multiplayerState(),slots:GameApp.getState().active.slots}));
-  assert.equal(initial.room.online,false);assert.equal(initial.room.roomId,null);assert.equal(initial.slots.find(x=>x.id==='b').kind,'disabled');assert.ok(!initial.slots.some(x=>x.id==='guide'));assert.deepEqual(sockets,[]);
+  assert.equal(initial.room.online,false);assert.equal(initial.room.roomId,null);assert.equal(initial.slots.find(x=>x.id==='b').kind,'ai');assert.ok(!initial.slots.some(x=>x.id==='guide'));assert.deepEqual(sockets,[]);
   await host.evaluate(async()=>{await GameApp.openRoom();await GameApp.addMember('guest');await GameApp.start();});
   await host.waitForFunction(()=>GameApp.getState().active.round===1&&GameApp.multiplayerState().status==='collecting').catch(async error=>{error.message+='\n'+JSON.stringify(await host.evaluate(()=>({room:GameApp.multiplayerState(),status:GameApp.getState().active.status,error:GameApp.getState().error,events:GameApp.getState().active.events.slice(-4)})));throw new Error(error.message);});
   await own.goto(origin+'/client.html');await guest.goto(origin+'/client.html');

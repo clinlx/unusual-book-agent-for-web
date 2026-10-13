@@ -85,7 +85,7 @@ const GameCore = (() => {
       (String(s.draft||'')!==submittedDraft.draft||String(s.privateDraft||'')!==submittedDraft.privateDraft);
     s.snapshots.push({tree:copy(s.tree),slots:copy(s.slots||[]),actorId:s.actorId,playerPath:s.playerPath,messageCount:s.messages.length,eventCount:s.events.length,round:s.round,
       worldTime:data.worldTime(s),at:Date.now(),
-      cache:copy(s.cache),summaryCount:s.summaries.length,status:s.status,contextFromRound:s.contextFromRound,lastChanges:copy(s.lastChanges),
+      cache:copy(s.cache),slotControlState:s.slotControlState?copy(s.slotControlState):null,summaryCount:s.summaries.length,status:s.status,contextFromRound:s.contextFromRound,lastChanges:copy(s.lastChanges),
       draft:isStart||options.skip?boundDraft:String(text||''),draftRound:inputRound,inputRoundId:roundId});
     pruneRollback(s);
     if(!options.skip&&String(text||'').trim())inputs.record(s,inputRound,roundId,text);
@@ -97,6 +97,8 @@ const GameCore = (() => {
     if(!keepDraft){s.draft='';s.privateDraft='';}s.draftRound=inputRound+1;
     if(!isStart){if(options.actions){for(const action of options.actions)emit(s,'player',{actorId:action.actorId,content:action.content||(action.skip?'等待局势发展。':''),privateContent:action.privateContent||'',...action.disguise?{disguise:true}:{},audience:'public',skip:!!action.skip,roundId});}else emit(s,'player',{actorId:s.actorId,content:actionText,name:'player_action',args:{action:actionText},skip:!!options.skip,roundId});}
     s.messages.push({role:'user',content:String(prompt),round:s.activeRound.number});
+    const instruction=slots.roundInstruction(s,isStart,options);
+    if(instruction)s.messages.push({role:'user',content:instruction,internal:true,round:s.activeRound.number});
     return s.activeRound;
   }
   function flatten(t) {
@@ -117,6 +119,7 @@ const GameCore = (() => {
     const input=inputs.retract(s,snap.round+1,snap.inputRoundId);
     s.tree=copy(snap.tree);s.messages.length=snap.messageCount;s.events.length=snap.eventCount;
     s.round=snap.round;s.cache=copy(snap.cache);s.summaries.length=snap.summaryCount;s.status=snap.status;
+    if(snap.slotControlState)s.slotControlState=copy(snap.slotControlState);else delete s.slotControlState;
     s.draft=input?.text??(snap.draftRound==null||snap.draftRound===snap.round+1?snap.draft||'':'');s.draftRound=snap.round+1;inputs.advance(s);
     if(input?.draftState)Object.assign(s,input.draftState);
     s.contextFromRound=snap.contextFromRound;s.lastChanges=copy(snap.lastChanges);s.activeRound=null;s.error=null;

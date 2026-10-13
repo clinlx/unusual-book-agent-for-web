@@ -65,6 +65,7 @@ const MultiplayerHost=(()=>{
       if(m.invitationActorId&&m.invitationActorId!==actorId)fail('FORBIDDEN','邀请仅允许使用指定角色');
       if(Object.entries(r.members).some(([id,x])=>id!==memberId&&(x.actorId===actorId||x.invitationActorId===actorId)))fail('OCCUPIED','该角色已有玩家控制或已开放邀请');
       if(m.actorId===actorId)return;
+      if(slots().locked(save(),actorId))fail('SLOT_LOCKED',slots().LOCK_MESSAGE);
       const before=clone(save().tree),oldSlots=clone(save().slots),oldPath=save().playerPath;
       try{if(m.actorId){const old=actor(m.actorId);delete old.memberId;slots().setMode(save(),old.id,'disabled');}if(actor(actorId).kind!=='player')slots().setMode(save(),actorId,'player');}
       catch(e){save().tree=before;save().slots=oldSlots;save().playerPath=oldPath;throw e;}
@@ -217,12 +218,14 @@ const MultiplayerHost=(()=>{
           else if(Object.keys(v.votes).length===v.eligible.length){r.vote=null;cancelTimer();}break;
         }
         case 'slot.mode':host(memberId);boundary();actor(p.actorId);
+          slots().assertConfigure(save(),p.actorId,p.kind);
           if(Object.values(r.members).some(m=>m.actorId===p.actorId||m.invitationActorId===p.actorId))fail('OCCUPIED','该角色已有玩家或邀请，请先撤销未使用的邀请');
           if(!['ai','disabled'].includes(p.kind))fail('INVALID_MODE','无人槽位仅可设为关闭或 AIPC');slots().setMode(save(),p.actorId,p.kind);refresh();break;
         case 'slot.claim.request':{
           if(memberId==='host'&&m.actorId)fail('HOST_SLOT_LOCKED','房主只能在首次进入存档时选择角色，之后不能切换');
           if(m.invitationActorId)fail('FORBIDDEN','邀请仅允许使用指定角色');
           boundary();actor(p.actorId);if(Object.values(r.members).some(x=>x.actorId===p.actorId||x.invitationActorId===p.actorId))fail('OCCUPIED','该角色已有玩家控制或已开放邀请');
+          if(slots().locked(save(),p.actorId))fail('SLOT_LOCKED',slots().LOCK_MESSAGE);
           r.slotRequests=r.slotRequests.filter(x=>x.memberId!==memberId);
           r.slotRequests.push({id:uid(),memberId,actorId:p.actorId,at:now(),bindingVersion:m.bindingVersion,epoch:r.epoch});break;
         }
@@ -246,7 +249,7 @@ const MultiplayerHost=(()=>{
       if(!execution&&shouldRun()){const automatic=!room().participants.some(p=>p.alive&&p.enabled),start=launch({automatic});await commit('round.executing');start();return true;}return false;
     });}
     return {
-      initialize:actorId=>transaction(async()=>{slots().ensure(save());const r=room();if(!r.members.host)r.members.host={actorId:null,bindingVersion:0,connected:true};
+      initialize:actorId=>transaction(async()=>{slots().ensure(save());slots().initializeControlState(save());const r=room();if(!r.members.host)r.members.host={actorId:null,bindingVersion:0,connected:true};
         if(r.status==='selecting'){const chosen=actorId||save().selectedActorId||save().slots.find(x=>x.path===save().playerPath&&x.kind!=='kpc')?.id;actor(chosen);
           for(const slot of [...save().slots])if(slot.id!==chosen&&slot.kind==='player'&&!slot.memberId)slots().setMode(save(),slot.id,'disabled');assignRaw('host',chosen);r.status=save().status==='ended'?'ended':save().activeRound&&!save().activeRound.complete?'interrupted':'collecting';}
         else if(actorId&&actorId!==r.members.host.actorId){boundary();assignRaw('host',actorId);}refresh();if(!r.online&&['collecting','ended'].includes(r.status)&&!r.vote&&!r.participants.some(p=>p.invalid)){
@@ -259,6 +262,7 @@ const MultiplayerHost=(()=>{
         r.online=false;r.roomId=null;r.roundId=uid();r.receipts=[];r.slotRequests=[];r.submissions={};delete r.suspendedRoom;refresh();await commit('room.closed');}),
       addMember:memberId=>transaction(async()=>{if(!validId(memberId)||memberId==='host')fail('INVALID_MEMBER','无效成员标识');const r=room();if(!r.online)fail('ROOM_CLOSED','请先开房间');if(!Object.hasOwn(r.members,memberId))r.members[memberId]={actorId:null,bindingVersion:0,connected:true};await commit('member.joined');return clone(r.members[memberId]);}),
       reserveInvitation:(memberId,actorId)=>transaction(async()=>{boundary();const r=room();if(!r.online)fail('ROOM_CLOSED','请先开房间');if(!validId(memberId)||memberId==='host'||Object.hasOwn(r.members,memberId))fail('INVALID_MEMBER','无效成员标识');actor(actorId);
+        slots().assertConfigure(save(),actorId,'player');
         if(Object.values(r.members).some(m=>m.actorId===actorId||m.invitationActorId===actorId))fail('OCCUPIED','该角色已有玩家控制或已开放邀请');
         slots().setMode(save(),actorId,'player');r.members[memberId]={actorId:null,invitationActorId:actorId,bindingVersion:0,connected:false};refresh();await commit('invitation.opened');return clone(r.members[memberId]);}),
       joinInvitation:memberId=>transaction(async()=>{if(!room().online)fail('ROOM_CLOSED','房间已关闭');const m=member(memberId);if(!m.invitationActorId)fail('UNAUTHORIZED','邀请已失效');assignRaw(memberId,m.invitationActorId);m.connected=true;await commit('member.joined');return clone(m);}),

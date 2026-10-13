@@ -34,6 +34,11 @@ test('failed network room creation returns to offline without phantom online roo
 
 async function ready(t,options){const f=setup(t,options);await f.app.init();await f.app.openSave(f.save.id);if(f.app.multiplayerState().status==='selecting')await f.app.configureSlots('a');return f;}
 
+test('offline configured player slots cannot be silently omitted when starting a game',async t=>{
+ const f=await ready(t);f.app.getState().active.status='new';await f.app.configureInvitationSlot('b','player');
+ await assert.rejects(f.app.start(),/开放给玩家.*没有玩家加入/);assert.equal(f.calls,0);assert.equal(f.app.getState().active.activeRound,null);
+});
+
 test('offline Apply persists open slots, and explicit Connect uploads all authorizations in the first handshake',async t=>{
  const f=await ready(t,{count:3});
  await f.app.configureInvitationSlot('b','player');await f.app.configureInvitationSlot('c','player');

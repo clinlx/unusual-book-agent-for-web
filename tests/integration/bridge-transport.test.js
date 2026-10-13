@@ -1,6 +1,15 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const SDK=require('../../vendor/room-bridge'),Bridge=require('../../src/bridge-transport');
+
+test('compact invitations preserve authorization and relay and still accept legacy keys',()=>{
+ const value={version:1,url:'wss://example.com:8443/',roomId:'room-123',memberId:'guest',token:SDK.randomToken()+'.'+SDK.randomToken()};
+ const legacy=Buffer.from(JSON.stringify(value)).toString('base64url'),key=Bridge.encodeInvitation(value);
+ assert.ok(key.length<legacy.length*0.8);assert.deepEqual(Bridge.parseInvitation(key),value);assert.deepEqual(Bridge.parseInvitation(legacy),value);
+ assert.deepEqual(Bridge.parseInvitation('https://site.test/client.html#join='+key),value);
+ for(const bad of [key+'~extra',key.replace('BA2~','BA3~'),key.replace('~guest~','~host~')])assert.throws(()=>Bridge.parseInvitation(bad));
+});
+
 function fakeSDK(){
  const connections=[];let initial=[];
  class Connection{

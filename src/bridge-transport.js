@@ -25,13 +25,16 @@ const BridgeTransport=(()=>{
     for(const piece of value.token.split('.'))if(decode(piece).length!==32)throw error();
     return {version:1,url:validateServerUrl(value.url),roomId:value.roomId,memberId:value.memberId,token:value.token};
   }
-  function encodeInvitation(value){return encode(encoder.encode(JSON.stringify(invitation(value))));}
+  function encodeInvitation(value){const v=invitation(value);return ['BA2',encode(encoder.encode(v.url)),v.roomId,v.memberId,v.token].join('~');}
   function invitationParameter(value){const url=new URL(value),hash=new URLSearchParams(url.hash.slice(1));return hash.has('join')?hash.get('join'):url.searchParams.get('join');}
   function parseInvitation(value){
     if(object(value))return invitation(value);
     if(typeof value!=='string'||value.length>8192)throw error();let code=value.trim();
     if(code.includes('#')||code.includes('?'))try{code=invitationParameter(code)||'';}catch(_){throw error();}
-    try{return invitation(JSON.parse(decoder.decode(decode(code))));}catch(_){throw error();}
+    try{
+      if(code.startsWith('BA2~')){const parts=code.split('~');if(parts.length!==5)throw error();return invitation({version:1,url:decoder.decode(decode(parts[1])),roomId:parts[2],memberId:parts[3],token:parts[4]});}
+      return invitation(JSON.parse(decoder.decode(decode(code))));
+    }catch(_){throw error();}
   }
   async function prepareHostAuthorization({url,roomId,credentials,players=[],memberIds=[],sdk=SDK}){
     url=validateServerUrl(url);if(!validId(roomId)||!Array.isArray(players)||!Array.isArray(memberIds))throw error();

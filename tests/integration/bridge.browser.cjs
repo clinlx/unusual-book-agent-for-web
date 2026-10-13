@@ -18,6 +18,7 @@ test('invitation links show progress without flashing a key form, and failures o
     await GameApp.importSave(new File([ZIP.makeZip(files)],'自动加入.zip'));await GameApp.configureSlots('a');return GameApp.setInvitationSlot('b','player');
   },bridge.url);
   await guest.addInitScript(()=>{
+    localStorage.setItem('trpg-client-settings',JSON.stringify({bridgeUrl:'wss://unrelated.invalid:8443/'}));
     window.joinFormFlashed=false;
     new MutationObserver(()=>{if(document.querySelector('#join-room-form'))window.joinFormFlashed=true;}).observe(document,{childList:true,subtree:true});
   });
@@ -32,6 +33,7 @@ test('invitation links show progress without flashing a key form, and failures o
   assert.equal(await guest.evaluate(()=>window.joinFormFlashed),false);
   fs.mkdirSync(path.join(__dirname,'../artifacts'),{recursive:true});await guest.screenshot({path:path.join(__dirname,'../artifacts/client-join-progress-390.png')});
   await guest.evaluate(()=>window.releaseJoin());await guest.waitForFunction(()=>GameApp.getState().active?.actorId==='b');await guest.locator('#history').waitFor();
+  assert.equal(await guest.evaluate(()=>GameApp.getState().settings.bridgeUrl),'wss://unrelated.invalid:8443/','embedded invitation relay temporarily overrides settings without replacing them');
   assert.equal(await guest.locator('.join-progress [role="progressbar"]').count(),0);assert.equal(await guest.evaluate(()=>window.joinFormFlashed),false);
   await guest.goto(site.origin+'/client.html?join=invalid-key');
   await guest.locator('[role="alertdialog"]').waitFor();
@@ -200,7 +202,7 @@ test('real Bridge sockets preserve host authority, private views, fragmented syn
   await host.evaluate(async bridgeUrl=>{
     await GameApp.updateSettings({baseUrl:'https://bridge-model.invalid/v1',apiKey:'fake-model-key',stream:false,bridgeUrl});
     const files=['a','b'].flatMap(id=>[{name:`Player-${id}/基础信息.json`,text:JSON.stringify({姓名:id==='a'?'甲':'乙',职业:'公开职业-'+id,密码:'不公开密码',当前位置:'不公开位置',Alive:true,Enabled:true,'.秘密':'不公开人物-'+id})},{name:`Player-${id}/背包.json`,text:'[]'}]);
-    files.push({name:'模组.md',text:'两名旅人在车站会合。'});await GameApp.importSave(new File([ZIP.makeZip(files)],'Bridge真实联机.zip'));await GameApp.configureSlots('a');
+    files.push({name:'模组.md',text:'两名旅人在车站会合。'});await GameApp.importSave(new File([ZIP.makeZip(files)],'Bridge真实联机.zip'));await GameApp.configureSlots('a',{b:'ai'});
   },bridge.url);
   await host.locator('.connection-placeholder').waitFor();assert.deepEqual(hostSockets,[],'默认多角色存档仍离线');assert.equal(await host.locator('#connection-lamp').count(),0);assert.equal(await host.locator('.connection-placeholder').count(),1);
   await host.evaluate(()=>GameApp.start());await waitHost(host,1);
