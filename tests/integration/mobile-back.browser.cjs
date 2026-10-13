@@ -29,6 +29,8 @@ const ready = require('./designer-ready.cjs');
           { id: 'end', type: 'function', function: { name: 'end_the_round', arguments: JSON.stringify({ NEXT_TURN_CACHE: { Story_Phase: '游戏循环', Game_World_Time: '夜晚' } }) } },
         ] }, finish_reason: 'tool_calls' }] }) });
       });
+      await context.route('**/modules.json',route=>route.fulfill({json:[]}));
+      await context.route('**/files/**',route=>route.abort());
       const errors = [];
       page.on('pageerror', error => errors.push(error.message));
       page.on('dialog', () => errors.push('Native dialog opened'));

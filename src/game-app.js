@@ -213,6 +213,24 @@ const GameApp=(()=>{
       const result={actorId,memberId,key,link:url.href};await saveRoomRecord({...savedRoom,openSlots:[...new Set([...(savedRoom?.openSlots||[]),actorId])],invites:[...S.network.invites,result]});S.network.invites.push(result);emit();return structuredClone(result);
     }catch(error){try{await session.revoke(memberId);}catch(_){}if(generation===bridgeGeneration)try{await domain.cancelInvitation(memberId,oldKind==='ai'?'ai':'disabled');}catch(_){}throw error;}
   });}
+  function rotateInvitation(actorId){return invitationTask(async()=>{
+    idle();const s=active();peerCheck(s);const domain=hostSession,r=domain.state();
+    if(actorId===s.actorId||r.status!=='collecting'||r.vote||Object.keys(r.submissions).length)throw Error('请在回合边界重新生成玩家密钥');
+    const old=savedRoom?.invites.find(i=>i.actorId===actorId);if(!old)throw Error('请先连接服务器生成该槽位的邀请');
+    const session=bridgeSession,generation=bridgeGeneration;let invitation;
+    if(r.online){if(!session)throw Error('房间连接已关闭');invitation=await session.rotate(old.memberId);}
+    else{
+      const prepared=await BridgeTransport.prepareHostAuthorization({url:savedRoom.url,roomId:savedRoom.roomId,credentials:savedRoom.credentials,players:savedRoom.invites.filter(i=>i.memberId!==old.memberId).map(i=>BridgeTransport.parseInvitation(i.key)),memberIds:[old.memberId]});
+      invitation=prepared.players.find(i=>i.memberId===old.memberId);
+    }
+    if(s!==S.active||domain!==hostSession||generation!==bridgeGeneration)throw Error('房间已经切换');
+    const key=BridgeTransport.encodeInvitation(invitation),link=new URL('client.html',location.href);link.search='';link.hash='join='+key;
+    const next={...old,key,link:link.href},invites=savedRoom.invites.map(i=>i.memberId===old.memberId?next:i);
+    try{await saveRoomRecord({...savedRoom,invites});}
+    catch(error){if(r.online){await stopBridge();await domain.close();S.network={status:'closed',message:'新密钥保存失败，房间已关闭，请重新生成密钥后连接'};emit();}throw error;}
+    if(r.online){S.network.invites=structuredClone(invites);await domain.setConnected(old.memberId,false);clientCursors.delete(old.memberId);}
+    emit();return structuredClone(next);
+  });}
   async function createInvitation(actorId){
     if(!actorId){const occupied=new Set(Object.values(hostSession.state().members).map(m=>m.actorId));actorId=active().slots.find(s=>s.kind!=='kpc'&&!occupied.has(s.id)&&!S.network?.invites?.some(i=>i.actorId===s.id))?.id;}
     if(!actorId)throw Error('世界需要有空白角色槽位');return (await setInvitationSlot(actorId,'player')).link;
@@ -431,7 +449,7 @@ const GameApp=(()=>{
     window.addEventListener('storage',e=>{if(e.key?.startsWith('awl:lease:'))emit();});
   }
   return {getState:()=>S,subscribe,init,importSave,importHandoff,importLink,openSave,closeSave,returnHome,returnToGame,leaveForClient,renameSave,deleteSave,exportSave,send,skip,start,resume,abort,rollback,setMode,
-    configureSlots,configureNPCCards,configureInvitationSlot,connectRoom,setInvitationSlot,openRoom,createInvitation,revokeInvitation,closeRoom,reconnectRoom:async()=>{if(!bridgeSession)throw Error('请先连接服务器建立房间');await bridgeSession.reconnect();},multiplayerState,roomCommand,requestRollback,decideHostRollback,exportView,attachMultiplayerTransport,
+    configureSlots,configureNPCCards,configureInvitationSlot,connectRoom,setInvitationSlot,openRoom,createInvitation,rotateInvitation,revokeInvitation,closeRoom,reconnectRoom:async()=>{if(!bridgeSession)throw Error('请先连接服务器建立房间');await bridgeSession.reconnect();},multiplayerState,roomCommand,requestRollback,decideHostRollback,exportView,attachMultiplayerTransport,
     addMember:id=>hostSession.addMember(id),setMemberConnected:(id,connected)=>hostSession.setConnected(id,connected),assignMember:(id,actor)=>hostSession.assign(id,actor),dispatchMember:(id,command)=>hostSession.handle(id,command),multiplayerSync:(id,request)=>syncHost.sync(id,request),
     readFile,writeFile,fileOperation,player,currentContext,updateSettings,stageDraft,saveDraft,resolveManualDice,cancelAction,
     profile:actorId=>MultiplayerSync.profile(active(),actorId,{room:hostSession?.state(),memberId:'host'}),

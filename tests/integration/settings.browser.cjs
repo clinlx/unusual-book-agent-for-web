@@ -31,6 +31,8 @@ after(async () => {
 });
 
 async function openSettings(page, name) {
+  await page.route('**/modules.json',route=>route.fulfill({json:[]}));
+  await page.route('**/files/**',route=>route.abort());
   await page.goto(origin + '/' + (name === 'game' ? 'index.html' : 'designer.html'));
   if (name === 'game') await page.locator('[data-action="settings"]').click();
   else {

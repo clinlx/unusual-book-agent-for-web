@@ -430,3 +430,26 @@ test('host reload and explicit reopen preserve invitation keys and keep credenti
   const fresh=await host.evaluate(()=>GameApp.setInvitationSlot('c','player'));assert.notEqual(fresh.key,original.c.key);
   await host.evaluate(()=>GameApp.closeRoom());assert.deepEqual(errors,[]);
 });
+
+test('global save rotates room keys online and offline without affecting other player invitations', {timeout:60000},async t=>{
+ const errors=[],host=await pageFor(t,errors,[]),guest=await pageFor(t,errors,[]);
+ for(const page of [host,guest]){await page.route('**/modules.json',route=>route.fulfill({json:[]}));await page.route('**/files/**',route=>route.abort());}
+ await host.goto(site.origin+'/index.html');await host.locator('[data-action="import"]').waitFor();
+ await host.evaluate(async bridgeUrl=>{await GameApp.updateSettings({bridgeUrl,apiKey:'test'});const files=['pc','p1','p2'].flatMap(id=>[{name:`Player-${id}/基础信息.json`,text:JSON.stringify({姓名:id})},{name:`Player-${id}/背包.json`,text:'[]'}]);await GameApp.importSave(new File([ZIP.makeZip(files)],'密钥更新.zip'));await GameApp.configureSlots('pc');await GameApp.configureInvitationSlot('p1','player');await GameApp.configureInvitationSlot('p2','player');await GameApp.connectRoom();},bridge.url);
+ const before=await host.evaluate(()=>GameApp.getState().savedInvites);await guest.goto(before[0].link);await guest.waitForFunction(()=>GameApp.getState().active?.actorId==='p1');
+ await host.locator('[data-action="room-panel"]').click();await host.locator('[data-action="rotate-invitation"][data-actor="p1"]').click();
+ assert.equal(await host.evaluate(()=>GameApp.getState().savedInvites[0].key),before[0].key,'pending regeneration does not invalidate the current key');
+ await host.locator('[data-action="close-modal"]').first().click();await host.locator('[data-dialog-value="discard"]').click();await host.waitForFunction(()=>!document.querySelector('.room-modal'));
+ assert.equal(await host.evaluate(()=>GameApp.getState().savedInvites[0].key),before[0].key);
+ await host.locator('[data-action="room-panel"]').click();await host.locator('[data-action="rotate-invitation"][data-actor="p1"]').click();await host.locator('[data-action="save-room"]').click();
+ await host.waitForFunction(key=>GameApp.getState().savedInvites[0].key!==key,before[0].key);await host.waitForFunction(()=>document.querySelector('[data-action="save-room"]').disabled);
+ const changed=await host.evaluate(()=>GameApp.getState().savedInvites);assert.equal(changed[0].memberId,before[0].memberId);assert.equal(changed[1].key,before[1].key);
+ assert.equal(await host.evaluate(async key=>{try{await BridgeTransport.probeInvitation(key);return true;}catch{return false;}},before[0].key),false);
+ await guest.goto(changed[0].link);await guest.waitForFunction(()=>GameApp.getState().active?.actorId==='p1'&&GameApp.getState().network?.status==='connected');
+ await host.locator('[data-action="close-room"]').click();await host.locator('[data-action="rotate-invitation"][data-actor="p1"]').click();await host.locator('[data-action="save-room"]').click();await host.waitForFunction(key=>GameApp.getState().savedInvites[0].key!==key,changed[0].key);
+ const offline=await host.evaluate(()=>GameApp.getState().savedInvites);await host.reload();await host.locator('[data-action="open-save"]').first().click();await host.locator('[data-action="room-panel"]').click();await host.locator('[data-action="connect-room"]').click();await host.waitForFunction(()=>GameApp.getState().network?.status==='connected');
+ assert.deepEqual(await host.evaluate(()=>GameApp.getState().savedInvites),offline);
+ assert.equal(await host.evaluate(async key=>{try{await BridgeTransport.probeInvitation(key);return true;}catch{return false;}},changed[0].key),false);
+ await guest.goto(offline[0].link);await guest.waitForFunction(()=>GameApp.getState().active?.actorId==='p1'&&GameApp.getState().network?.status==='connected');
+ await host.evaluate(()=>GameApp.closeRoom());assert.deepEqual(errors,[]);
+});

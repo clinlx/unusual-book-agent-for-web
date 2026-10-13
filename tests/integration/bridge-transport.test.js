@@ -184,3 +184,11 @@ test('closing while authorization acknowledgement is pending cannot return an in
  const f=fakeSDK(),host=await Bridge.createHost({url:'ws://localhost',roomId:'room',sdk:f.sdk});t.after(()=>host.close());let acknowledge;
  f.connections[0].request=()=>new Promise(resolve=>{acknowledge=resolve;});const issued=host.invite('a');await tick();host.close();acknowledge({revision:1});await assert.rejects(issued,{code:'ClientClosed'});
 });
+
+test('rotating an invitation changes only that player token and survives reconnect',async t=>{
+ const f=fakeSDK(),session=await Bridge.createHost({url:'ws://localhost',roomId:'rotate',sdk:f.sdk});t.after(()=>session.close());
+ const a=await session.invite('a'),b=await session.invite('b');
+ const next=await session.rotate('a');assert.notEqual(next.token,a.token);assert.equal(next.memberId,a.memberId);
+ assert.equal((await session.invite('b')).token,b.token);
+ await session.reconnect();assert.equal(f.connections.at(-1).hello.players.find(p=>p.id==='a').token,next.token);
+});

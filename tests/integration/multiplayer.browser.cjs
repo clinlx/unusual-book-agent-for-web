@@ -19,7 +19,7 @@ test('started room slots lock disabled roles, keep NPC/player switching and expo
  await page.goto(origin+'/index.html');await page.locator('[data-action="import"]').waitFor();
  await page.evaluate(async()=>{await GameApp.updateSettings({apiKey:'test',baseUrl:'https://slot-control.invalid/v1',stream:false});const files=['Player-a','Player-b','Player-c','KPC-guide'].flatMap(name=>[{name:name+'/基础信息.json',text:JSON.stringify({姓名:name})},{name:name+'/背包.json',text:'[]'}]);await GameApp.importSave(new File([ZIP.makeZip(files)],'槽位控制.zip'));await GameApp.configureSlots('a',{b:'ai'});});
  await page.locator('[data-action="room-panel"]').click();await page.locator('[data-npc-key="slot:b"]').fill('b 是外科医生');
- await page.waitForFunction(()=>GameApp.getState().active.npcCardInstructions['slot:b']==='b 是外科医生');
+ await page.locator('[data-action="save-room"]').click();await page.waitForFunction(()=>GameApp.getState().active.npcCardInstructions['slot:b']==='b 是外科医生');
  await page.locator('[data-action="close-modal"]').first().click();await page.locator('[data-action="start"]').click();await page.waitForFunction(()=>GameApp.getState().active.round===1);
  assert.equal(requests.length,1);assert.equal(requests[0].messages.filter(m=>m.role==='system').length,1);assert.ok(requests[0].messages.some(m=>m.role==='user'&&m.content.includes('外科医生')));
  assert.ok(!(await page.locator('#history').innerText()).includes('角色控制·内部指令'));
@@ -29,8 +29,8 @@ test('started room slots lock disabled roles, keep NPC/player switching and expo
  await assert.rejects(page.evaluate(()=>GameApp.configureNPCCards('slot:b','游戏后修改')),/开始故事前/);
  const disabled=page.locator('[data-slot="c"]');assert.equal(await disabled.locator('select,button').count(),0);assert.match(await disabled.innerText(),/已锁定，关闭的角色槽位/);
  assert.deepEqual(await page.locator('#slot-mode-b option').evaluateAll(nodes=>nodes.map(n=>n.value)),['ai','player']);
- await page.locator('#slot-mode-b').selectOption('player');await page.locator('[data-action="slot-mode"][data-actor="b"]').click();assert.equal(await page.evaluate(()=>GameApp.getState().network),null);
- await page.locator('#slot-mode-b').selectOption('ai');await page.locator('[data-action="slot-mode"][data-actor="b"]').click();
+ await page.locator('#slot-mode-b').selectOption('player');await page.locator('[data-action="save-room"]').click();assert.equal(await page.evaluate(()=>GameApp.getState().network),null);
+ await page.locator('#slot-mode-b').selectOption('ai');await page.locator('[data-action="save-room"]').click();
  await page.setViewportSize({width:390,height:844});await page.screenshot({path:'tests/artifacts/locked-slots-390.png'});
  await page.locator('[data-action="close-modal"]').first().click();await page.locator('[data-action="settings"]').click();
  const advanced=page.locator('[data-settings-section="advanced"]');assert.equal(await advanced.locator('input[name="bridgeUrl"]').count(),1);assert.match(await advanced.innerText(),/高级选项/);await advanced.locator('summary').click();assert.match(await advanced.innerText(),/多人游戏中转服务器地址/);
@@ -57,9 +57,9 @@ test('room cards sort by actual IDs, keep order across role changes and show mat
  await host.locator('[data-action="room-panel"]').click();assert.deepEqual(await ids(host),['pc','p1','p2','p3','p10']);
  assert.equal(await host.locator('[data-slot="pc"] .slot-kind').innerText(),'房主');
  assert.equal(await host.locator('[data-slot="p2"] .slot-kind').innerText(),'NPC');
- await host.locator('#slot-mode-p3').selectOption('player');await host.locator('[data-action="slot-mode"][data-actor="p3"]').click();
+ await host.locator('#slot-mode-p3').selectOption('player');await host.locator('[data-action="save-room"]').click();
  assert.deepEqual(await ids(host),['pc','p1','p2','p3','p10']);assert.equal(await host.locator('[data-slot="p3"] .slot-kind').innerText(),'玩家');
- await host.locator('#slot-mode-p2').selectOption('player');await host.locator('[data-action="slot-mode"][data-actor="p2"]').click();assert.deepEqual(await ids(host),['pc','p1','p2','p3','p10']);
+ await host.locator('#slot-mode-p2').selectOption('player');await host.locator('[data-action="save-room"]').click();assert.deepEqual(await ids(host),['pc','p1','p2','p3','p10']);
  await guest.goto(origin+'/client.html');await guest.locator('#join-room-form').waitFor();
  await guest.evaluate(async()=>{
    const s=GameApp.getState();s.room={online:true,status:'collecting',members:[{memberId:'host',actorId:'pc',connected:true},{memberId:'guest',actorId:'p2',connected:true}]};s.network={status:'connected'};
@@ -121,27 +121,27 @@ test('unapplied room slot changes are visible and apply/discard/cancel guard clo
  });
  await page.locator('[data-action="room-panel"]').click();
  await page.locator('#slot-mode-p1').selectOption('player');
- assert.match(await page.locator('[data-slot="p1"]').innerText(),/未应用/);
+ assert.match(await page.locator('[data-slot="p1"]').innerText(),/p1/);
  assert.equal(await page.evaluate(()=>GameApp.getState().openPlayerSlots.length),0);
  await page.setViewportSize({width:390,height:844});
  assert.ok(await page.locator('.has-pending-mode').evaluateAll(nodes=>nodes.every(node=>node.getBoundingClientRect().right<=innerWidth)));
  await page.screenshot({path:'tests/artifacts/room-unapplied-390.png'});
  await page.locator('[data-action="connect-room"]').click();await page.locator('[role="alertdialog"]').waitFor();
  await page.screenshot({path:'tests/artifacts/room-unapplied-confirm-390.png'});
- assert.deepEqual(await page.locator('.app-dialog button').allTextContents(),['应用变更','丢弃变更','取消']);
+ assert.deepEqual(await page.locator('.app-dialog button').allTextContents(),['保存变更','丢弃变更','取消']);
  await page.locator('[data-dialog-value="cancel"]').click();assert.equal(await page.evaluate(()=>connectionPlayers.length),0);
  assert.equal(await page.locator('#slot-mode-p1').inputValue(),'player');
- await page.locator('#slot-mode-p2').selectOption('player');await page.locator('[data-action="slot-mode"][data-actor="p2"]').click();
+ await page.locator('#slot-mode-p2').selectOption('player');
  assert.equal(await page.locator('#slot-mode-p1').inputValue(),'player','applying another slot preserves outstanding edits');
  await page.locator('[data-action="close-modal"]').first().click();await page.locator('[data-dialog-value="cancel"]').click();assert.equal(await page.locator('.room-modal').count(),1);
  await page.keyboard.press('Escape');await page.locator('[data-dialog-value="apply"]').click();await page.waitForFunction(()=>!document.querySelector('.room-modal'));
- assert.deepEqual(await page.evaluate(()=>GameApp.getState().openPlayerSlots),['p2','p1']);
- await page.locator('[data-action="room-panel"]').click();assert.equal(await page.locator('.slot-mode-pending').count(),0);
+ assert.deepEqual(await page.evaluate(()=>GameApp.getState().openPlayerSlots),['p1','p2']);
+ await page.locator('[data-action="room-panel"]').click();assert.equal(await page.locator('.has-pending-mode').count(),0);
  await page.locator('#slot-mode-p3').selectOption('disabled');await page.locator('[data-action="close-modal"]').last().click();await page.locator('[data-dialog-value="discard"]').click();await page.waitForFunction(()=>!document.querySelector('.room-modal'));
  assert.equal(await page.evaluate(()=>GameApp.getState().active.slots.find(s=>s.id==='p3').kind),'ai');
  await page.locator('[data-action="room-panel"]').click();await page.locator('#slot-mode-p1').selectOption('ai');
  await page.locator('[data-action="connect-room"]').click();await page.locator('[data-dialog-value="apply"]').click();await page.locator('[data-action="close-room"]').waitFor();
- assert.deepEqual(await page.evaluate(()=>connectionPlayers),[1]);assert.equal(await page.locator('.slot-mode-pending').count(),0);
+ assert.deepEqual(await page.evaluate(()=>connectionPlayers),[1]);assert.equal(await page.locator('.has-pending-mode').count(),0);
  await page.locator('[data-action="close-room"]').click();await page.locator('#slot-mode-p3').selectOption('player');
  await page.locator('[data-action="connect-room"]').click();await page.locator('[data-dialog-value="discard"]').click();await page.locator('[data-action="close-room"]').waitFor();
  assert.deepEqual(await page.evaluate(()=>connectionPlayers),[1,1]);assert.equal(await page.locator('#slot-mode-p3').inputValue(),'ai');
@@ -151,8 +151,8 @@ test('unapplied room slot changes are visible and apply/discard/cancel guard clo
  await page.locator('[data-action="close-modal"]').first().click();await page.locator('[data-dialog-value="apply"]').click();
  await page.waitForFunction(()=>document.getElementById('toast')?.textContent.includes('测试应用失败'));
  assert.equal(await page.locator('.room-modal').count(),1,'an apply failure keeps the room window open');
- assert.equal(await page.locator('[data-slot="p1"] .slot-mode-pending').count(),0);
- assert.equal(await page.locator('[data-slot="p3"] .slot-mode-pending').count(),1,'failed and unapplied changes remain available for retry');
+ assert.equal(await page.locator('[data-slot="p1"] .has-pending-mode').count(),0);
+ assert.equal(await page.locator('[data-slot="p3"] .has-pending-mode').count(),1,'failed and unapplied changes remain available for retry');
  assert.equal(await page.locator('#slot-mode-p3').inputValue(),'player');
  assert.deepEqual(errors,[]);
 });
@@ -172,7 +172,7 @@ test('initial selection and room setup keep separate NPC drafts and start uses o
  await page.locator('[data-action="slot-choose"][data-actor="b"]').click();assert.equal(await page.locator('[data-npc-key="slot:b"]').count(),0);
  await page.locator('[data-action="slot-confirm"]').click();await page.locator('[data-action="room-panel"]').click();
  assert.equal(await page.locator('[data-npc-key]').count(),2);assert.equal(await page.locator('[data-npc-key="slot:c"]').inputValue(),'C_PRIVATE_REQUIREMENT');
- await page.locator('#slot-mode-c').selectOption('disabled');await page.locator('[data-action="slot-mode"][data-actor="c"]').click();assert.equal(await page.locator('[data-npc-key="slot:c"]').count(),0);
+ await page.locator('#slot-mode-c').selectOption('disabled');await page.locator('[data-action="save-room"]').click();assert.equal(await page.locator('[data-npc-key="slot:c"]').count(),0);
  await page.setViewportSize({width:390,height:844});
  assert.ok(await page.locator('[data-npc-key]').evaluateAll(nodes=>nodes.every(node=>node.getBoundingClientRect().right<=innerWidth)));
  await page.evaluate(()=>GameApp.start());await page.waitForFunction(()=>GameApp.getState().active.round===1);
@@ -216,6 +216,7 @@ test('mobile game headers keep controls on one row and mode choices remain acces
   });
   for(const page of [host,guest])for(const width of [320,360,390,414,760]){
     await page.setViewportSize({width,height:844});
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
     const boxes=await page.locator('.topbar .brand,.topbar .home-button,.topbar nav>[data-action="room-panel"],.topbar nav>.connection-indicator,.topbar nav>.connection-placeholder,.topbar nav>[data-action="settings"]').evaluateAll(nodes=>nodes.map(node=>{const r=node.getBoundingClientRect();return {center:r.top+r.height/2,left:r.left,right:r.right};}));
     assert.ok(Math.max(...boxes.map(b=>b.center))-Math.min(...boxes.map(b=>b.center))<3,'all controls share one row at '+width);
@@ -289,7 +290,7 @@ test('mid-game invitations warn for invalid cards before connecting and allow ac
   });
   const setRound=async round=>page.evaluate(async round=>{GameApp.getState().active.round=round;GameApp.getState().active.status='waiting';await GameApp.updateSettings({});},round);
   const openPanel=async()=>{await page.locator('[data-action="room-panel"]').click();};
-  const apply=async(id,kind)=>{await page.locator('#slot-mode-'+id).selectOption(kind);await page.locator(`[data-action="slot-mode"][data-actor="${id}"]`).click();};
+  const apply=async(id,kind)=>{await page.locator('#slot-mode-'+id).selectOption(kind);if(await page.locator('[data-action="save-room"]').isEnabled())await page.locator('[data-action="save-room"]').click();};
   await setRound(2);await openPanel();await apply('b','player');
   assert.equal(await page.evaluate(()=>__connections),0);await page.locator('[data-action="connect-room"]').click();
   await page.waitForFunction(()=>GameApp.getState().network?.invites?.length===1);assert.equal(await page.locator('[role="alertdialog"]').count(),0);
@@ -521,4 +522,43 @@ test('host and isolated clients use authoritative rounds, private projections, r
   await own.locator('.home-button').click();await own.locator('#join-room-form').waitFor();
   await guest.locator('.brand-home').click();await guest.locator('#join-room-form').waitFor();
   assert.equal(modelRequests,2);assert.deepEqual(sockets,[]);assert.deepEqual(errors,[]);
+});
+
+test('global room save stages NPC notes and keeps its footer outside scrolling content',async t=>{
+ const page=await pageFor(t);await page.goto(origin+'/index.html');await page.locator('[data-action="import"]').waitFor();
+ await page.evaluate(async()=>{const files=['pc',...Array.from({length:8},(_,i)=>'p'+(i+1))].flatMap(id=>[{name:`Player-${id}/基础信息.json`,text:JSON.stringify({姓名:id})},{name:`Player-${id}/背包.json`,text:'[]'}]);await GameApp.importSave(new File([ZIP.makeZip(files)],'全局保存.zip'));await GameApp.configureSlots('pc',{p1:'ai'});});
+ await page.setViewportSize({width:390,height:844});await page.locator('[data-action="room-panel"]').click();
+ assert.equal(await page.locator('[data-action="slot-mode"]').count(),0);
+ await page.locator('[data-npc-key="slot:p1"]').fill('医生设定');assert.equal(await page.evaluate(()=>GameApp.getState().active.npcCardInstructions?.['slot:p1']||''),'');
+ await page.locator('#slot-mode-p2').selectOption('player');
+ const save=page.locator('.room-modal>.modal-actions [data-action="save-room"]');
+ const before=await save.boundingBox();await page.locator('.room-modal .modal-body').evaluate(body=>body.scrollTop=body.scrollHeight);assert.deepEqual(await save.boundingBox(),before);
+ await save.click();await page.waitForFunction(()=>GameApp.getState().active.npcCardInstructions?.['slot:p1']==='医生设定'&&GameApp.getState().openPlayerSlots.includes('p2'));
+ assert.equal(await save.isDisabled(),true);assert.equal(await page.evaluate(()=>GameApp.getState().network),null);
+});
+
+test('world confirmation keeps footer visible above the scrolling description on mobile',async t=>{
+ const page=await pageFor(t);await page.route('**/modules.json',route=>route.fulfill({json:[{Name:'长描述世界',Introduction:'世界介绍',Text:'这是世界描述。\n'.repeat(200),Link:'/files/no-download.zip',CoverFit:'none'}]}));
+ await page.setViewportSize({width:390,height:600});await page.goto(origin+'/index.html');await page.locator('[data-action="import"]').click();await page.locator('[data-action="catalog"]').click();await page.locator('[data-action="module-detail"]').click();
+ const footer=page.locator('.modal>.modal-actions'),before=await footer.boundingBox();assert.ok(before.y+before.height<=600);await page.locator('.modal-body').evaluate(body=>body.scrollTop=body.scrollHeight);assert.deepEqual(await footer.boundingBox(),before);
+ await page.screenshot({path:'tests/artifacts/world-confirm-fixed-footer-390.png'});await page.locator('[data-action="catalog"]').click();
+});
+
+test('host and client switch all panels and header controls together at the responsive boundary',async t=>{
+ const host=await pageFor(t),guest=await pageFor(t),errors=[];for(const page of [host,guest])page.on('pageerror',e=>errors.push(e.message));
+ await host.goto(origin+'/index.html');await host.locator('[data-action="import"]').waitFor();
+ await host.evaluate(async()=>{await GameApp.updateSettings({apiKey:'test'});const files=['pc','p1'].flatMap(id=>[{name:`Player-${id}/基础信息.json`,text:JSON.stringify({姓名:id})},{name:`Player-${id}/背包.json`,text:'[]'}]);await GameApp.importSave(new File([ZIP.makeZip(files)],'响应式断点.zip'));await GameApp.configureSlots('pc');});
+ await guest.goto(origin+'/client.html');await guest.locator('#join-room-form').waitFor();await guest.evaluate(async()=>{const s=GameApp.getState();s.room={online:true,status:'collecting',members:[]};s.network={status:'connected'};s.active={id:'responsive-client',name:'响应式断点',actorId:'pc',round:0,status:'waiting',slots:[{id:'pc',name:'pc'}],info:{姓名:'pc'},items:[],events:[]};await GameApp.updateSettings({});});
+ for(const page of [host,guest]){
+  for(const width of [1440,1100,900,780,769,768,767,764,761,760,750,390,750,760,761,764,767,768,769,780,900,1100,1440]){
+   await page.setViewportSize({width,height:900});await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+   const layout=await page.evaluate(()=>({panels:[...document.querySelector('.game-layout').children].filter(n=>getComputedStyle(n).display!=='none').length,mobileNav:getComputedStyle(document.querySelector('.mobile-nav')).display!=='none',pageWidth:document.documentElement.scrollWidth,width:innerWidth}));
+   assert.equal(layout.panels,width<=768?1:3,'panel count at '+width);assert.equal(layout.mobileNav,width<=768,'navigation at '+width);assert.ok(layout.pageWidth<=layout.width,'no overflow at '+width);
+  }
+  await page.setViewportSize({width:764,height:900});await page.screenshot({path:'tests/artifacts/responsive-boundary-'+(page===host?'host':'client')+'-764.png'});
+  await page.locator('[data-action="mobile-left"]').click();assert.equal(await page.locator('.left-panel').isVisible(),true);assert.equal(await page.locator('.center-panel').isVisible(),false);
+  await page.locator('[data-action="mobile-right"]').click();assert.equal(await page.locator('.right-panel').isVisible(),true);
+  await page.locator('[data-action="mobile-center"]').click();assert.equal(await page.locator('.center-panel').isVisible(),true);
+ }
+ assert.deepEqual(errors,[]);
 });

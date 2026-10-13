@@ -147,11 +147,11 @@ const BridgeTransport=(()=>{
       if(closed)return Promise.reject(error('ClientClosed'));if(reconnecting)return reconnecting;if(opening)return opening;clearTimeout(retryTimer);retryTimer=null;
       reconnecting=(async()=>{notice(onState,'reconnecting',null,background?{backgroundRetry:true}:{});const old=connection;connection=null;detach?.();fragments.clear();incoming.clear();if(old){old.close();await waitForClose(old,resetBackoff,report);}return open();})().catch(cause=>{retry(cause);throw cause;}).finally(()=>{reconnecting=null;});return reconnecting;
     }
-    function change(id,remove){
+    function change(id,remove,rotate=false){
       const operation=authorization.then(async()=>{
         if(closed)throw error('ClientClosed');if(!connection)throw error('ConnectionLost');if(!member(id))throw error();
         if(remove&&!players.has(id))return;
-        if(!remove&&players.has(id))return invitation({version:1,url,roomId,memberId:id,token:players.get(id)});
+        if(!remove&&!rotate&&players.has(id))return invitation({version:1,url,roomId,memberId:id,token:players.get(id)});
         const next=new Map(players);if(remove)next.delete(id);else next.set(id,await sdk.issueClientToken(token,roomId,epoch,id));
         if(closed)throw error('ClientClosed');
         let ack;
@@ -165,7 +165,7 @@ const BridgeTransport=(()=>{
     }
     try{await open();}catch(cause){close(cause);notice(onState,'disconnected',cause);throw cause;}
     stopRecovery=Recovery.watch({environment,onDiagnostic:report,onRecover:()=>reconnect({resetBackoff:true,background:true})});
-    return {transport,roomId,credentials:()=>({token,epoch}),invite:id=>change(id,false),revoke:id=>change(id,true),reconnect,close,get closed(){return closed;},get connected(){return !!connection&&!closed;}};
+    return {transport,roomId,credentials:()=>({token,epoch}),invite:id=>change(id,false),rotate:id=>change(id,false,true),revoke:id=>change(id,true),reconnect,close,get closed(){return closed;},get connected(){return !!connection&&!closed;}};
   }
   async function createClient({invitation:value,onState,sdk=SDK,reconnectDelays=RECONNECT_DELAYS,environment=globalThis,logger=console}={}){
     const invite=parseInvitation(value),fragments=createFragments(VIEW_BYTES),incoming=deliveries(VIEW_BYTES);let connection=null,detach=null,closed=false,retryTimer=null,attempt=0,opening=null,closing=Promise.resolve();
