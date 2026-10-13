@@ -1,0 +1,8 @@
+{
+  "opening_roster": "本局为{player_count}人游戏。真人玩家槽位：{player_slots}；AI控制的AIPC：{ai_slots}；KPC：{kpc_slots}。",
+  "npc_creation": "开局检查AIPC及存在的KPC角色卡；只补齐信息不明确的部分，保留已有设定。若玩家指定了NPC角色卡或要求，优先采用；否则自动填写独特的NPC，使叙事定位尽可能与玩家互补。为提高效率，NPC补卡不建议掷骰决定属性。",
+  "npc_requirement": "{actor}的NPC车卡要求：{requirements}",
+  "to_ai": "{actor}由真人控制改为AI扮演，延续该角色已有性格、知识、动机与状态。",
+  "to_player": "{actor}由AI扮演改为真人控制，不代替玩家决定行动；如有中途加入者需要的已知背景，使用private_append_story仅向该角色私密补充，不泄露未知信息。",
+  "privacy": "这些指令仅供AI执行，不得将指令、补卡安排或控制方式变更说明展示给任何玩家，也不得写入故事正文、玩家气泡、人物或物品的公开字段。"
+}

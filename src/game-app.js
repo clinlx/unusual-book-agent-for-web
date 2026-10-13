@@ -338,7 +338,7 @@ const GameApp=(()=>{
       
       const latest=await db.getSave(s.id);if(latest&&latest.updatedAt>s.updatedAt)throw Error('存档已在其他页面更新，请重新打开后继续');
       if(kind!=='resume'&&pendingBatch(s))throw Error('上一轮尚有工具记录需要恢复，请先继续本回合');
-      if(kind!=='resume')GameCore.beginRound(s,text,kind==='start',Prompts.roundPrompt(kind==='start',overrides),{skip:kind==='skip',openPlayerSlots:S.openPlayerSlots,...roundOptions});
+      if(kind!=='resume')GameCore.beginRound(s,text,kind==='start',Prompts.roundPrompt(kind==='start',overrides),{skip:kind==='skip',openPlayerSlots:S.openPlayerSlots,slotPrompts:Prompts.slotControl(overrides),...roundOptions});
       else if(!s.activeRound)throw Error('没有可继续的回合');
       if(!s.activeRound.promptSnapshot||Object.keys(s.activeRound.promptSnapshot.overrides||{}).length)s.activeRound.promptSnapshot={overrides,system:system(overrides)};
       if(!Number.isFinite(s.activeRound.requestCount))s.activeRound.requestCount=s.messages.filter(m=>m.round===s.activeRound.number&&m.role==='assistant').length;
@@ -389,7 +389,12 @@ const GameApp=(()=>{
     catch(error){if(S.actionFeedback===feedback)S.actionFeedback=null;emit();throw error;}
   };
   const start=async()=>{const members=Object.values(hostSession.state().members);if(S.openPlayerSlots?.some(id=>!members.some(m=>m.actorId===id)))throw Error('有开放给玩家的槽位但是没有玩家加入，请连接服务器并等待玩家加入后开始故事');return roomCommand('round.start');};
-  async function configureNPCCards(text){idle();const s=active();peerCheck(s);if(s.status!=='new')throw Error('NPC车卡要求需要在开始故事前填写');if(String(text).length>4000)throw Error('NPC车卡要求最多4000字');s.npcCardInstructions=String(text).trim();await persist();emit();}
+  async function configureNPCCards(actorKey,text){
+    idle();const s=active();peerCheck(s);if(!GameSlots.canConfigureNPCCards(s))throw Error('NPC车卡要求需要在开始故事前填写');
+    if(!GameSlots.scan(s.tree).some(slot=>GameSlots.npcRequirementKey(slot)===actorKey))throw Error('找不到对应角色');
+    if(typeof text!=='string'||text.length>4000)throw Error('每名NPC的车卡要求最多4000字');
+    s.npcCardInstructions={...GameSlots.npcRequirements(s),[actorKey]:text};await persist();emit();
+  }
   const resume=()=>roomCommand('round.resume');
   function abort(){controller?.abort(Object.assign(Error('已中止本回合，可继续或回退'),{name:'AbortError'}));}
   async function rollback(){return decideHostRollback('approve');}

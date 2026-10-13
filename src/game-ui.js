@@ -618,31 +618,41 @@ const GameUI = (() => {
     return `<span class="player-presence" data-presence="${kind}"><i class="player-presence-light" aria-hidden="true"></i><span>${label}</span></span>`;
   }
   function refreshRoomPresence(){
-    if(!modalRoot.querySelector('.room-modal'))return;
+    const modal=modalRoot.querySelector('.room-modal');if(!modal)return;
+    if(!state.client&&modal.dataset.npcSetup==='true'&&!GameSlots.canConfigureNPCCards(state.active)){roomModal();return;}
     const members=Array.isArray(state.room?.members)?state.room.members:Object.values(state.room?.members||{});
     for(const card of modalRoot.querySelectorAll('.slot-card')){
       const member=members.find(m=>(m.actorId||m.invitationActorId)===card.dataset.slot),holder=card.querySelector('.slot-presence');
       if(member&&holder){const slot=slotRows().find(s=>s.id===card.dataset.slot);holder.innerHTML=presenceHTML(member)+(member.actorId?memberStatus(slot):'');}
     }
   }
+  function npcCardInput(slot){
+    if(state.client||!GameSlots.canConfigureNPCCards(state.active))return '';
+    const key=GameSlots.npcRequirementKey(slot),value=GameSlots.npcRequirements(state.active)[key]||'';
+    return `<label class="npc-card-requirements"><span>NPC车卡要求（可选）</span><textarea data-npc-key="${esc(key)}" aria-label="${esc(slot.name||slot.id)}的NPC车卡要求" maxlength="4000" placeholder="填写这名角色的职业、性格或背景；留空由AI补全">${esc(value)}</textarea></label>`;
+  }
   function roomModal(){
     const r=state.room||{},members=Array.isArray(r.members)?r.members.map(m=>[m.memberId,m]):Object.entries(r.members||{}),initial=state.active?.slotsConfigured===false;
     if(initial&&slotSelection?.saveId!==state.active.id)slotSelection={saveId:state.active.id,actorId:null,modes:Object.fromEntries(slotRows().map(s=>[s.id,s.kind==='ai'?'ai':'disabled']))};
     if(!initial)slotSelection=null;
     const available=slotRows().filter(slot=>!slot.occupied&&slot.id!==state.active?.actorId&&(state.client||!GameSlots.locked(state.active,slot.id,{openPlayerSlots:state.openPlayerSlots})));
-    const npcRequirements=!state.client&&state.active?.status==='new'&&GameSlots.scan(state.active.tree).some(slot=>['ai','kpc'].includes(slot.kind))?`<label>NPC车卡要求（可选）<textarea id="npc-card-requirements" maxlength="4000" placeholder="例如：希望NPC擅长医疗，与玩家的调查能力互补">${esc(state.active.npcCardInstructions||'')}</textarea><small>留空时由AI补全需要车卡的NPC，保留已有设定。</small></label><div class="modal-actions">${button('save-npc-requirements','保存车卡要求')}</div>`:'';
+    const kpcRows=!state.client&&GameSlots.canConfigureNPCCards(state.active)?GameSlots.scan(state.active.tree).filter(slot=>slot.kind==='kpc').map(slot=>{
+      let name=slot.id;try{name=GameCore.player({...state.active,playerPath:slot.path},'info').name;}catch(_){}
+      return `<article class="slot-card" data-kpc="${esc(slot.id)}"><div class="slot-card-heading"><div><h3>${esc(name)}</h3><small class="slot-id">KPC-${esc(slot.id)}</small></div><span class="slot-kind">KPC</span></div>${npcCardInput({...slot,name})}</article>`;
+    }).join(''):'';
     const rows=slotRows().map(slot=>{
       const own=slot.id===(initial?slotSelection.actorId:state.active?.actorId),invite=(r.online?state.network?.invites:state.savedInvites)?.find(item=>item.actorId===slot.id),open=!state.client&&(state.openPlayerSlots||[]).includes(slot.id);
       const [memberId,member]=members.find(([,m])=>(m.actorId||m.invitationActorId)===slot.id)||[];
-      const label=own?(initial?'已选择':state.client?'你的角色':'房主 · 角色已锁定'):slot.occupied?'玩家角色':slot.kind==='ai'&&!open?'NPC':invite||open?'开放给玩家':slot.kind==='disabled'?'已关闭':'可选槽位';
       const kind=initial?slotSelection.modes[slot.id]:invite||open?'player':slot.kind;
+      const label=own?(initial?'已选择':state.client?'你的角色':'房主 · 角色已锁定'):slot.occupied?'玩家角色':kind==='ai'?'NPC':invite||open?'开放给玩家':kind==='disabled'?'已关闭':'可选槽位';
       const started=!initial&&(state.active.round>0||state.active.activeRound?.starting),locked=!state.client&&GameSlots.locked(state.active,slot.id,{openPlayerSlots:state.openPlayerSlots});
       const modeControl=locked?`<small class="room-footnote slot-locked">${esc(GameSlots.LOCK_MESSAGE)}</small>`:!state.client&&!own&&(initial?slotSelection.actorId&&!slot.occupied:true)?`<div class="slot-mode-control"><select id="slot-mode-${esc(slot.id)}" data-actor="${esc(slot.id)}" aria-label="${esc(slot.name)}控制方式">${slot.occupied||started?'':`<option value="disabled" ${kind==='disabled'?'selected':''}>关闭角色</option>`}<option value="ai" ${kind==='ai'?'selected':''}>设为NPC</option>${initial?'':`<option value="player" ${invite||open||slot.occupied?'selected':''}>开放给玩家</option>`}</select>${initial?'':button('slot-mode','应用',`data-actor="${esc(slot.id)}"`)}</div>`:'';
       const controls=`${initial&&!slot.occupied?button('slot-choose',own?'已选择':'选择此角色',`class="${own?'primary':''}" data-actor="${esc(slot.id)}" aria-pressed="${own}"`):''}${member?.actorId?button('player-profile','查看资料',`data-actor="${esc(slot.id)}"`)+button('player-inventory','查看背包',`data-actor="${esc(slot.id)}"`):''}${!state.client&&memberId&&memberId!=='host'&&member.actorId?button('host-skip','代为跳过',`data-member="${esc(memberId)}"`):''}${modeControl}`;
-      return `<article class="slot-card ${own?'is-own':''}" data-slot="${esc(slot.id)}"><div class="slot-card-heading"><div><h3>${esc(slot.name)}</h3><small class="slot-id">${esc(slot.id)}</small></div><span class="slot-kind">${label}</span></div>${member?`<div class="slot-presence">${presenceHTML(member)}${member.actorId?memberStatus(slot):''}</div>`:open?'<div class="slot-presence">已保存 · 等待连接服务器</div>':''}${controls?`<div class="slot-controls">${controls}</div>`:''}${invite?`<div class="slot-invite-actions">${button('copy-invitation','复制邀请链接',`data-actor="${esc(slot.id)}"`)}${button('copy-join-key','复制加入密钥',`data-actor="${esc(slot.id)}"`)}</div><details class="slot-invite-details"><summary>查看加入密钥</summary><textarea aria-label="${esc(slot.name)}加入密钥" class="room-invitation" id="room-invitation-${esc(slot.id)}" readonly>${esc(invite.key)}</textarea></details>`:''}</article>`;
+      return `<article class="slot-card ${own?'is-own':''}" data-slot="${esc(slot.id)}"><div class="slot-card-heading"><div><h3>${esc(slot.name)}</h3><small class="slot-id">${esc(slot.id)}</small></div><span class="slot-kind">${label}</span></div>${member?`<div class="slot-presence">${presenceHTML(member)}${member.actorId?memberStatus(slot):''}</div>`:open?'<div class="slot-presence">已保存 · 等待连接服务器</div>':''}${controls?`<div class="slot-controls">${controls}</div>`:''}${!own&&kind==='ai'&&(!initial||slotSelection.actorId)?npcCardInput(slot):''}${invite?`<div class="slot-invite-actions">${button('copy-invitation','复制邀请链接',`data-actor="${esc(slot.id)}"`)}${button('copy-join-key','复制加入密钥',`data-actor="${esc(slot.id)}"`)}</div><details class="slot-invite-details"><summary>查看加入密钥</summary><textarea aria-label="${esc(slot.name)}加入密钥" class="room-invitation" id="room-invitation-${esc(slot.id)}" readonly>${esc(invite.key)}</textarea></details>`:''}</article>`;
     }).join('');
-    showModal(initial?'选择角色槽位':state.client?'房间':'多人游戏',`${initial?'<p>选择你的角色，并设置其他槽位的控制方式。</p>':'<p class="room-guidance">加入后，战局设置以房主为准，只有房主产生 token 消耗。</p>'}${!state.client&&!initial&&!available.length?'<p>没有剩余可开放的角色。世界需要有空白角色槽位以供加入。</p>':''}<div class="slot-list">${rows}</div>${npcRequirements}${!state.client?(r.slotRequests||[]).map(q=>`<p>${esc(q.memberId)} 请求选择 ${esc(q.actorId)} ${button('slot-decide','同意',`data-claim="${esc(q.id)}" data-decision="approve"`)}${button('slot-decide','拒绝',`data-claim="${esc(q.id)}" data-decision="reject"`)}</p>`).join(''):''}${r.vote&&['requested','voting'].includes(r.vote.status)?button('show-vote','查看回退请求'):''}<div class="modal-actions">${!state.client&&!initial?(r.online?button('close-room','断开服务器'):button('connect-room',state.network?.status==='connecting'?'连接中…':'连接服务器',`class="primary" ${state.network?.status==='connecting'||!state.openPlayerSlots?.length?'disabled':''}`)):state.client?((state.network&&['disconnected','reconnecting'].includes(state.network.status)?button('reconnect-room','重新连接'):'')+button('leave-room','离开房间','class="room-leave-button"')):''}${initial?'':button('close-modal','取消')}</div>${r.online?'':state.client?'<p class="room-footnote">房间未开放，等待房主连接。</p>':'<p class="room-footnote">当前未连接服务器；应用仅保存本地配置，点击「连接服务器」后开放房间。</p>'}`);
+    showModal(initial?'选择角色槽位':state.client?'房间':'多人游戏',`${initial?'<p>选择你的角色，并设置其他槽位的控制方式。</p>':'<p class="room-guidance">加入后，战局设置以房主为准，只有房主产生 token 消耗。</p>'}${!state.client&&!initial&&!available.length?'<p>没有剩余可开放的角色。世界需要有空白角色槽位以供加入。</p>':''}<div class="slot-list">${rows}${kpcRows}</div>${!state.client?(r.slotRequests||[]).map(q=>`<p>${esc(q.memberId)} 请求选择 ${esc(q.actorId)} ${button('slot-decide','同意',`data-claim="${esc(q.id)}" data-decision="approve"`)}${button('slot-decide','拒绝',`data-claim="${esc(q.id)}" data-decision="reject"`)}</p>`).join(''):''}${r.vote&&['requested','voting'].includes(r.vote.status)?button('show-vote','查看回退请求'):''}<div class="modal-actions">${!state.client&&!initial?(r.online?button('close-room','断开服务器'):button('connect-room',state.network?.status==='connecting'?'连接中…':'连接服务器',`class="primary" ${state.network?.status==='connecting'||!state.openPlayerSlots?.length?'disabled':''}`)):state.client?((state.network&&['disconnected','reconnecting'].includes(state.network.status)?button('reconnect-room','重新连接'):'')+button('leave-room','离开房间','class="room-leave-button"')):''}${initial?'':button('close-modal','取消')}</div>${r.online?'':state.client?'<p class="room-footnote">房间未开放，等待房主连接。</p>':'<p class="room-footnote">当前未连接服务器；应用仅保存本地配置，点击「连接服务器」后开放房间。</p>'}`);
     modalRoot.querySelector('.modal')?.classList.add('room-modal');
+    if(!state.client)modalRoot.querySelector('.modal').dataset.npcSetup=String(GameSlots.canConfigureNPCCards(state.active));
     if(initial){
       const modal=modalRoot.querySelector('.modal');modal.dataset.slotSelection='true';modal.querySelector('header [data-action="close-modal"]')?.remove();
       modal.querySelector('.modal-actions').innerHTML=button('slot-confirm','确认',`class="primary" ${slotSelection.actorId?'':'disabled'}`);
@@ -1213,7 +1223,6 @@ const GameUI = (() => {
     if(name==='slot-request'){await GameApp.roomCommand('slot.claim.request',{actorId:el.dataset.actor});toast('已向房主请求切换角色');return;}
     if(name==='slot-decide'){await GameApp.roomCommand('slot.claim.decide',{claimId:el.dataset.claim,decision:el.dataset.decision});return roomModal();}
     if(name==='show-vote'){shownMultiplayerDialog='';modalRoot.innerHTML='';return multiplayerDialogs();}
-    if(name==='save-npc-requirements'){await GameApp.configureNPCCards(document.getElementById('npc-card-requirements').value);toast('车卡要求已保存');return;}
     if(name==='slot-mode'){
       const actorId=el.dataset.actor,kind=document.getElementById('slot-mode-'+actorId).value,slot=slotRows().find(s=>s.id===actorId);
       if(kind==='ai'&&slot?.occupied&&!await appConfirm('将此角色转为 NPC？该玩家会断开连接，原加入密钥随即失效。',{title:'转为 NPC',confirmLabel:'转为 NPC'}))return;
@@ -1340,7 +1349,17 @@ const GameUI = (() => {
     document.addEventListener('click',e=>{if(modeMenuOpen&&!e.target.closest('.mode-switch'))closeModeMenu();const el=e.target.closest('[data-action]');if(el&&!el.disabled)attempt(()=>action(el.dataset.action,el),{connection:['slot-mode','connect-room','close-room','reconnect-room','connection-info','copy-invitation','copy-join-key'].includes(el.dataset.action)});});
 
     document.addEventListener('input',e=>{if(e.target.matches('#join-room-form input[name="invitation"]'))joinValue=e.target.value;if(['action-input','action-private-input'].includes(e.target.id)){if(e.target.id==='action-input'){if(hiddenSend)privateDraft=e.target.value;else draft=e.target.value;}else draft=e.target.value;refreshInput();const prepare=e.target.form.querySelector('[data-action="pre-submit"]');if(prepare){const outgoing=GameInputs.actionContent({draft,privateDraft,hiddenSend,disguiseSend});prepare.disabled=!(outgoing.content.trim()||outgoing.privateContent.trim());if(prepare.disabled)prepare.title='填写行动后可预提交';else prepare.removeAttribute('title');}const send=e.target.form.querySelector('button[type="submit"]');if(send&&!send.disabled&&!GameInputs.submission(state)){const outgoing=GameInputs.actionContent({draft,privateDraft,hiddenSend,disguiseSend});send.textContent=outgoing.content.trim()||outgoing.privateContent.trim()?'提交行动 ↗':'空过';}clearTimeout(draftTimer);const value=draft,secret=privateDraft,binding=GameInputs.owner(state.active);attempt(()=>GameApp.stageDraft(value,binding,{privateContent:secret,hiddenSend,disguiseSend}));draftTimer=setTimeout(()=>attempt(()=>GameApp.saveDraft(value,binding,{privateContent:secret,hiddenSend,disguiseSend})),250);}if(e.target.id==='file-editor'){fileDraft=e.target.value;document.getElementById('file-dirty').textContent=fileDraft===fileOriginal?'已保存':'有未保存改动';}});
+    document.addEventListener('input',e=>{if(e.target.matches('textarea[data-npc-key]'))attempt(()=>GameApp.configureNPCCards(e.target.dataset.npcKey,e.target.value));});
     document.addEventListener('change',e=>{
+      if(e.target.matches('.slot-mode-control select[data-actor]')&&!state.client){
+        if(slotSelection?.saveId===state.active?.id){captureSlotModes();roomModal();}
+        else{
+          const card=e.target.closest('.slot-card'),slot=slotRows().find(slot=>slot.id===e.target.dataset.actor);
+          card?.querySelector('.npc-card-requirements')?.remove();
+          if(slot&&e.target.value==='ai')card?.insertAdjacentHTML('beforeend',npcCardInput(slot));
+        }
+        return;
+      }
       if(!['hidden-send-toggle','disguise-send-toggle'].includes(e.target.id))return;
       clearTimeout(draftTimer);
       if(e.target.id==='hidden-send-toggle'){

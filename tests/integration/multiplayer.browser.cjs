@@ -18,13 +18,15 @@ test('started room slots lock disabled roles, keep NPC/player switching and expo
  await page.route('https://slot-control.invalid/**',async route=>{requests.push(route.request().postDataJSON());await route.fulfill({contentType:'application/json',body:JSON.stringify({choices:[{message:{content:'',tool_calls:[call('append_story',{content:'测试开局正文。',one_line_summary_of_content:'开局'},'story'),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'end')]}}]})});});
  await page.goto(origin+'/index.html');await page.locator('[data-action="import"]').waitFor();
  await page.evaluate(async()=>{await GameApp.updateSettings({apiKey:'test',baseUrl:'https://slot-control.invalid/v1',stream:false});const files=['Player-a','Player-b','Player-c','KPC-guide'].flatMap(name=>[{name:name+'/基础信息.json',text:JSON.stringify({姓名:name})},{name:name+'/背包.json',text:'[]'}]);await GameApp.importSave(new File([ZIP.makeZip(files)],'槽位控制.zip'));await GameApp.configureSlots('a',{b:'ai'});});
- await page.locator('[data-action="room-panel"]').click();await page.locator('#npc-card-requirements').fill('b 是外科医生');await page.locator('[data-action="save-npc-requirements"]').click();
- assert.equal(await page.evaluate(()=>GameApp.getState().active.npcCardInstructions),'b 是外科医生');
+ await page.locator('[data-action="room-panel"]').click();await page.locator('[data-npc-key="slot:b"]').fill('b 是外科医生');
+ await page.waitForFunction(()=>GameApp.getState().active.npcCardInstructions['slot:b']==='b 是外科医生');
  await page.locator('[data-action="close-modal"]').first().click();await page.locator('[data-action="start"]').click();await page.waitForFunction(()=>GameApp.getState().active.round===1);
  assert.equal(requests.length,1);assert.equal(requests[0].messages.filter(m=>m.role==='system').length,1);assert.ok(requests[0].messages.some(m=>m.role==='user'&&m.content.includes('外科医生')));
  assert.ok(!(await page.locator('#history').innerText()).includes('角色控制·内部指令'));
  assert.ok(!await page.evaluate(()=>JSON.stringify(GameApp.currentContext()).includes('外科医生')));
  await page.locator('[data-action="room-panel"]').click();
+ assert.equal(await page.locator('[data-npc-key]').count(),0);
+ await assert.rejects(page.evaluate(()=>GameApp.configureNPCCards('slot:b','游戏后修改')),/开始故事前/);
  const disabled=page.locator('[data-slot="c"]');assert.equal(await disabled.locator('select,button').count(),0);assert.match(await disabled.innerText(),/已锁定，关闭的角色槽位/);
  assert.deepEqual(await page.locator('#slot-mode-b option').evaluateAll(nodes=>nodes.map(n=>n.value)),['ai','player']);
  await page.locator('#slot-mode-b').selectOption('player');await page.locator('[data-action="slot-mode"][data-actor="b"]').click();assert.equal(await page.evaluate(()=>GameApp.getState().network),null);
@@ -36,7 +38,35 @@ test('started room slots lock disabled roles, keep NPC/player switching and expo
  const guest=await pageFor(t);guest.on('pageerror',e=>errors.push(e.message));await guest.goto(origin+'/client.html');await guest.locator('#join-room-form').waitFor();await guest.locator('[data-action="settings"]').click();await guest.locator('.settings-section summary').click();await guest.locator('[name="bridgeUrl"]').fill('wss://relay.example.com:8443/');await guest.locator('#settings-form button[type="submit"]').click();assert.equal(await guest.evaluate(()=>GameApp.getState().settings.bridgeUrl),'wss://relay.example.com:8443/');
  assert.deepEqual(errors,[]);
 });
-async function pageFor(t){const context=await browser.newContext({viewport:{width:1440,height:960}});t.after(()=>context.close());const page=await context.newPage();page.setDefaultTimeout(10000);return page;}
+async function pageFor(t){const context=await browser.newContext({viewport:{width:1440,height:960}});t.after(()=>context.close());const page=await context.newPage();await page.route('**/modules.json',route=>route.fulfill({json:[]}));await page.route('**/files/**',route=>route.abort());page.setDefaultTimeout(10000);return page;}
+
+test('initial selection and room setup keep separate NPC drafts and start uses only final NPC roles',async t=>{
+ const page=await pageFor(t),requests=[],errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.route('https://npc-cards.invalid/**',async route=>{requests.push(route.request().postDataJSON());await route.fulfill({json:{choices:[{message:{content:'',tool_calls:[call('append_story',{content:'开场正文。',one_line_summary_of_content:'开场'},'npc-story'),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'npc-end')]}}]}});});
+ await page.goto(origin+'/index.html');await page.locator('[data-action="import"]').waitFor();
+ await page.evaluate(async()=>{await GameApp.updateSettings({apiKey:'test',baseUrl:'https://npc-cards.invalid/v1',stream:false});const files=['Player-a','Player-b','Player-c','KPC-guide'].flatMap(name=>[{name:name+'/基础信息.json',text:JSON.stringify({姓名:name})},{name:name+'/背包.json',text:'[]'}]);await GameApp.importSave(new File([ZIP.makeZip(files)],'独立NPC.zip'));});
+ await page.locator('[data-action="slot-choose"][data-actor="a"]').click();
+ await page.locator('#slot-mode-b').selectOption('ai');await page.locator('#slot-mode-c').selectOption('ai');
+ await page.locator('[data-npc-key="slot:b"]').fill('B_PRIVATE_REQUIREMENT');
+ await page.locator('[data-npc-key="slot:c"]').fill('C_PRIVATE_REQUIREMENT');
+ await page.locator('[data-npc-key="kpc:guide"]').fill('GUIDE_PRIVATE_REQUIREMENT');
+ await page.locator('#slot-mode-c').selectOption('disabled');assert.equal(await page.locator('[data-npc-key="slot:c"]').count(),0);
+ await page.locator('#slot-mode-c').selectOption('ai');assert.equal(await page.locator('[data-npc-key="slot:c"]').inputValue(),'C_PRIVATE_REQUIREMENT');
+ await page.locator('[data-action="slot-choose"][data-actor="b"]').click();assert.equal(await page.locator('[data-npc-key="slot:b"]').count(),0);
+ await page.locator('[data-action="slot-confirm"]').click();await page.locator('[data-action="room-panel"]').click();
+ assert.equal(await page.locator('[data-npc-key]').count(),2);assert.equal(await page.locator('[data-npc-key="slot:c"]').inputValue(),'C_PRIVATE_REQUIREMENT');
+ await page.locator('#slot-mode-c').selectOption('disabled');await page.locator('[data-action="slot-mode"][data-actor="c"]').click();assert.equal(await page.locator('[data-npc-key="slot:c"]').count(),0);
+ await page.setViewportSize({width:390,height:844});
+ assert.ok(await page.locator('[data-npc-key]').evaluateAll(nodes=>nodes.every(node=>node.getBoundingClientRect().right<=innerWidth)));
+ await page.evaluate(()=>GameApp.start());await page.waitForFunction(()=>GameApp.getState().active.round===1);
+ assert.equal(await page.locator('[data-npc-key]').count(),0,'starting while setup is open hides NPC inputs immediately');
+ const instruction=requests[0].messages.find(m=>m.content?.includes('角色控制·内部指令'));
+ assert.equal(instruction.role,'user');assert.match(instruction.content,/KPC-guide.*GUIDE_PRIVATE_REQUIREMENT/);assert.doesNotMatch(instruction.content,/B_PRIVATE_REQUIREMENT|C_PRIVATE_REQUIREMENT/);
+ assert.equal(requests[0].messages.filter(m=>m.role==='system').length,1);assert.doesNotMatch(await page.locator('#history').innerText(),/PRIVATE_REQUIREMENT/);
+ await page.locator('[data-action="close-modal"]').first().click();
+ await page.locator('[data-action="room-panel"]').click();assert.equal(await page.locator('[data-npc-key]').count(),0);
+ assert.deepEqual(errors,[]);
+});
 async function connectBridge(host,clients){
   await host.exposeFunction('deliverMultiplayerClient',async(memberId,packet)=>{const page=clients[memberId];if(page)await page.evaluate(packet=>window.testClientReceiver?.(packet),packet);});
   await host.evaluate(()=>GameApp.attachMultiplayerTransport({onHost(fn){window.testHostReceiver=fn;return ()=>{window.testHostReceiver=null;};},sendToClient:(id,packet)=>window.deliverMultiplayerClient(id,packet)}));

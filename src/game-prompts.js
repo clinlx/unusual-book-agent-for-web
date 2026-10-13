@@ -18,6 +18,7 @@ const Prompts = (() => {
   "reference/安全性-D.md": "危险节奏 D",
   "flow/tools.json": "工具说明",
   "flow/multiplayer.json": "多人运行注入",
+  "flow/slot_control.json": "角色开局与控制方式变更",
   "flow/after_story.md": "正文发布后自查",
   "flow/need_end.md": "结束回合提醒",
   "flow/no_story.md": "尚未发布正文提醒",
@@ -90,7 +91,7 @@ const Prompts = (() => {
       const custom=own(overrides,id)?overrides[id]:migrateOverrides(overrides)[id];
       return typeof custom==='string'?migrateText(custom):defaults[id]||'';
     }
-    function flows(overrides={}){return Object.fromEntries(Object.keys(titles).filter(id=>id.startsWith('flow/')&&!['flow/start_game.md','flow/next_round.md','flow/tools.json','flow/multiplayer.json'].includes(id)).map(id=>['flow_'+id.slice(5,-3),get(id,overrides)]));}
+    function flows(overrides={}){return Object.fromEntries(Object.keys(titles).filter(id=>id.startsWith('flow/')&&id.endsWith('.md')&&!['flow/start_game.md','flow/next_round.md'].includes(id)).map(id=>['flow_'+id.slice(5,-3),get(id,overrides)]));}
     function file(fp,overrides={}){
       if(typeof fp!=='string')return undefined;
       fp=migrateText(fp);
@@ -100,6 +101,7 @@ const Prompts = (() => {
       return own(titles,id)?get(id,overrides):undefined;
     }
     return {create,get,flows,file,migrateText,migrateOverrides,multiplayer:(overrides={})=>JSON.parse(get('flow/multiplayer.json',overrides)||'{}'),
+      slotControl:(overrides={})=>JSON.parse(get('flow/slot_control.json',overrides)||'{}'),
       list:()=>Object.entries(titles).map(([id,title])=>({id,title,group:id.split('/')[0],groupTitle:groups[id.split('/')[0]]})),
       referencePaths:()=>Object.keys(titles).filter(id=>id.startsWith('reference/')).map(id=>'/.reference/'+id.slice(10)).concat(Object.keys(books)),
       buildSystem:(overrides={},world='')=>['system/host.md','system/round.md','system/runtime.md'].map(id=>get(id,overrides)).concat(world).filter(Boolean).join('\n\n'),

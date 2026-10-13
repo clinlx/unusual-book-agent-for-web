@@ -3,7 +3,7 @@ const VFS=require('../../src/vfs'),Core=require('../../src/game-core'),Slots=req
 function save(){const t=VFS.createTree();for(const prefix of ['Player-a','AIPC-b','DISABLE-c','KPC-guide']){VFS.writeFile(t,`/workspace/${prefix}/基础信息.json`,JSON.stringify({姓名:prefix}));VFS.writeFile(t,`/workspace/${prefix}/背包.json`,'[]');}return Core.createSave('控制方式',t);}
 function finish(s){if(!s.activeRound.starting)Core.execute(s,'trigger_next_round',{phase_plan:{Countdowns:'无',Pending_Triggers:[],Forced_Checks:'无'}},'trigger'+s.activeRound.number);Core.execute(s,'append_story',{content:'玩家看见的正文',one_line_summary_of_content:'开局'},'story'+s.activeRound.number);const r=Core.execute(s,'end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'end'+s.activeRound.number);assert.equal(r.ok,true,JSON.stringify(r));}
 test('first start injects human/AIPC/KPC setup into compressible internal messages without changing the system prefix',()=>{
- const s=save();s.npcCardInstructions='b 是外科医生';Core.beginRound(s,'',true,'开始');
+ const s=save();s.npcCardInstructions={'slot:b':'外科医生'};Core.beginRound(s,'',true,'开始');
  const injected=s.messages.filter(m=>m.internal);assert.equal(injected.length,1);assert.equal(injected[0].role,'user');
  for(const word of ['1人游戏','Player-a','AIPC-b','KPC-guide','互补','掷骰','外科医生','不得'])assert.ok(injected[0].content.includes(word),word);
  assert.ok(!injected[0].content.includes('DISABLE-c'));assert.ok(Core.context(s,'系统',1e6).some(m=>m.content===injected[0].content));
@@ -11,6 +11,29 @@ test('first start injects human/AIPC/KPC setup into compressible internal messag
  assert.ok(!Core.visibleEvents(s,'debug').some(e=>String(e.content).includes('角色控制')));
  const view=Sync.project(s,'a');assert.ok(!JSON.stringify(view).includes('外科医生'));
  assert.ok(!Slots.playerContext(Core.context(s,'系统',1e6)).some(m=>m.content===injected[0].content));
+});
+test('NPC requirements are scoped to the final NPC roster and injected only at the first start',()=>{
+ const s=save();s.npcCardInstructions={'slot:a':'PLAYER_REQUIREMENT','slot:b':'NPC_REQUIREMENT','slot:c':'DISABLED_REQUIREMENT','kpc:guide':'KPC_REQUIREMENT'};
+ const first=Slots.roundInstruction(s,true,{openPlayerSlots:['b']});
+ assert.match(first,/KPC_REQUIREMENT/);assert.doesNotMatch(first,/PLAYER_REQUIREMENT|NPC_REQUIREMENT|DISABLED_REQUIREMENT/);
+ assert.equal(Slots.roundInstruction(s,true,{openPlayerSlots:['b']}),'');
+ assert.doesNotMatch(Slots.roundInstruction(s,false),/KPC_REQUIREMENT|NPC_REQUIREMENT/);
+ const other=save();other.npcCardInstructions={'slot:b':'外科医生','kpc:guide':'熟悉当地交通'};
+ Core.beginRound(other,'',true);const message=other.messages.find(m=>m.internal);
+ assert.equal(message.role,'user');assert.match(message.content,/AIPC-b.*外科医生/);assert.match(message.content,/KPC-guide.*熟悉当地交通/);
+ finish(other);Core.beginRound(other,'下一回合');assert.equal(other.messages.filter(m=>m.internal&&m.content.includes('外科医生')).length,1);
+});
+
+test('slot instructions use editable external templates and preserve supplied text literally',()=>{
+ const fs=require('node:fs'),Prompts=require('../../src/game-prompts');
+ const id='flow/slot_control.json',source=fs.readFileSync('assets/prompts/'+id,'utf8');
+ const p=Prompts.create({[id]:source}),templates=p.slotControl();
+ assert.ok(Prompts.list().some(item=>item.id===id));assert.ok(!Object.keys(p.flows()).some(key=>key.includes('slot_control')));
+ const custom=p.slotControl({[id]:JSON.stringify({...templates,opening_roster:'ROSTER {player_count} {player_slots}',npc_requirement:'CARD {actor} {requirements}'})});
+ const s=save();s.npcCardInstructions={'slot:b':'$& {actor}'};
+ const instruction=Slots.roundInstruction(s,true,{slotPrompts:custom});
+ assert.match(instruction,/ROSTER 1 "Player-a"/);assert.ok(instruction.includes('CARD "AIPC-b" "$& {actor}"'));
+ assert.deepEqual(Core.context(s,'固定系统',1e6).filter(m=>m.role==='system'),[{role:'system',content:'固定系统'}]);
 });
 test('disabled slots lock after start while NPC/player slots switch and temporary suspension stays reopenable',()=>{
  const s=save();Slots.assertConfigure(s,'c','ai');Core.beginRound(s,'',true);finish(s);
