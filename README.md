@@ -8,7 +8,7 @@
 
 两页可互相切换，需分别配置模型服务。数据保存在当前浏览器中，不会自动跨设备同步，请及时下载备份。
 
-[体验地址](https://unusual-book.netlify.app/)
+可直接游玩在线版本： [体验地址](https://unusual-book.netlify.app/)
 
 ## 构建与使用
 
