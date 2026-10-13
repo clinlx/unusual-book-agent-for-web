@@ -80,6 +80,9 @@ const GameCore = (() => {
     if(!options.actions&&!isStart&&!flags.enabled&&!options.skip)throw Error('角色失去意识，无法主动行动；可以等待局势发展');
     const actionText=options.skip?(flags.enabled?'本回合不采取主动行动，等待局势发展。':'失去意识，无法主动行动，等待局势发展。'):String(text||'');
     const roundId=options.roundId||uid(),inputRound=s.round+1,boundDraft=s.draftRound==null||s.draftRound===inputRound?s.draft||'':'';
+    const submittedDraft=inputs.get(s,inputRound,roundId)?.draftState;
+    const keepDraft=options.actions?.some(a=>a.actorId===s.actorId)&&submittedDraft&&
+      (String(s.draft||'')!==submittedDraft.draft||String(s.privateDraft||'')!==submittedDraft.privateDraft);
     s.snapshots.push({tree:copy(s.tree),slots:copy(s.slots||[]),actorId:s.actorId,playerPath:s.playerPath,messageCount:s.messages.length,eventCount:s.events.length,round:s.round,
       worldTime:data.worldTime(s),at:Date.now(),
       cache:copy(s.cache),summaryCount:s.summaries.length,status:s.status,contextFromRound:s.contextFromRound,lastChanges:copy(s.lastChanges),
@@ -90,7 +93,8 @@ const GameCore = (() => {
     s.activeRound={id:roundId,number:inputRound,actions:copy(options.actions||[]),action:actionText,starting:isStart,triggered:isStart,published:0,initialWorldTime:data.consensusTime(s),
       participantIds:s.multiplayer?.members?Object.values(s.multiplayer.members).map(m=>m.actorId).filter(Boolean):null,
       requestCount:0,readState:{},receipts:{},complete:false,summary:[]};
-    s.status='running';s.error=null;s.lastChanges=[];s.draft='';s.draftRound=inputRound;
+    s.status='running';s.error=null;s.lastChanges=[];
+    if(!keepDraft){s.draft='';s.privateDraft='';}s.draftRound=inputRound+1;
     if(!isStart){if(options.actions){for(const action of options.actions)emit(s,'player',{actorId:action.actorId,content:action.content||(action.skip?'等待局势发展。':''),privateContent:action.privateContent||'',...action.disguise?{disguise:true}:{},audience:'public',skip:!!action.skip,roundId});}else emit(s,'player',{actorId:s.actorId,content:actionText,name:'player_action',args:{action:actionText},skip:!!options.skip,roundId});}
     s.messages.push({role:'user',content:String(prompt),round:s.activeRound.number});
     return s.activeRound;

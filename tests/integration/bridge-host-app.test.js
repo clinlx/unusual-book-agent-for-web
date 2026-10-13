@@ -49,6 +49,14 @@ test('Connect rejects a room without configured open player slots and never call
  const f=await ready(t);await assert.rejects(f.app.connectRoom(),/开放.*玩家|玩家.*槽位/);assert.equal(f.calls,0);
 });
 
+test('host cancellation refills short replacement input and preserves meaningful new drafts',async t=>{
+ const f=await ready(t),invite=await f.app.setInvitationSlot('b','player');await f.options.onMember({type:'joined',memberId:invite.memberId});f.app.getState().settings.apiKey='test';
+ for(const text of ['查门','查看门锁']){
+  await f.app.send('房主上一条行动');await f.app.saveDraft(text,undefined,{hiddenSend:false,disguiseSend:false});await f.app.cancelAction();
+  assert.equal(f.app.getState().active.draft,text.length>3?text:'房主上一条行动');
+ }
+});
+
 test('host skip retains dormant drafts in its round cache for cancellation and rollback',async t=>{
  const f=await ready(t),invite=await f.app.setInvitationSlot('b','player');await f.options.onMember({type:'joined',memberId:invite.memberId});
  f.app.getState().settings.apiKey='test';

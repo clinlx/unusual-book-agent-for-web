@@ -29,6 +29,52 @@ async function panelSnapshot(page,selector){return page.locator(selector).evalua
   return {text:element.textContent.trim(),width:Math.round(box.width),font:style.fontFamily,fontSize:style.fontSize,lineHeight:style.lineHeight,color:style.color,padding:style.padding,children:[...element.children].map(child=>{const b=child.getBoundingClientRect(),s=getComputedStyle(child);return {tag:child.tagName,class:child.className,width:Math.round(b.width),fontSize:s.fontSize,lineHeight:s.lineHeight,color:s.color};})};
 }));}
 
+test('mobile game headers keep controls on one row and mode choices remain accessible in a compact menu',async t=>{
+  const host=await pageFor(t),guest=await pageFor(t),errors=[];
+  for(const page of [host,guest])page.on('pageerror',error=>errors.push(error.message));
+  await host.goto(origin+'/index.html');await host.locator('[data-action="import"]').waitFor();
+  await host.evaluate(async()=>{
+    await GameApp.updateSettings({apiKey:'test'});
+    const files=['a','b'].flatMap(id=>[{name:`Player-${id}/基础信息.json`,text:JSON.stringify({姓名:id})},{name:`Player-${id}/背包.json`,text:'[]'}]);
+    await GameApp.importSave(new File([ZIP.makeZip(files)],'顶部布局测试存档名称很长.zip'));await GameApp.configureSlots('a');
+  });
+  await guest.goto(origin+'/client.html');await guest.locator('#join-room-form').waitFor();
+  await guest.evaluate(async()=>{
+    const s=GameApp.getState();s.room={online:true,status:'collecting',members:[]};s.network={status:'connected'};
+    s.active={id:'header-client',name:'顶部布局测试存档名称很长',actorId:'a',round:0,status:'waiting',slots:[{id:'a',name:'甲'}],info:{姓名:'甲'},items:[],events:[]};await GameApp.updateSettings({});
+  });
+  for(const page of [host,guest])for(const width of [320,360,390,414,760]){
+    await page.setViewportSize({width,height:844});
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    const boxes=await page.locator('.topbar .brand,.topbar .home-button,.topbar nav>[data-action="room-panel"],.topbar nav>.connection-indicator,.topbar nav>.connection-placeholder,.topbar nav>[data-action="settings"]').evaluateAll(nodes=>nodes.map(node=>{const r=node.getBoundingClientRect();return {center:r.top+r.height/2,left:r.left,right:r.right};}));
+    assert.ok(Math.max(...boxes.map(b=>b.center))-Math.min(...boxes.map(b=>b.center))<3,'all controls share one row at '+width);
+    assert.ok(boxes.every((box,i)=>!i||box.left>=boxes[i-1].right),'controls do not overlap at '+width);
+  }
+  await host.setViewportSize({width:390,height:844});
+  assert.equal(await host.locator('[data-action="play"]').isVisible(),false);
+  const toggle=host.getByRole('button',{name:'切换显示模式',exact:true});await toggle.click();
+  await host.getByRole('button',{name:'调试模式',exact:true}).click();
+  await host.waitForFunction(()=>GameApp.getState().mode==='debug');assert.equal(await toggle.getAttribute('aria-expanded'),'false');
+  await toggle.click();assert.equal(await host.locator('[data-action="debug"]').getAttribute('aria-pressed'),'true');
+  await host.keyboard.press('Escape');assert.equal(await toggle.getAttribute('aria-expanded'),'false');
+  assert.equal(await toggle.evaluate(node=>node===document.activeElement),true);
+  await toggle.click();await host.screenshot({path:'tests/artifacts/topbar-mode-menu-390.png'});
+  await host.setViewportSize({width:1440,height:960});
+  await host.waitForFunction(()=>document.querySelector('[data-action="toggle-mode-menu"]')?.getAttribute('aria-expanded')==='false');
+  await host.setViewportSize({width:390,height:844});
+  await toggle.click();await host.locator('.brand').click();assert.equal(await host.locator('[data-action="toggle-mode-menu"]').count(),0);
+  await host.evaluate(()=>GameApp.returnToGame());await host.locator('.home-button').waitFor();
+  await toggle.click();await host.getByRole('button',{name:'游戏模式',exact:true}).click();
+  await host.locator('[data-action="room-panel"]').click();await host.getByRole('dialog',{name:'多人游戏',exact:true}).waitFor();
+  await host.locator('[data-action="close-modal"]').first().click();
+  await host.setViewportSize({width:1440,height:960});
+  assert.equal(await toggle.isVisible(),false);assert.equal(await host.locator('[data-action="play"]').isVisible(),true);assert.equal(await host.locator('[data-action="debug"]').isVisible(),true);
+  assert.equal(await host.locator('.topbar [data-action="room-panel"]').innerText(),'多人游戏');
+  assert.equal(await guest.locator('[data-action="toggle-mode-menu"]').count(),0);
+  await host.setViewportSize({width:390,height:844});await host.screenshot({path:'tests/artifacts/topbar-host-390.png'});await guest.setViewportSize({width:390,height:844});await guest.screenshot({path:'tests/artifacts/topbar-client-390.png'});
+  assert.deepEqual(errors,[]);
+});
+
 test('initial slot selection previews choices and commits only after confirmation',async t=>{
   const page=await pageFor(t),sockets=[];page.on('websocket',socket=>sockets.push(socket.url()));
   await page.goto(origin+'/index.html');await page.locator('[data-action="import"]').waitFor();
@@ -109,6 +155,8 @@ test('host and isolated clients use authoritative rounds, private projections, r
       await guest.waitForFunction(()=>document.querySelector('.live-status')?.textContent.includes('等待 AI 返回结果'));
       assert.equal(await guest.locator('.request-progress').count(),0,'client does not display host-only percentages');
       assert.equal(await guest.locator('#connection-lamp').getAttribute('data-turn-state'),'thinking');
+      await guest.locator('#hidden-send-toggle').check();await guest.locator('#disguise-send-toggle').check();
+      await guest.locator('#action-input').fill('乙下一轮的秘密草稿');await guest.locator('#action-private-input').fill('乙下一轮的公开草稿');
     }
     const calls=opening?[call('append_story',{content:'雨停以后，两位旅人来到同一座车站。',one_line_summary_of_content:'二人抵达车站'},'opening'),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环',Game_World_Time:'上午九点'}},'opening-end')]:[
       call('trigger_next_round',{phase_plan:{Countdowns:'无',Pending_Triggers:[],Forced_Checks:'无'}},'trigger'),
@@ -221,6 +269,7 @@ test('host and isolated clients use authoritative rounds, private projections, r
   await host.evaluate(()=>{const receive=window.testHostReceiver;window.testHostReceiver=(id,packet)=>{if(packet.type==='action.submit'){window.testHostReceiver=receive;throw Error('测试提交失败');}return receive(id,packet);};});
   await guest.locator('#action-form button[type="submit"]').click();
   await guest.waitForFunction(()=>!GameApp.getState().actionFeedback&&document.querySelector('#action-input')?.value==='乙暗中藏起钥匙');
+  await guest.locator('.pending-actions [data-key="pending-b"]').waitFor({state:'detached'});
   assert.equal(await guest.locator('.pending-actions [data-key="pending-b"]').count(),0);
   assert.equal(await guest.locator('#action-form button[type="submit"]').isDisabled(),false);
   assert.equal(await guest.locator('#action-private-input').inputValue(),'乙说自己在等车');
@@ -234,6 +283,9 @@ test('host and isolated clients use authoritative rounds, private projections, r
   await guest.waitForFunction(()=>document.querySelector('#history')?.textContent.includes('只给乙的密语')).catch(async error=>{throw new Error(error.message+'\n'+JSON.stringify({host:await host.evaluate(()=>({room:GameApp.multiplayerState().status,round:GameApp.getState().active.round})),client:await guest.evaluate(()=>({room:GameApp.getState().room,round:GameApp.getState().active?.round,events:GameApp.getState().active?.events.map(e=>({type:e.type,content:e.content}))})),errors}));});
   await own.waitForFunction(()=>document.querySelector('#history')?.textContent.includes('只给甲的密语'));
   assert.equal(modelRequests,2);
+  assert.equal(await guest.locator('#action-input').inputValue(),'乙下一轮的秘密草稿');assert.equal(await guest.locator('#action-private-input').inputValue(),'乙下一轮的公开草稿');
+  assert.equal(await guest.locator('#hidden-send-toggle').isChecked(),true);assert.equal(await guest.locator('#disguise-send-toggle').isChecked(),true);
+  await own.locator('#hidden-send-toggle').check();
   const guestText=await guest.locator('body').innerText(),ownText=await own.locator('body').innerText();
   assert.ok(!guestText.includes('只给甲的密语'));assert.ok(!ownText.includes('只给乙的密语'));
   const guestState=await guest.evaluate(()=>JSON.stringify({state:GameApp.getState(),storage:{...localStorage}}));assert.ok(!guestState.includes('只给甲的密语'));assert.ok(!guestState.includes('甲只向主持人提交的秘密行动'));
@@ -242,7 +294,9 @@ test('host and isolated clients use authoritative rounds, private projections, r
   for(const width of [1440,390]){
     await host.setViewportSize({width,height:960});await own.setViewportSize({width,height:960});
     for(const selector of ['.inventory','.character','#history .story','#action-input','.home-navigation']){
-      const h=await panelSnapshot(host,selector),c=await panelSnapshot(own,selector);assert.deepEqual(c,h,`${selector} matches at ${width}px`);
+      const h=await panelSnapshot(host,selector),c=await panelSnapshot(own,selector);
+      if(selector==='.home-navigation'&&width<769)for(const rows of [h,c])for(const row of rows){delete row.width;for(const child of row.children)delete child.width;}
+      assert.deepEqual(c,h,`${selector} matches at ${width}px`);
     }
   }
   for(const page of [host,own]){

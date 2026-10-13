@@ -98,12 +98,13 @@ const GameApp=(()=>{
     if(GameInputs.submission(S))throw Error('本回合已提交，请先撤回提交');
     const r=hostSession.state(),round=s.round+1;
     GameInputs.ensure(s);const hiddenSend=options.hiddenSend??!!privateContent,disguiseSend=options.disguiseSend??!!(content&&privateContent),draftState=GameInputs.draftState(options.draftState||{draft:String(content),privateDraft:String(privateContent),hiddenSend,disguiseSend}),entry={round,roundId:r.roundId,text:String(content),privateContent:String(privateContent),hiddenSend,disguiseSend,draftState,epoch:r.epoch,status:'pending'};s.inputHistory=s.inputHistory.filter(x=>x.roundId!==r.roundId).concat(entry).slice(-10);s.hiddenSend=hiddenSend;s.disguiseSend=disguiseSend;saveLocalInputs();
+    s.draft='';s.privateDraft='';saveLocalInputs();
     const feedback=S.actionFeedback=GameInputs.feedback(S,{status:'pending',content:String(content),privateContent:String(privateContent),disguise:disguiseSend});emit();
     let result;
     try{result=await roomCommand('action.submit',{content:String(content),privateContent:String(privateContent),...hiddenSend&&disguiseSend?{disguise:true}:{}});feedback.status='accepted';}
-    catch(error){if(S.actionFeedback===feedback)S.actionFeedback=null;emit();throw error;}
+    catch(error){if(S.actionFeedback===feedback)S.actionFeedback=null;if(hostSession.state().roundId===r.roundId&&hostSession.state().status==='collecting'&&!s.draft&&!s.privateDraft)Object.assign(s,draftState);saveLocalInputs();emit();throw error;}
     const accepted=s.inputHistory.find(x=>x.roundId===r.roundId);if(accepted)accepted.status='accepted';
-    s.draft='';s.privateDraft='';s.draftRound=s.round+1;saveLocalInputs();await persist();emit();return result;
+    saveLocalInputs();await persist();emit();return result;
   }
   async function configureSlots(actorId,modes={}){idle();const s=active();peerCheck(s);if(hostSession?.state().status!=='selecting')throw Error('房主只能在首次进入存档时选择角色，之后不能切换');saveLocalInputs();
     if(hostSession?.state().status==='selecting'){GameSlots.select(s,actorId,modes);s.inputHistory=[];s.draft='';s.privateDraft='';s.hiddenSend=false;s.disguiseSend=false;s.draftVersion=0;loadLocalInputs(s);await hostSession.initialize(actorId);}
@@ -402,13 +403,14 @@ const GameApp=(()=>{
   async function resolveManualDice(rolls){
     idle();const s=active();peerCheck(s);GameCore.resolveManualDice(s,rolls);await persist();emit();return s;
   }
-  async function saveDraft(text,binding,options={}){if(!S.active)return;peerCheck(S.active);if(!GameInputs.setDraft(S.active,options.private?'':text,binding))return;S.active.privateDraft=options.private?String(text):String(options.privateContent||'');S.active.hiddenSend=options.hiddenSend??!!S.active.privateDraft;S.active.disguiseSend=options.disguiseSend??!!(S.active.privateDraft&&S.active.draft);saveLocalInputs();await persist();}
+  function stageDraft(text,binding,options={}){if(!S.active)return false;peerCheck(S.active);if(!GameInputs.setDraft(S.active,options.private?'':text,binding))return false;S.active.privateDraft=options.private?String(text):String(options.privateContent||'');S.active.hiddenSend=options.hiddenSend??!!S.active.privateDraft;S.active.disguiseSend=options.disguiseSend??!!(S.active.privateDraft&&S.active.draft);saveLocalInputs();return true;}
+  async function saveDraft(text,binding,options={}){if(stageDraft(text,binding,options))await persist();}
   async function cancelAction(){
     const s=active(),r=hostSession.state(),result=await roomCommand('action.cancel',{submissionRequestId:r.submissions?.[s.actorId]?.requestId});
     if(active()!==s||hostSession.state().roundId!==r.roundId||hostSession.state().epoch!==r.epoch)return result;
     S.actionFeedback=null;
     const entry=s.inputHistory?.find(x=>x.roundId===r.roundId);if(entry)entry.status='cancelled';
-    if(!s.draft&&!s.privateDraft)Object.assign(s,entry?.draftState||{draft:result.cancelled.content,privateDraft:result.cancelled.privateContent,hiddenSend:entry?.hiddenSend??!!result.cancelled.privateContent,disguiseSend:entry?.disguiseSend??!!(result.cancelled.privateContent&&result.cancelled.content)});
+    if(GameInputs.shouldRestore(s))Object.assign(s,entry?.draftState||{draft:result.cancelled.content,privateDraft:result.cancelled.privateContent,hiddenSend:entry?.hiddenSend??!!result.cancelled.privateContent,disguiseSend:entry?.disguiseSend??!!(result.cancelled.privateContent&&result.cancelled.content)});
     GameInputs.advance(s);saveLocalInputs();await persist();emit();return result;
   }
   if(typeof window!=='undefined'){
@@ -418,7 +420,7 @@ const GameApp=(()=>{
   return {getState:()=>S,subscribe,init,importSave,importHandoff,importLink,openSave,closeSave,returnHome,returnToGame,leaveForClient,renameSave,deleteSave,exportSave,send,skip,start,resume,abort,rollback,setMode,
     configureSlots,configureInvitationSlot,connectRoom,setInvitationSlot,openRoom,createInvitation,revokeInvitation,closeRoom,reconnectRoom:async()=>{if(!bridgeSession)throw Error('请先连接服务器建立房间');await bridgeSession.reconnect();},multiplayerState,roomCommand,requestRollback,decideHostRollback,exportView,attachMultiplayerTransport,
     addMember:id=>hostSession.addMember(id),setMemberConnected:(id,connected)=>hostSession.setConnected(id,connected),assignMember:(id,actor)=>hostSession.assign(id,actor),dispatchMember:(id,command)=>hostSession.handle(id,command),multiplayerSync:(id,request)=>syncHost.sync(id,request),
-    readFile,writeFile,fileOperation,player,currentContext,updateSettings,saveDraft,resolveManualDice,cancelAction,
+    readFile,writeFile,fileOperation,player,currentContext,updateSettings,stageDraft,saveDraft,resolveManualDice,cancelAction,
     profile:actorId=>MultiplayerSync.profile(active(),actorId,{room:hostSession?.state(),memberId:'host'}),
     inventory:actorId=>MultiplayerSync.inventory(active(),actorId,{room:hostSession?.state(),memberId:'host'}),
     testConnection:values=>GameTransport.testConnection({...S.settings,...values}),

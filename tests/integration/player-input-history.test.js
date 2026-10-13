@@ -16,6 +16,20 @@ test('submission feedback is scoped to the current player and collecting round',
 });
 function save(){const tree=VFS.createTree();VFS.writeFile(tree,'/workspace/Player-p/基础信息.json','{"姓名":"玩家"}');VFS.writeFile(tree,'/workspace/Player-p/背包.json','[]');return Core.createSave('输入记录',tree);}
 function finish(s){s.round=s.activeRound.number;s.activeRound.complete=true;s.status='waiting';}
+
+test('draft typed during execution belongs to the next round and remains valid when the round finishes',()=>{
+ const s=save();Core.beginRound(s,'本轮行动');const binding=Inputs.owner(s);
+ assert.equal(binding.round,2);assert.equal(Inputs.setDraft(s,'预先写好的下一轮行动',binding),true);
+ finish(s);assert.equal(Inputs.owner(s).round,2);assert.equal(s.draftRound,2);assert.equal(s.draft,'预先写好的下一轮行动');
+ assert.equal(Inputs.setDraft(s,'刚结束时仍可保存的下一轮草稿',binding),true);
+});
+
+test('a new draft written after submitting while waiting for other players is carried into execution',()=>{
+ const s=save();s.inputHistory=[{round:1,roundId:'r1',text:'本轮行动',status:'accepted',draftState:{draft:'本轮行动',privateDraft:''}}];
+ s.draft='等待队友时写好的下一轮';s.privateDraft='下一轮的秘密';s.draftRound=1;
+ Core.beginRound(s,'本轮行动',false,'',{roundId:'r1',actions:[{actorId:'p',content:'本轮行动'}]});
+ assert.equal(s.draft,'等待队友时写好的下一轮');assert.equal(s.privateDraft,'下一轮的秘密');assert.equal(s.draftRound,2);
+});
 test('last ten player rounds remain accessible after consecutive rollbacks with the correct restored input',()=>{
   const s=save();for(let i=1;i<=12;i++){Core.beginRound(s,'行动'+i);finish(s);}
   assert.deepEqual(s.inputHistory.map(r=>r.round),[3,4,5,6,7,8,9,10,11,12]);

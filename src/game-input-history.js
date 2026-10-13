@@ -1,7 +1,8 @@
 'use strict';
 const GameInputs=(()=>{
   const LIMIT=10;
-  const targetRound=s=>s.activeRound&&!s.activeRound.complete?s.activeRound.number:s.round+1;
+  const targetRound=s=>s.activeRound&&!s.activeRound.complete?s.activeRound.number+1:['executing','interrupted'].includes(s.room?.status)?(s.room.round||s.round+1)+1:s.round+1;
+  const shouldRestore=s=>[...String(s.draft||'')+String(s.privateDraft||'')].filter(c=>!/\s/.test(c)).length<=3;
   const owner=s=>({saveId:s.id,actorId:s.actorId,round:targetRound(s),epoch:s.multiplayer?.epoch||s.room?.epoch||0,version:s.draftVersion||0});
   const draftState=s=>({draft:String(s.draft||''),privateDraft:String(s.privateDraft||''),hiddenSend:s.hiddenSend??!!s.privateDraft,disguiseSend:s.disguiseSend??!!(s.privateDraft&&s.draft)});
   function actionContent(s){return {content:s.hiddenSend?(s.disguiseSend?String(s.draft||''):''):String(s.draft||''),privateContent:s.hiddenSend?String(s.privateDraft||''):''};}
@@ -37,9 +38,9 @@ const GameInputs=(()=>{
   function retract(s,round,roundId){const r=get(s,round,roundId);if(r)r.rolledBack=true;return r;}
   function advance(s){s.draftVersion=(s.draftVersion||0)+1;}
   function setDraft(s,text,binding=owner(s)){
-    if(binding.saveId!==s.id||binding.actorId!==s.actorId||binding.epoch!==(s.multiplayer?.epoch||s.room?.epoch||0)||binding.round!==targetRound(s)||binding.version!==(s.draftVersion||0)||s.activeRound&&!s.activeRound.complete)return false;
+    if(binding.saveId!==s.id||binding.actorId!==s.actorId||binding.epoch!==(s.multiplayer?.epoch||s.room?.epoch||0)||binding.round!==targetRound(s)||binding.version!==(s.draftVersion||0))return false;
     s.draft=String(text);s.draftRound=binding.round;return true;
   }
-  return {LIMIT,targetRound,owner,draftState,actionContent,feedback,currentFeedback,submission,ensure,record,get,retract,advance,setDraft};
+  return {LIMIT,targetRound,shouldRestore,owner,draftState,actionContent,feedback,currentFeedback,submission,ensure,record,get,retract,advance,setDraft};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=GameInputs;

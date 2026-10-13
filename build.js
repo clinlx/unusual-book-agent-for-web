@@ -16,7 +16,7 @@ function collectBooks(dir,relative=''){
   }
 }
 collectBooks(path.join(root,'assets','trpg_rule_books'));
-const order=['vendor/room-bridge.js','src/connection-recovery.js','src/bridge-transport.js','src/connection-status.js','vendor/marked.min.js','src/vfs.js','src/shared/file-write-validation.js','src/sse.js','src/zip.js','src/workspace-import.js','src/diff.js','src/md.js','src/lease.js','src/shared/api-url.js','src/shared/world-handoff.js','src/shared/transfer-dialog.js','src/shared/designer-projects.js','src/shared/back-navigation.js','src/shared/send-shortcut.js',
+const order=['vendor/room-bridge.js','src/connection-recovery.js','src/bridge-transport.js','src/connection-status.js','vendor/marked.min.js','src/vfs.js','src/shared/file-write-validation.js','src/sse.js','src/zip.js','src/workspace-import.js','src/diff.js','src/md.js','src/lease.js','src/shared/api-url.js','src/shared/world-handoff.js','src/shared/transfer-dialog.js','src/shared/designer-projects.js','src/shared/back-navigation.js','src/shared/send-shortcut.js','src/shared/dropdown.js',
   'src/game-prompts.js','src/game-tools.js','src/game-data.js','src/game-history.js','src/game-input-history.js','src/game-local-inputs.js','src/game-presentation.js','src/game-slots.js','src/game-core.js','src/game-import.js','src/game-catalog.js','src/game-store.js','src/game-transport.js','src/multiplayer-host.js','src/multiplayer-sync.js','src/game-app.js','src/game-ui.js'];
 const obfuscated=JavaScriptObfuscator.obfuscate(Build.scripts(order),{
   target:'browser-no-eval',compact:true,identifierNamesGenerator:'hexadecimal',
@@ -30,7 +30,7 @@ const scripts=dice3d+'\n;const BUNDLED_GAME_ICON = '+safeJSON(read('assets/icons
 const html=Build.compose('src/template.html','src/game.css',scripts).replace('/*__FAVICON__*/',Build.svgDataUri('assets/icons/game.svg'));
 fs.mkdirSync(path.join(root,'dist'),{recursive:true});
 fs.writeFileSync(path.join(root,'dist','index.html'),html);
-const clientOrder=['vendor/room-bridge.js','src/connection-recovery.js','src/bridge-transport.js','src/connection-status.js','vendor/marked.min.js','src/diff.js','src/md.js','src/shared/back-navigation.js','src/shared/send-shortcut.js','src/game-data.js','src/game-input-history.js','src/game-local-inputs.js','src/game-presentation.js','src/multiplayer-sync.js','src/client-app.js','src/game-ui.js'];
+const clientOrder=['vendor/room-bridge.js','src/connection-recovery.js','src/bridge-transport.js','src/connection-status.js','vendor/marked.min.js','src/diff.js','src/md.js','src/shared/back-navigation.js','src/shared/send-shortcut.js','src/shared/dropdown.js','src/game-data.js','src/game-input-history.js','src/game-local-inputs.js','src/game-presentation.js','src/multiplayer-sync.js','src/client-app.js','src/game-ui.js'];
 const clientHtml=Build.compose('src/template.html','src/game.css',dice3d+'\n;const BUNDLED_GAME_ICON = '+safeJSON(read('assets/icons/game.svg'))+';\n'+Build.scripts(clientOrder)).replace('异闻手记 · 单人跑团','异闻手记 · 联机玩家').replace('/*__FAVICON__*/',Build.svgDataUri('assets/icons/game.svg'));
 fs.writeFileSync(path.join(root,'dist','client.html'),clientHtml);
 

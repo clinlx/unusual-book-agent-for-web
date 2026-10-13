@@ -37,7 +37,13 @@ const GameApp=(()=>{
     try{
       inputs=view.actorId?local.load(identity):{epoch:next.scope.epoch,inputHistory:[],draft:'',privateDraft:'',draftRound:view.round+1,draftVersion:0};
       if(next.scope.epoch>inputs.epoch)inputs=local.rollback(identity,{round:view.round,epoch:next.scope.epoch});
-      if(inputs.draftRound!==view.round+1&&!inputs.inputHistory.some(r=>r.status==='pending'&&r.round===inputs.draftRound))inputs=local.save(identity,{draft:'',privateDraft:'',draftRound:view.round+1,draftVersion:inputs.draftVersion+1});
+      const draftRound=GameInputs.targetRound(view);
+      if(inputs.draftRound!==draftRound){
+        const advancing=same&&before?.scope.epoch===next.scope.epoch&&draftRound>inputs.draftRound;
+        const submitted=inputs.inputHistory.find(r=>r.round===inputs.draftRound&&['pending','accepted'].includes(r.status)),sent=submitted?.draftState;
+        const untouched=sent&&inputs.draft===sent.draft&&inputs.privateDraft===sent.privateDraft;
+        if(advancing||!inputs.inputHistory.some(r=>r.status==='pending'&&r.round===inputs.draftRound))inputs=local.save(identity,{...advancing&&!untouched?{}:{draft:'',privateDraft:''},draftRound,draftVersion:inputs.draftVersion+1});
+      }
     }catch(error){S.storageWarning=error.message;inputs=same?previous:{inputHistory:[],draft:'',privateDraft:'',draftRound:view.round+1,draftVersion:0};}
     S.active={...view,...inputState(inputs),cache:{Game_World_Time:view.events.at(-1)?.worldTime||''},snapshots:[],room:view.room};
     S.baseline=same&&before?.scope.epoch===next.scope.epoch?{info:before.view.info,items:before.view.items}:{info:view.info,items:view.items};
@@ -74,6 +80,7 @@ const GameApp=(()=>{
     refreshInputs(identity);emit();await sync();return result;
   }
   function disconnect(){stop?.();stop=null;for(const p of pending.values()){clearTimeout(p.timer);p.reject(Error('连接已关闭，未确认的输入已保留'));}pending.clear();transport=null;}
+  function stageDraft(text,binding,options={}){if(!S.active||!GameInputs.setDraft(S.active,options.private?'':text,binding))return false;S.active.privateDraft=options.private?String(text):String(options.privateContent||'');S.active.hiddenSend=options.hiddenSend??!!S.active.privateDraft;S.active.disguiseSend=options.disguiseSend??!!(S.active.privateDraft&&S.active.draft);store();return true;}
   async function cancelAction(){
     const identity=scope(),r={...S.room},submittedRequestId=identity?local.load(identity).inputHistory.find(x=>x.roundId===r.roundId)?.requestId:undefined,result=await command('action.cancel',submittedRequestId?{submissionRequestId:submittedRequestId}:{});
     if(!sameScope(identity,scope())||S.room?.epoch!==r.epoch||S.room?.roundId!==r.roundId)return result;
@@ -81,7 +88,7 @@ const GameApp=(()=>{
       const prior=local.load(identity).inputHistory.find(x=>x.roundId===r.roundId),hiddenSend=prior?.hiddenSend??!!result.cancelled.privateContent,disguiseSend=prior?.disguiseSend??!!(result.cancelled.privateContent&&result.cancelled.content);
       local.record(identity,{round:r.round,roundId:r.roundId,epoch:r.epoch,requestId:result.cancelledRequestId||submittedRequestId||'',text:result.cancelled.content,privateContent:result.cancelled.privateContent,hiddenSend,disguiseSend,status:'cancelled'});
       S.actionFeedback=GameInputs.feedback(S,{status:'cancelled'});
-      const current=local.load(identity),restore=!current.draft&&!current.privateDraft;
+      const current=local.load(identity),restore=GameInputs.shouldRestore(current);
       local.save(identity,{...restore?(prior?.draftState||{draft:result.cancelled.content,privateDraft:result.cancelled.privateContent,hiddenSend,disguiseSend}):{},draftVersion:current.draftVersion+1});refreshInputs(identity);emit();
     }catch(error){if(error.code!=='LOCAL_INPUT_STALE')throw error;}
     return result;
@@ -116,7 +123,7 @@ const GameApp=(()=>{
     connect:async(t,id)=>{stopNetwork();S.network=null;await attach(t,id);},joinRoom,reconnectRoom,receive,sync,
     send:(text,privateContent,options)=>submitInput(text,privateContent,options),cancelAction,profile:async actorId=>(await command('profile.request',{actorId})).profile,inventory:async actorId=>(await command('inventory.request',{actorId})).inventory,skip:(options={})=>submitInput('','',{draftState:GameInputs.draftState(S.active||{}),...options},true),requestRollback:()=>command('rollback.request',{targetRound:S.active.rollbackTargetRound??Math.max(0,S.active.round-1)}),roomCommand:command,
     player:()=>({info:S.active?.info||{},items:S.active?.items||[],name:S.active?.playerName}),exportView:()=>cache.getState()?.view,
-    saveDraft:async(text,binding,options={})=>{if(S.active&&GameInputs.setDraft(S.active,options.private?'':text,binding)){S.active.privateDraft=options.private?String(text):String(options.privateContent||'');S.active.hiddenSend=options.hiddenSend??!!S.active.privateDraft;S.active.disguiseSend=options.disguiseSend??!!(S.active.privateDraft&&S.active.draft);store();}},
+    stageDraft,saveDraft:async(...args)=>stageDraft(...args),
     updateSettings:async values=>{S.settings={reverseSendNewline:values.reverseSendNewline===true};localStorage.setItem('trpg-client-settings',JSON.stringify(S.settings));emit();},
     setMode:()=>{},returnHome:()=>{S.home=true;emit();},returnToGame:()=>{if(S.active){S.home=false;emit();}},closeSave:()=>{stopNetwork();S.joining=null;S.active=null;S.home=false;S.room=null;S.network=null;emit();}
   };

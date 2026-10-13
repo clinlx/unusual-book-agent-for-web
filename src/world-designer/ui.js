@@ -151,6 +151,7 @@
   }
   // 关掉最上面一层；没有任何一层可关时返回 false（让系统处理，即退出应用）
   function handleBack() {
+    if (DropdownCompat.close(true)) return true;
     if (TransferDialog.handleBack()) return true;
     if (S.handoffBusy) return true;
     for (const h of backHandlers()) {
@@ -5220,6 +5221,7 @@
     // 默认展开：折叠态看不出可以点开，用户容易以为这里没内容
     agentSection.append(collapsible('系统提示词', agentBody, undefined, true));
 
+    const compatibleDropdown = el('input', { type: 'checkbox', checked: DropdownCompat.forced(), 'aria-label': '兼容下拉菜单' });
     const reverseSendNewline = el('input', { type: 'checkbox', checked: s.reverseSendNewline === true, 'aria-label': '反转发送与换行' });
     const changeScope = el('select', {},
       el('option', { value: 'last', text: '仅最后一轮的改动' }),
@@ -5421,6 +5423,8 @@
         field('满上下文处理', overflow, ['contextOverflow', 'disabled', 'sliding', 'truncate', 'compress']),
         field('最大上下文', ctxSel), field('', ctxCustom)),
       el('div', { class: 'section' }, el('h3', { text: '界面' }),
+        field('兼容下拉菜单', compatibleDropdown),
+        el('div', { class: 'hint', text: '下拉菜单显示异常时开启，改用页面内菜单。' }),
         field('反转发送与换行', reverseSendNewline),
         el('div', { class: 'hint', text: '默认 Ctrl / ⌘ + Enter 发送、Enter 换行；开启后 Enter 发送、Ctrl / ⌘ + Enter 换行。' }),
         field('编辑器打开位置', editorPos),
@@ -5472,6 +5476,7 @@
               ? '' : sysPromptInput.value,
           };
           await DB.put('config', { id: 'settings', value: S.settings });
+          DropdownCompat.setForced(compatibleDropdown.checked);
           // 编辑器位置变了要重挂 DOM；若正开着编辑器则原地迁移
           applyEditorPosition();
           renderCtxBadge();

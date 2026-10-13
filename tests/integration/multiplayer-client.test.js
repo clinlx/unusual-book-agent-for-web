@@ -32,6 +32,25 @@ test('a failed submission clears optimistic feedback while retaining retryable i
  assert.equal(Inputs.submission(f.app.getState()),null);assert.equal(f.app.getState().actionFeedback,null);
  assert.equal(f.app.getState().active.inputHistory.at(-1).text,'查看窗户');
 });
+
+test('drafts written during execution survive round completion, reconnect and an in-flight acknowledgement',async t=>{
+ const f=setup(t);await f.app.connect(f.transport,'guest');
+ f.room.status='executing';await f.receive(await f.host.sync('guest'));
+ const binding=Inputs.owner(f.app.getState().active);assert.equal(binding.round,3);
+ await f.app.saveDraft('下一回合的公开说辞',binding,{privateContent:'下一回合的隐秘行动',hiddenSend:true,disguiseSend:true});
+ f.save.round=2;f.room.round=3;f.room.roundId='r3';f.room.status='collecting';await f.receive(await f.host.sync('guest'));
+ assert.equal(f.app.getState().active.draft,'下一回合的公开说辞');assert.equal(f.app.getState().active.privateDraft,'下一回合的隐秘行动');
+ await f.app.connect(f.transport,'guest');assert.equal(f.app.getState().active.draft,'下一回合的公开说辞');assert.equal(f.app.getState().active.hiddenSend,true);assert.equal(f.app.getState().active.disguiseSend,true);
+});
+
+test('cancellation refills up to three non-whitespace characters but preserves longer replacement input',async t=>{
+ for(const replacement of ['',' \n  ','看','查看','查看门','查看门锁']){
+  const f=setup(t);await f.app.connect(f.transport,'guest');
+  f.setAction(c=>f.receive({type:'command.result',requestId:c.requestId,ok:true,...c.type==='action.cancel'?{cancelled:{content:'原来的行动',privateContent:''}}:{}}));
+  await f.app.send('原来的行动');await f.app.saveDraft(replacement,undefined,{hiddenSend:false,disguiseSend:false});await f.app.cancelAction();
+  assert.equal(f.app.getState().active.draft,replacement.replace(/\s/g,'').length>3?replacement:'原来的行动');
+ }
+});
 test('private-only submission caches its unsent cover and modes for retraction and rollback',async t=>{
  const f=setup(t);await f.app.connect(f.transport,'guest');
  const draftState={draft:'没有公开的说辞',privateDraft:'真实行动',hiddenSend:true,disguiseSend:false};
