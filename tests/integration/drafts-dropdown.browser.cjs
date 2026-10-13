@@ -28,13 +28,22 @@ for(const failure of ['missing','throwing'])test('drawn dropdown replaces '+fail
   await page.locator('#dropdown-test').click();await page.locator('.modal h2').click();assert.equal(await page.getByRole('listbox').count(),0);
 });
 
-for(const name of ['index','client','designer'])test(name+' settings persist the browser-local dropdown override',async t=>{
-  const page=await pageFor(t);await settings(page,name);
-  const toggle=page.getByRole('checkbox',{name:'兼容下拉菜单',exact:true});await toggle.check();
-  await page.getByRole('button',{name:name==='designer'?'保存':'保存设置',exact:true}).click();
-  await settings(page,name);assert.equal(await toggle.isChecked(),true);
-  await page.evaluate(()=>{const select=document.createElement('select');select.id='forced-select';select.innerHTML='<option>甲</option><option>乙</option>';Object.assign(select.style,{position:'fixed',left:'20px',top:'20px',zIndex:'99999'});document.body.append(select);});
-  await page.locator('#forced-select').click();await page.getByRole('listbox').waitFor();await page.getByRole('listbox').getByRole('option',{name:'乙',exact:true}).click();assert.equal(await page.locator('#forced-select').inputValue(),'乙');
+for(const name of ['index','client','designer'])test(name+' automatically falls back without a compatibility setting',async t=>{
+  const page=await pageFor(t);
+  await page.addInitScript(()=>Object.defineProperty(HTMLSelectElement.prototype,'showPicker',{configurable:true,value:undefined}));
+  await settings(page,name);
+  assert.equal(await page.getByRole('checkbox',{name:'兼容下拉菜单',exact:true}).count(),0);
+  const text=await page.locator('body').innerText();
+  for(const removed of ['下拉菜单显示异常时开启','用于缓解长时间输出文本','本机可使用 ws://'])assert.ok(!text.includes(removed),removed);
+  await page.evaluate(()=>{const select=document.createElement('select');select.id='auto-select';select.innerHTML='<option>甲</option><option>乙</option>';Object.assign(select.style,{position:'fixed',left:'20px',top:'20px',zIndex:'99999'});document.body.append(select);});
+  await page.locator('#auto-select').click();await page.getByRole('listbox').waitFor();await page.getByRole('listbox').getByRole('option',{name:'乙',exact:true}).click();assert.equal(await page.locator('#auto-select').inputValue(),'乙');
+});
+
+test('a supported native picker ignores the obsolete manual override',async t=>{
+  const page=await pageFor(t);
+  await page.addInitScript(()=>{localStorage.setItem('awl:compatible-dropdown','1');window.nativePickerCalls=0;Object.defineProperty(HTMLSelectElement.prototype,'showPicker',{configurable:true,value:function(){nativePickerCalls++;}});});
+  await settings(page,'index');await page.locator('select').first().click();
+  assert.equal(await page.evaluate(()=>nativePickerCalls),1);assert.equal(await page.getByRole('listbox').count(),0);
 });
 
 test('host keeps next-round public and private drafts after the submitting promise completes',{timeout:20000},async t=>{

@@ -1,10 +1,6 @@
 'use strict';
 const DropdownCompat=(()=>{
-  const KEY='awl:compatible-dropdown';
   let active=null,nativeFailed=false;
-  function forced(){try{return localStorage.getItem(KEY)==='1';}catch{return false;}}
-  function setForced(value){try{localStorage.setItem(KEY,value?'1':'0');}catch{}close();}
-  function settingHTML(){return `<label class="check-label stream-setting"><input name="compatibleDropdown" type="checkbox" ${forced()?'checked':''} aria-label="兼容下拉菜单"><span>兼容下拉菜单<small>下拉菜单显示异常时开启，改用页面内菜单。</small></span></label>`;}
   function close(restore=false){
     if(!active)return false;
     const {select,popup,observer}=active;active=null;observer.disconnect();popup.remove();select.removeAttribute('aria-expanded');select.removeAttribute('aria-controls');
@@ -35,11 +31,11 @@ const DropdownCompat=(()=>{
     (options.find(b=>b.getAttribute('aria-selected')==='true'&&!b.disabled)||options.find(b=>!b.disabled))?.focus({preventScroll:true});
     document.activeElement?.scrollIntoView({block:'nearest'});
   }
-  function needsFallback(select){return forced()||nativeFailed||typeof select.showPicker!=='function';}
+  function needsFallback(select){return nativeFailed||typeof select.showPicker!=='function';}
   function install(){
     const style=document.createElement('style');style.textContent=`
       .compatible-dropdown{position:fixed;z-index:2147483647;box-sizing:border-box;overflow:auto;overscroll-behavior:contain;background:#f4ecda;color:#403929;border:1px solid #b5a077;border-radius:8px;padding:5px;box-shadow:0 5px 18px #0003;font:14px/1.5 system-ui,sans-serif;}
-      .compatible-dropdown button{display:block;box-sizing:border-box;width:100%;margin:0;padding:9px 12px;min-height:38px;border:0;border-radius:4px;background:transparent;color:inherit;text-align:left;font:inherit;white-space:normal;overflow-wrap:anywhere;cursor:pointer;}
+      .compatible-dropdown button{display:block;box-sizing:border-box;width:100%;margin:0;padding:9px 12px;min-height:44px;border:0;border-radius:4px;background:transparent;color:inherit;text-align:left;font:inherit;white-space:normal;overflow-wrap:anywhere;cursor:pointer;}
       .compatible-dropdown button[aria-selected=true]{background:#e2d4b5;}
       .compatible-dropdown button:hover,.compatible-dropdown button:focus{background:#ddd0b1;outline:2px solid #a48c5e;outline-offset:-2px;}
       .compatible-dropdown button:disabled{opacity:.45;cursor:default;outline:0;}
@@ -73,6 +69,6 @@ const DropdownCompat=(()=>{
     document.addEventListener('scroll',event=>{if(active&&!active.popup.contains(event.target))close();},true);
   }
   if(typeof document!=='undefined')install();
-  return {forced,setForced,settingHTML,close};
+  return {close};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=DropdownCompat;
