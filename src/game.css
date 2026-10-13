@@ -200,3 +200,12 @@
 
 .join-progress{display:flex;flex-direction:column;justify-content:center;align-items:center;min-height:250px}.join-progress p{color:#b8aa8b;font-size:13px;line-height:1.8}.join-progress-track{width:min(320px,80vw);height:4px;border-radius:2px;overflow:hidden;background:#b79b6228;margin:18px 0 24px}.join-progress-track span{display:block;width:40%;height:100%;background:var(--gold);animation:join-progress 1.5s ease-in-out infinite}@keyframes join-progress{from{transform:translateX(-100%)}to{transform:translateX(350%)}}
 .pending-actions{margin:16px 0;padding:10px 14px;border:1px dashed var(--rule);border-radius:6px}.pending-actions>small{color:var(--muted);font-size:11px}.pending-actions .player-action,.pending-actions .player-event{margin:10px 0}.submission-status{padding:7px 16px 0;color:var(--muted);font-size:11px}.connection-lamp[data-turn-state="waiting"] span{animation:turn-waiting 2s ease-in-out infinite}.connection-lamp[data-turn-state="thinking"] span{animation:turn-waiting 1s ease-in-out infinite}@keyframes turn-waiting{50%{opacity:.4;box-shadow:0 0 2px var(--lamp)}}
+.composer-opening{position:relative;background:repeating-linear-gradient(135deg,#aa916b0b 0 8px,transparent 8px 16px),var(--paper);border-color:#b8a270}
+.composer-opening #action-input{opacity:.35;min-height:110px;cursor:not-allowed}
+.composer-start-guide{position:absolute;top:22px;left:18px;right:18px;display:grid;grid-template-columns:24px 1fr;gap:5px 8px;pointer-events:none;color:var(--ink);font:13px/1.6 var(--sans)}
+.composer-start-guide>span{grid-row:span 2;font-size:22px;color:#9a8050}.composer-start-guide small{color:var(--muted)}
+.composer-opening .start-story-button{outline:2px solid #b5a06b66;outline-offset:3px}
+.composer-prepared{border-color:#a59266}.composer-prepared textarea:disabled{opacity:.8;cursor:default}
+.pre-submit-notice{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 16px;border-top:1px dashed var(--rule);color:var(--muted);font:12px/1.6 var(--sans)}
+.pre-submit-notice button{flex-shrink:0;padding:4px 8px;font-size:12px}.run-controls .pre-submit-button{font-size:13px}
+@media(max-width:480px){.pre-submit-notice{padding:8px 12px;gap:8px}.run-controls{flex-wrap:wrap;justify-content:flex-end}.run-controls .pre-submit-button{padding:8px 10px}}

@@ -84,16 +84,21 @@ const GameApp=(()=>{
       }catch(error){await transport.sendToClient(memberId,{type:'command.result',requestId:command.requestId,ok:false,error:error.code||'REQUEST_REJECTED',message:'请求未执行，请同步后重试或联系房主。'});}
     });return transportStop;
   }
-  async function roomCommand(type,payload={}){
+  async function roomCommand(type,payload={},options={}){
     if(!hostSession)throw Error('请先选择存档');
     if(!S.settings.apiKey.trim()&&['action.submit','action.skip','round.start','round.resume','round.advance'].includes(type))throw Error('请先在设置中填写 API Key');
     if(S.active.slotsConfigured===false)throw Error('请先选择角色槽位');
     const r=hostSession.state(),m=r.members.host;
     const result=await hostSession.handle('host',{type,payload,requestId:GameCore.uid(),roomId:r.roomId,epoch:r.epoch,roundId:r.roundId,bindingVersion:m.bindingVersion});
-    await hostSession.waitForIdle();emit();return result;
+    if(!options.acceptOnly)await hostSession.waitForIdle();emit();return result;
   }
   async function submitAction(content,privateContent='',options={}){
-    const s=active();if(!String(content).trim()&&!String(privateContent).trim())return;
+    const s=active();
+    if(options.acceptOnly){
+      const session=hostSession;await session.waitForIdle();
+      if(session!==hostSession||S.active!==s)throw Error('预提交所属存档已切换');
+    }
+    if(!String(content).trim()&&!String(privateContent).trim())return;
     if(s.status==='new')return start();
     if(GameInputs.submission(S))throw Error('本回合已提交，请先撤回提交');
     const r=hostSession.state(),round=s.round+1;
@@ -101,7 +106,7 @@ const GameApp=(()=>{
     s.draft='';s.privateDraft='';saveLocalInputs();
     const feedback=S.actionFeedback=GameInputs.feedback(S,{status:'pending',content:String(content),privateContent:String(privateContent),disguise:disguiseSend});emit();
     let result;
-    try{result=await roomCommand('action.submit',{content:String(content),privateContent:String(privateContent),...hiddenSend&&disguiseSend?{disguise:true}:{}});feedback.status='accepted';}
+    try{result=await roomCommand('action.submit',{content:String(content),privateContent:String(privateContent),...hiddenSend&&disguiseSend?{disguise:true}:{}},{acceptOnly:options.acceptOnly===true});feedback.status='accepted';}
     catch(error){if(S.actionFeedback===feedback)S.actionFeedback=null;if(hostSession.state().roundId===r.roundId&&hostSession.state().status==='collecting'&&!s.draft&&!s.privateDraft)Object.assign(s,draftState);saveLocalInputs();emit();throw error;}
     const accepted=s.inputHistory.find(x=>x.roundId===r.roundId);if(accepted)accepted.status='accepted';
     saveLocalInputs();await persist();emit();return result;
