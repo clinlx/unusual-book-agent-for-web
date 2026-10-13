@@ -287,7 +287,8 @@ const GameApp=(()=>{
       const s=await GameImport.importSave(file);GameCore.repairManualDiceEvents(s);await settleCompletedBatch(s);await db.putSave(s);S.saves=await db.list();S.active=s;restoreLastRequest(s);S.mode='play';await setupHost(s);return s;
     }catch(e){S.error=e.message||'导入失败';throw e;}finally{S.importing=null;emit();}
   }
-  function restoreLastRequest(s){const last=s.requestHistory?.at(-1);S.lastRequest=last?.body?structuredClone(last.body):null;S.lastRequestSaveId=last?s.id:null;}
+  function restoreLastRequest(s){const last=s.requestHistory?.at(-1);S.lastRequest=last?.body?structuredClone(last.body):null;S.lastRequestSaveId=last?s.id:null;
+    S.usage=structuredClone(s.requestHistory?.findLast(r=>r.status==='completed'&&r.usage)?.usage||null);}
   const pendingBatch=s=>s.activeRound&&s.messages.some(m=>m.round===s.activeRound.number&&m.tool_calls?.some(tc=>!s.messages.some(r=>r.round===m.round&&r.role==='tool'&&r.tool_call_id===tc.id)));
   async function settleCompletedBatch(s){
     if(s.pendingManualDice||!s.activeRound?.complete||!pendingBatch(s))return;
@@ -368,7 +369,7 @@ const GameApp=(()=>{
       const defs=GameTools.build(Prompts,snapshot.overrides);
       let currentRequest;
       const raw=GameTransport.create(settings,defs,{signal:controller.signal,
-        onRequest:async body=>{if(currentRequest?.status==='pending')currentRequest.status='retried';currentRequest={round:s.activeRound.number,roundId:s.activeRound.id,at:Date.now(),body:structuredClone(body),status:'pending',response:{content:'',reasoning:'',tools:[]}};(s.requestHistory||=[]).push(currentRequest);s.activeRound.requestCount++;S.lastRequest=structuredClone(body);S.lastRequestSaveId=s.id;await persist();emit();},onUsage:usage=>{S.usage=usage;},
+        onRequest:async body=>{if(currentRequest?.status==='pending')currentRequest.status='retried';currentRequest={round:s.activeRound.number,roundId:s.activeRound.id,at:Date.now(),body:structuredClone(body),status:'pending',response:{content:'',reasoning:'',tools:[]}};(s.requestHistory||=[]).push(currentRequest);s.activeRound.requestCount++;S.lastRequest=structuredClone(body);S.lastRequestSaveId=s.id;await persist();emit();},onUsage:usage=>{S.usage=usage||null;if(currentRequest)currentRequest.usage=structuredClone(usage||null);},
         onDelta:t=>{S.stream.content+=t;if(currentRequest)currentRequest.response.content+=t;emit();},onReasoningDelta:t=>{S.stream.reasoning+=t;if(currentRequest)currentRequest.response.reasoning+=t;emit();},onToolDelta:t=>{S.stream.tools=t;
           const storyCalls=t.filter(tc=>tc?.function?.name==='append_story');
           if(storyCalls.length){
@@ -376,7 +377,7 @@ const GameApp=(()=>{
             if(parts.length){if(!S.stream.story)S.stream.storyPublished=s.activeRound?.published||0;S.stream.story=parts.join('\n\n');}
           }
           if(currentRequest)currentRequest.response.tools=structuredClone(t);emit();}});
-      const transport=async messages=>{if(roundOptions.isCurrent&&!roundOptions.isCurrent())throw Error('回合已失效');clearStream();emit();try{const response=await raw(messages);if(roundOptions.isCurrent&&!roundOptions.isCurrent())throw Error('回合已失效');if(currentRequest){currentRequest.status='completed';currentRequest.response=structuredClone(response);}return response;}catch(e){if(currentRequest){currentRequest.status='interrupted';currentRequest.error=e.message;}throw e;}};
+      const transport=async messages=>{if(roundOptions.isCurrent&&!roundOptions.isCurrent())throw Error('回合已失效');currentRequest=null;clearStream();emit();try{const response=await raw(messages);if(roundOptions.isCurrent&&!roundOptions.isCurrent())throw Error('回合已失效');if(currentRequest){currentRequest.status='completed';currentRequest.response=structuredClone(response);}return response;}catch(e){if(currentRequest){currentRequest.status='interrupted';currentRequest.error=e.message;}throw e;}};
       const flows=Prompts.flows(snapshot.overrides);
       await GameCore.run(s,transport,{signal:controller.signal,system:snapshot.system,manualDice:settings.manualDice===true,
         cap:GameTransport.inputBudget(settings,defs),maxToolLoops:settings.maxToolLoops,multiplayerPrompts:Prompts.multiplayer(snapshot.overrides),
@@ -386,7 +387,12 @@ const GameApp=(()=>{
         resumePrompt:kind==='resume'?flows.flow_resume:'',cachePrompt:flows.flow_cache,summariesPrompt:flows.flow_summaries,transformContext:Prompts.migrateText,
         reminder:save=>!save.activeRound.triggered?flows.flow_need_trigger:!save.activeRound.published?flows.flow_no_story:flows.flow_need_end,
         onStep:async()=>{if(roundOptions.isCurrent&&!roundOptions.isCurrent())throw Error('回合已失效');if(lease?.available&&lease.lostWhileRunning(s.id))throw Error('存档被另一个页面接管');await persist();publishClients();const keepStory=!!S.stream.story&&(s.activeRound?.published||0)<=S.stream.storyPublished;clearStream(keepStory);emit();}});
-    }catch(e){S.error=e.message||'回合未完成';if(s.activeRound&&!s.activeRound.complete){s.status='interrupted';s.error=S.error;}
+    }catch(e){S.error=e.message||'回合未完成';
+      if(e.code==='CONTEXT_LIMIT'&&Number.isFinite(e.used)&&!e.budget){
+        const budget=GameTransport.budgetDetails(settings,GameTools.build(Prompts,s.activeRound?.promptSnapshot?.overrides||{}),e.used);
+        S.error+='\n'+GameTransport.budgetText(budget);
+      }
+      if(s.activeRound&&!s.activeRound.complete){s.status='interrupted';s.error=S.error;}
       
       try{if(!lease?.lostWhileRunning(s.id))await persist();}catch(storageError){S.storageWarning='存档保存失败：'+storageError.message+'。请导出存档保留当前内容。';}throw e;
     }finally{

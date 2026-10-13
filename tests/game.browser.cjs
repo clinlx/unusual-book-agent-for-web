@@ -107,10 +107,12 @@ const call=(name,args,id)=>({id,type:'function',function:{name,arguments:JSON.st
     await page.waitForFunction(()=>!GameApp.getState().running&&GameApp.getState().active.status==='interrupted');
     await page.locator('#history [data-action="resume"]').waitFor();
     assert.equal(await page.locator('#action-input').isDisabled(),true);
+    await page.locator('[data-action="toggle-mode-menu"]').click();
     await page.locator('[data-action="debug"]').click();
     await page.locator('.debug-mode').waitFor();
     assert.equal(await page.locator('#history [data-action="resume"]').count(),1);
     assert.equal(await page.locator('#action-input').isDisabled(),true);
+    await page.locator('[data-action="toggle-mode-menu"]').click();
     await page.locator('[data-action="play"]').click();
     const resumeSaveId=await page.evaluate(()=>GameApp.getState().active.id);
     await page.evaluate(()=>{window.onbeforeunload=null;});await page.reload();
@@ -166,4 +168,3 @@ const call=(name,args,id)=>({id,type:'function',function:{name,arguments:JSON.st
     console.log('Browser integration passed: import, start, actions, privacy, DEBUG, edit, changes, prompts, refresh, export/import, mobile. Model calls mocked: '+reqs);
   }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});
-

@@ -4,6 +4,7 @@ const GameCore = (() => {
   const vfs = typeof module !== 'undefined' && module.exports ? require('./vfs.js') : VFS;
   const data = typeof module !== 'undefined' && module.exports ? require('./game-data.js') : GameData;
   const history = typeof module !== 'undefined' && module.exports ? require('./game-history.js') : GameHistory;
+  const recovery = typeof module !== 'undefined' && module.exports ? require('./game-context-recovery.js') : GameContextRecovery;
   const inputs = typeof module !== 'undefined' && module.exports ? require('./game-input-history.js') : GameInputs;
   const slots = typeof module !== 'undefined' && module.exports ? require('./game-slots.js') : GameSlots;
   const fileValidation = typeof module !== 'undefined' && module.exports ? require('./shared/file-write-validation.js') : FileWriteValidation;
@@ -538,7 +539,7 @@ const GameCore = (() => {
       }catch(_){}
       return null;
     }
-    function build(){
+    function build(sourceOverride){
       const head=[{role:'system',content:system}];
       // With complete history, end_the_round already carries NEXT_TURN_CACHE in-place.
       // Do not prepend a changing copy: keeping the prefix append-only is critical for provider prompt caching.
@@ -549,7 +550,7 @@ const GameCore = (() => {
         const cache=boundaryCache(from);
         if(cache&&Object.keys(cache).length)head.push({role:'user',content:(opts.cachePrompt||'[NEXT_TURN_CACHE]')+'\n'+JSON.stringify(cache)});
       }
-      const source=s.messages.filter(m=>(m.round||1)>=from);
+      const source=sourceOverride||s.messages.filter(m=>(m.round||1)>=from);
       const msgs=(compact?history.compactReads(source,current):source).map(m=>{
         const out={role:m.role,content:m.content||''};
         for(const k of ['tool_calls','tool_call_id','reasoning_content'])if(m[k]!==undefined)out[k]=copy(m[k]);return out;
@@ -561,7 +562,9 @@ const GameCore = (() => {
     if(estimate(sent)>cap){compact=true;sent=build();}
     if(estimate(sent)>cap&&rounds.length>1){from=rounds[Math.floor(rounds.length/2)];sent=build();
       while(estimate(sent)>cap&&from<current){const next=rounds.find(r=>r>from);if(next===undefined)break;from=next;sent=build();}}
-    if(estimate(sent)>cap)throw Object.assign(Error('系统提示词与当前回合已超过上下文上限，请在设置中调大上下文上限或降低输出上限，再点击“继续本轮”；也可回退本回合后减少输入或读取内容。'),{code:'CONTEXT_LIMIT'});
+    if(estimate(sent)>cap)sent=recovery.fit(s,s.messages.filter(m=>(m.round||1)>=from),current,cap,build,estimate);
+    const used=estimate(sent);
+    if(used>cap)throw Object.assign(Error('自动整理后仍超过上下文上限（估算消息 '+used+' / 可用消息 '+cap+' tokens）。固定提示词或必须保留的输入过大，请在设置中调大上下文上限或降低输出上限，再点击“继续本轮”。'),{code:'CONTEXT_LIMIT',used,cap});
     s.contextFromRound=from;return sent;
   }
   async function run(s,transport,opts={}) {
@@ -603,11 +606,19 @@ const GameCore = (() => {
       const pending=s.messages.filter(m=>m.role==='assistant'&&m.tool_calls&&m.round===s.activeRound.number);
       for(const m of pending)if(await completeBatch(m))return;
       if(s.activeRound.complete){s.status=s.cache.game_over===true?'ended':'waiting';await step();return;}
-      if(opts.resumePrompt){s.messages.push({role:'user',content:opts.resumePrompt,round:s.activeRound.number});await step();}
+      if(opts.resumePrompt&&!(s.messages.at(-1)?.role==='user'&&s.messages.at(-1).content===opts.resumePrompt)){s.messages.push({role:'user',content:opts.resumePrompt,round:s.activeRound.number});await step();}
+      let requestCap=opts.cap??240000,recoveries=0;
       for(let loop=0;loop<(opts.maxToolLoops||60);loop++){
-        abort();const messages=context(s,opts.system||'',opts.cap??240000,opts);
-        await step();
-        const resp=await transport(messages);abort();
+        let resp;
+        for(;;){
+          abort();const messages=context(s,opts.system||'',requestCap,opts);await step();
+          try{resp=await transport(messages);break;}
+          catch(e){
+            if(e.code!=='CONTEXT_LIMIT'||e.contextSource!=='provider'||recoveries>=2)throw e;
+            recoveries++;requestCap=Math.min(requestCap,Math.floor(estimate(messages)*.8));
+          }
+        }
+        abort();
         const m={role:'assistant',content:resp.content||'',round:s.activeRound.number};
         if(resp.reasoning)m.reasoning_content=resp.reasoning;
         if(resp.tool_calls?.length)m.tool_calls=resp.tool_calls.map(tc=>({...tc,id:tc.id||uid()}));
@@ -621,7 +632,9 @@ const GameCore = (() => {
         }
       }
       throw Error('本回合已达到工具循环上限，可继续本回合或回退');
-    }catch(e){s.status=s.activeRound.complete?(s.cache.game_over?'ended':'waiting'):'interrupted';s.error=e.message;emit(s,'error',{content:e.message});await step();throw e;}
+    }catch(e){s.status=s.activeRound.complete?(s.cache.game_over?'ended':'waiting'):'interrupted';s.error=e.message;
+      const last=s.events.at(-1);if(last?.type!=='error'||last.round!==s.activeRound.number||last.content!==e.message)emit(s,'error',{content:e.message});
+      await step();throw e;}
   }
   return {uid,path,createSave,validateTree,beginRound,execute,run,context,estimate,player,filterVisible,visibleEvents,rollback,pruneRollback,ROLLBACK_LIMIT,changes,flatten,dice,dicePlayerRelated,diceSecret,diceEventAccess,resolveManualDice,repairManualDiceEvents};
 })();
