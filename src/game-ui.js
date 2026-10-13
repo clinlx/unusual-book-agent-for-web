@@ -326,13 +326,14 @@ const GameUI = (() => {
     if(previous?.isConnected)previous.focus();
     done?.(value);
   }
-  function appConfirm(message,{title='请确认',confirmLabel='确认',cancelLabel='取消',danger=false}={}){
+  function appConfirm(message,{title='请确认',confirmLabel='确认',cancelLabel='取消',danger=false,choices}={}){
     return new Promise(resolve=>{
       if(dialogResolve)finishAppDialog(false);
       dialogResolve=resolve;dialogPreviousFocus=document.activeElement;
-      dialogRoot.innerHTML=`<div class="modal-backdrop app-dialog-backdrop"><section class="modal app-dialog" role="alertdialog" aria-modal="true" aria-labelledby="app-dialog-title" aria-describedby="app-dialog-message"><header><h2 id="app-dialog-title">${esc(title)}</h2></header><div class="modal-body"><p id="app-dialog-message" class="app-dialog-message">${esc(message)}</p><div class="modal-actions app-dialog-actions"><button type="button" data-dialog-value="cancel">${esc(cancelLabel)}</button><button type="button" class="${danger?'danger':'primary'}" data-dialog-value="confirm">${esc(confirmLabel)}</button></div></div></section></div>`;
+      const buttons=choices?choices.map(choice=>`<button type="button" data-dialog-value="${esc(choice.value)}" class="${choice.primary?'primary':''}">${esc(choice.label)}</button>`).join(''):`<button type="button" data-dialog-value="cancel">${esc(cancelLabel)}</button><button type="button" class="${danger?'danger':'primary'}" data-dialog-value="confirm">${esc(confirmLabel)}</button>`;
+      dialogRoot.innerHTML=`<div class="modal-backdrop app-dialog-backdrop"><section class="modal app-dialog" role="alertdialog" aria-modal="true" aria-labelledby="app-dialog-title" aria-describedby="app-dialog-message"><header><h2 id="app-dialog-title">${esc(title)}</h2></header><div class="modal-body"><p id="app-dialog-message" class="app-dialog-message">${esc(message)}</p><div class="modal-actions app-dialog-actions">${buttons}</div></div></section></div>`;
       dialogRoot.querySelector('[data-dialog-value="cancel"]')?.focus();
-      dialogRoot.querySelectorAll('[data-dialog-value]').forEach(button=>button.addEventListener('click',()=>finishAppDialog(button.dataset.dialogValue==='confirm')));
+      dialogRoot.querySelectorAll('[data-dialog-value]').forEach(button=>button.addEventListener('click',()=>finishAppDialog(choices?button.dataset.dialogValue:button.dataset.dialogValue==='confirm')));
     });
   }
   function appPrompt(title,value='',{message='',label='输入内容',confirmLabel='确认',cancelLabel='取消',placeholder=''}={}){
@@ -581,7 +582,13 @@ const GameUI = (() => {
     const status={new:'等待开局',waiting:'等待你的行动',running:'AI 正在推演',interrupted:'本轮已中断',ended:'故事已结束'}[a.status]||a.status;
     return `<main class="game-layout ${debug?'debug-mode':''} mobile-${mobile}"><aside class="panel left-panel"><div class="panel-title"><span>${debug?'文件阅览':'I. 随身物品'}</span><small>${debug?(filePath?'编辑器':'EDITOR'):(p.items?.length||0)+' 件物品'}</small></div>${debug ? filePath ? `<div class="editor-path">${esc(filePath)}</div><textarea id="file-editor" spellcheck="false" ${busy?'disabled':''} aria-label="文件内容">${esc(fileDraft)}</textarea><div class="editor-footer"><span id="file-dirty">${fileDraft===fileOriginal?'已保存':'有未保存改动'}</span>${button('save-file','保存',busy?'disabled':'')}${button('close-file','关闭')}</div>` : '<div class="empty-pane"><span>▤</span><p>从右侧选择一个文件</p><small>在这里查看或编辑世界</small></div>' : `<div class="panel-scroll inventory">${p.itemsStale?'<div class="notice error" role="status">背包未更新，暂时保留上次有效资料，请在调试模式检查文件。</div>':''}${GamePresentation.fields(p.items,baseline.items,'inventory')||'<div class="empty-pane"><span>◇</span><p>行囊里暂时没有物品</p></div>'}</div>`}</aside><section class="center-panel"><section class="story-paper"><div class="panel-title story-heading"><span><small>II.</small> 故事卷宗</span><small>CHRONICLE</small></div><div class="story-toolbar"><span><i class="status-dot ${busy?'pulsing':''}"></i>${esc(!busy&&a.status==='waiting'&&blocked?(!flags.alive?'角色已死亡':'失去意识，等待局势发展'):status)}<small>${esc(GamePresentation.metadata({round:roundNumber||0,worldTime:GameData.worldTime(a)}))}</small></span><div>${debug?`<small class="token-usage">${state.usage?'输入 '+esc(state.usage.prompt_tokens??state.usage.input_tokens??'—')+' / 输出 '+esc(state.usage.completion_tokens??state.usage.output_tokens??'—')+' tokens':''}</small>`:''}${debug?button('sync-debug-window','同步窗位','title="按最近的游戏模式阅读位置对齐调试视图"')+button('context','实际上下文')+button('changes','本轮改动'):''}</div></div>${a.importNotice?`<div class="notice">${esc(a.importNotice)}</div>`:''}${state.error?`<div class="notice error">${debug||state.client?esc(state.error):'本轮未能完成。可以继续执行，或在 DEBUG 中查看原因。'}</div>`:''}<div class="history" id="history">${visibleEvents(a.events,state.mode).map(e=>`<div data-key="history:${esc(e.id)}" data-event-id="${esc(e.id)}" data-event-round="${esc(e.round??'')}" data-event-type="${esc(e.type||'')}">${eventHTML(e,state.mode)}</div>`).join('')||`<div class="opening"><div>✧</div><h2>故事在此展开</h2><p>${a.status==='new'?(state.client?'世界已经准备好，等待房主开始故事。':'世界已经准备好，点击「开始故事」。'):'你的行动将成为下一页。'}</p></div>`}${pendingActionsHTML()}${busy?`${state.stream?.story?`<article class="story live-story" aria-live="polite"><header class="story-meta">故事正在书写…</header>${markdown(state.stream.story)}</article>`:''}<div class="live-status">${debug?`${state.stream?.reasoning?`<details><summary>实时思考</summary><pre>${esc(state.stream.reasoning)}</pre></details>`:''}${state.stream?.content?`<div class="assistant-event">${markdown(state.stream.content)}</div>`:''}${state.stream?.tools?.length?`<details><summary>正在接收工具调用 · ${state.stream.tools.length}</summary><pre>${esc(json(state.stream.tools))}</pre></details>`:''}${state.stream?.story?'':'<span class="quill">✦</span> '+esc(runPhase(state))+'…'}`:`${state.stream?.story?'':`<span class="quill">✦</span> ${esc(runPhase(state))}…`}`}</div>`:''}${continuationHTML(state)}</div><nav id="history-navigation" aria-label="故事导航">${button('history-dismiss','×','aria-label="关闭滚动工具栏" title="关闭工具栏"')}${button('history-top','⤒','aria-label="到顶部" title="到顶部"')}${button('history-prev','↑','aria-label="上一段" title="上一段"')}${button('history-next','↓','aria-label="下一段" title="下一段"')}${button('history-bottom','⤓','aria-label="到底部" title="到底部"')}</nav></section>${!debug?'<div id="vital-dock" data-live-vitals></div>':''}${composerHTML(state,{flags,draft,privateDraft,hiddenSend,disguiseSend,collectionHTML:submissionHTML(),preSubmission:preSubmit?.current()})}</section><aside class="panel right-panel"><div class="panel-title"><span>${debug?'世界文件':'III. 人物档案'}</span><small>${debug?'FILES':'CHARACTER'}</small></div>${debug?`<div class="file-actions">${button('create-file','＋ 文件',busy?'disabled':'')}${button('mkdir','＋ 目录',busy?'disabled':'')}${button('file-more','管理',busy?'disabled':'')}${button('export','导出 ZIP',busy?'disabled':'')}</div><div class="panel-scroll file-tree" tabindex="0" aria-label="世界文件管理器">${files(a.tree)||'<p class="muted">暂无文件</p>'}</div>`:`<div class="panel-scroll character">${playerError||p.infoStale?`<div class="notice error" role="status">资料未更新${p.info?'，暂时显示上次有效资料':''}，请在 DEBUG 检查文件。</div>`:''}${GamePresentation.fields(p.info,baseline.info,'character')||'<div class="empty-pane"><span>♙</span><p>角色资料将在故事中完善</p></div>'}</div><footer class="info-footer">${button('rollback',(state.client?'请求回退':'回溯')+' ('+rollbackCount()+')',busy||!rollbackCount()?'disabled':'')}${button('history-export','导出故事',GamePresentation.hasPlayHistory(a)?'':'disabled title="尚未产生游玩记录"')}</footer>`}</aside></main><nav class="mobile-nav">${button('mobile-left',debug?'阅览':'行囊',`aria-pressed="${mobile==='left'}"`)}${button('mobile-center','故事',`aria-pressed="${mobile==='center'}"`)}${button('mobile-right',debug?'文件':'人物',`aria-pressed="${mobile==='right'}"`)}</nav>`;
   }
-  function showModal(title,content) { modalRoot.innerHTML=`<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header><h2>${esc(title)}</h2>${button('close-modal','×','aria-label="关闭"')}</header><div class="modal-body">${content}</div></section></div>`; modalRoot.querySelector('button,input,select,textarea')?.focus(); }
+  function showModal(title,content) {
+    const previous=modalRoot.querySelector('.room-modal'),reuse=previous?.dataset.saveId===state.active?.id&&previous?.getAttribute('aria-label')===title;
+    const scrollTop=reuse?previous.querySelector('.modal-body').scrollTop:0;
+    const html=`<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header><h2>${esc(title)}</h2>${button('close-modal','×','aria-label="关闭"')}</header><div class="modal-body">${content}</div></section></div>`;
+    if(reuse){const desired=document.createElement('template');desired.innerHTML=html;patchDOM(modalRoot,desired.content);modalRoot.querySelector('.modal-body').scrollTop=scrollTop;}
+    else{modalRoot.innerHTML=html;modalRoot.querySelector('button,input,select,textarea')?.focus();}
+  }
   function homeJoinModal(){
     showModal('加入房间',`<form id="home-join-form"><label>邀请链接或加入密钥<input name="invitation" required autocomplete="off" spellcheck="false" placeholder="粘贴房主分享的密钥或链接"></label><p class="muted">战局设置以房主为准，只有房主产生 token 消耗。</p><p class="notice error" data-join-error role="status" hidden></p><div class="modal-actions"><button type="submit" class="primary">加入房间</button></div></form>`);
     modalRoot.querySelector('input')?.focus();
@@ -600,12 +607,44 @@ const GameUI = (() => {
     finally{if(form.isConnected){submit.disabled=false;submit.textContent='加入房间';}}
   }
   let shownMultiplayerDialog='',shownSlotRequest='',slotSelection=null;
+  let roomSlotDraft={saveId:null,modes:{}};
+  function appliedSlotMode(slot){
+    const invites=state.room?.online?state.network?.invites:state.savedInvites;
+    return invites?.some(item=>item.actorId===slot.id)||(state.openPlayerSlots||[]).includes(slot.id)?'player':slot.kind;
+  }
+  function pendingRoomModes(){
+    if(state.client||roomSlotDraft.saveId!==state.active?.id)return [];
+    const slots=slotRows();
+    return Object.entries(roomSlotDraft.modes).filter(([id,kind])=>{const slot=slots.find(slot=>slot.id===id);return slot&&appliedSlotMode(slot)!==kind;});
+  }
+  async function applyRoomSlot(id,kind){
+    const save=state.active,slot=slotRows().find(slot=>slot.id===id);
+    if(!slot)return false;
+    if(kind==='ai'&&slot.occupied&&!await appConfirm('将此角色转为 NPC？该玩家会断开连接，原加入密钥随即失效。',{title:'转为 NPC',confirmLabel:'转为 NPC'}))return false;
+    if(kind==='player'&&save.round>=3&&!slot.occupied&&!state.network?.invites?.some(i=>i.actorId===id)&&GameData.validateCharacterInfo(save,slot.path).length){
+      if(!await appConfirm('该角色卡存在格式错误，中途加入可能出现异常。建议新开游戏，在车卡流程中重新车卡。\n\n如果一定要继续，建议先在调试模式中手动编辑 '+slot.path+'/基础信息.json，并填写正确的格式。否则可能出现无法预料的错误。',{title:'角色卡格式警告',confirmLabel:'我知道了'}))return false;
+    }
+    if(state.active!==save||state.home)return false;
+    await GameApp.configureInvitationSlot(id,kind);
+    if(roomSlotDraft.modes[id]===kind)delete roomSlotDraft.modes[id];
+    roomModal();return true;
+  }
+  async function resolveRoomChanges(){
+    const changes=pendingRoomModes();if(!changes.length)return true;
+    const save=state.active;
+    const decision=await appConfirm(`有 ${changes.length} 个角色槽位的控制方式尚未应用。如何处理这些变更？`,{title:'未应用的角色变更',choices:[{value:'apply',label:'应用变更',primary:true},{value:'discard',label:'丢弃变更'},{value:'cancel',label:'取消'}]});
+    if(state.active!==save||state.home||!modalRoot.querySelector('.room-modal'))return false;
+    if(decision==='discard'){roomSlotDraft.modes={};roomModal();return true;}
+    if(decision!=='apply')return false;
+    for(const [id,kind]of changes)if(!await applyRoomSlot(id,kind))return false;
+    return pendingRoomModes().length===0;
+  }
   function captureSlotModes(){
     if(slotSelection?.saveId!==state.active?.id)return;
     for(const select of modalRoot.querySelectorAll('.slot-mode-control select[data-actor]'))slotSelection.modes[select.dataset.actor]=select.value;
   }
   const slotIDOrder=new Intl.Collator('en',{numeric:true,sensitivity:'variant'});
-  const compareSlotIDs=(a,b)=>slotIDOrder.compare(String(a.id),String(b.id))||String(a.id).localeCompare(String(b.id),'en');
+  const compareSlotIDs=(a,b)=>Number(b.id==='pc')-Number(a.id==='pc')||slotIDOrder.compare(String(a.id),String(b.id))||String(a.id).localeCompare(String(b.id),'en');
   const slotName=slot=>String(slot.name||slot.id).replace(/^(?:Player|AIPC|DISABLE|KPC)-/,'');
   function slotHeading(slot,role){
     const name=slotName(slot),label={host:'房主',player:'玩家',npc:'NPC',disabled:'已关闭'}[role];
@@ -642,24 +681,27 @@ const GameUI = (() => {
     const r=state.room||{},members=Array.isArray(r.members)?r.members.map(m=>[m.memberId,m]):Object.entries(r.members||{}),initial=state.active?.slotsConfigured===false;
     if(initial&&slotSelection?.saveId!==state.active.id)slotSelection={saveId:state.active.id,actorId:null,modes:Object.fromEntries(slotRows().map(s=>[s.id,s.kind==='ai'?'ai':'disabled']))};
     if(!initial)slotSelection=null;
+    if(roomSlotDraft.saveId!==state.active.id)roomSlotDraft={saveId:state.active.id,modes:{}};
+    const pending=new Map(pendingRoomModes());
     const available=slotRows().filter(slot=>!slot.occupied&&slot.id!==state.active?.actorId&&(state.client||!GameSlots.locked(state.active,slot.id,{openPlayerSlots:state.openPlayerSlots})));
     const kpcSlots=!state.client&&GameSlots.canConfigureNPCCards(state.active)?GameSlots.scan(state.active.tree).filter(slot=>slot.kind==='kpc').map(slot=>{
       let name=slot.id;try{name=GameCore.player({...state.active,playerPath:slot.path},'info').name;}catch(_){}
       return {...slot,name};
     }):[];
     const rows=[...slotRows(),...kpcSlots].sort(compareSlotIDs).map(slot=>{
-      if(slot.kind==='kpc')return `<article class="slot-card" data-kpc="${esc(slot.id)}">${slotHeading(slot,'npc')}${npcCardInput(slot)}</article>`;
+      if(slot.kind==='kpc')return `<article class="slot-card" data-key="kpc:${esc(slot.id)}" data-kpc="${esc(slot.id)}">${slotHeading(slot,'npc')}${npcCardInput(slot)}</article>`;
       const own=slot.id===(initial?slotSelection.actorId:state.active?.actorId),invite=(r.online?state.network?.invites:state.savedInvites)?.find(item=>item.actorId===slot.id),open=!state.client&&(state.openPlayerSlots||[]).includes(slot.id);
       const [memberId,member]=members.find(([,m])=>(m.actorId||m.invitationActorId)===slot.id)||[];
-      const kind=initial?slotSelection.modes[slot.id]:invite||open?'player':slot.kind;
-      const role=memberId==='host'||!state.client&&own?'host':kind==='ai'?'npc':kind==='disabled'?'disabled':'player';
+      const applied=state.client?slot.kind:appliedSlotMode(slot),kind=initial?slotSelection.modes[slot.id]:pending.get(slot.id)||applied,dirty=!initial&&pending.has(slot.id);
+      const displayedKind=initial?kind:applied,role=memberId==='host'||!state.client&&own?'host':displayedKind==='ai'?'npc':displayedKind==='disabled'?'disabled':'player';
       const started=!initial&&(state.active.round>0||state.active.activeRound?.starting),locked=!state.client&&GameSlots.locked(state.active,slot.id,{openPlayerSlots:state.openPlayerSlots});
-      const modeControl=locked?`<small class="room-footnote slot-locked">${esc(GameSlots.LOCK_MESSAGE)}</small>`:!state.client&&!own&&(initial?slotSelection.actorId&&!slot.occupied:true)?`<div class="slot-mode-control"><select id="slot-mode-${esc(slot.id)}" data-actor="${esc(slot.id)}" aria-label="${esc(slot.name)}控制方式">${slot.occupied||started?'':`<option value="disabled" ${kind==='disabled'?'selected':''}>关闭角色</option>`}<option value="ai" ${kind==='ai'?'selected':''}>设为NPC</option>${initial?'':`<option value="player" ${invite||open||slot.occupied?'selected':''}>开放给玩家</option>`}</select>${initial?'':button('slot-mode','应用',`data-actor="${esc(slot.id)}"`)}</div>`:'';
+      const modeControl=locked?`<small class="room-footnote slot-locked">${esc(GameSlots.LOCK_MESSAGE)}</small>`:!state.client&&!own&&(initial?slotSelection.actorId&&!slot.occupied:true)?`<div class="slot-mode-control ${dirty?'has-pending-mode':''}">${dirty?'<small class="slot-mode-pending">未应用</small>':''}<select id="slot-mode-${esc(slot.id)}" data-actor="${esc(slot.id)}" aria-label="${esc(slotName(slot))}控制方式">${slot.occupied||started?'':`<option value="disabled" ${kind==='disabled'?'selected':''}>关闭角色</option>`}<option value="ai" ${kind==='ai'?'selected':''}>设为NPC</option>${initial?'':`<option value="player" ${kind==='player'?'selected':''}>开放给玩家</option>`}</select>${initial?'':button('slot-mode',dirty?'应用变更':'应用',`data-actor="${esc(slot.id)}" ${dirty?'class="primary"':''}`)}</div>`:'';
       const controls=`${initial&&!slot.occupied?button('slot-choose',own?'已选择':'选择此角色',`class="${own?'primary':''}" data-actor="${esc(slot.id)}" aria-pressed="${own}"`):''}${member?.actorId?button('player-profile','查看资料',`data-actor="${esc(slot.id)}"`)+button('player-inventory','查看背包',`data-actor="${esc(slot.id)}"`):''}${!state.client&&memberId&&memberId!=='host'&&member.actorId?button('host-skip','代为跳过',`data-member="${esc(memberId)}"`):''}${modeControl}`;
-      return `<article class="slot-card ${own?'is-own':''}" data-slot="${esc(slot.id)}">${slotHeading(slot,role)}${member?`<div class="slot-presence">${presenceHTML(member)}${member.actorId?memberStatus(slot):''}</div>`:open?'<div class="slot-presence">已保存 · 等待连接服务器</div>':''}${controls?`<div class="slot-controls">${controls}</div>`:''}${!own&&kind==='ai'&&(!initial||slotSelection.actorId)?npcCardInput(slot):''}${invite?`<div class="slot-invite-actions">${button('copy-invitation','复制邀请链接',`data-actor="${esc(slot.id)}"`)}${button('copy-join-key','复制加入密钥',`data-actor="${esc(slot.id)}"`)}</div><details class="slot-invite-details"><summary>查看加入密钥</summary><textarea aria-label="${esc(slotName(slot))}加入密钥" class="room-invitation" id="room-invitation-${esc(slot.id)}" readonly>${esc(invite.key)}</textarea></details>`:''}</article>`;
+      return `<article class="slot-card ${own?'is-own':''}" data-key="slot:${esc(slot.id)}" data-slot="${esc(slot.id)}">${slotHeading(slot,role)}${member?`<div class="slot-presence">${presenceHTML(member)}${member.actorId?memberStatus(slot):''}</div>`:open?'<div class="slot-presence">已保存 · 等待连接服务器</div>':''}${controls?`<div class="slot-controls">${controls}</div>`:''}${!own&&kind==='ai'&&(!initial||slotSelection.actorId)?npcCardInput(slot):''}${invite?`<div class="slot-invite-actions">${button('copy-invitation','复制邀请链接',`data-actor="${esc(slot.id)}"`)}${button('copy-join-key','复制加入密钥',`data-actor="${esc(slot.id)}"`)}</div><details class="slot-invite-details"><summary>查看加入密钥</summary><textarea aria-label="${esc(slotName(slot))}加入密钥" class="room-invitation" id="room-invitation-${esc(slot.id)}" readonly>${esc(invite.key)}</textarea></details>`:''}</article>`;
     }).join('');
-    showModal(initial?'选择角色槽位':state.client?'房间':'多人游戏',`${initial?'<p>选择你的角色，并设置其他槽位的控制方式。</p>':'<p class="room-guidance">加入后，战局设置以房主为准，只有房主产生 token 消耗。</p>'}${!state.client&&!initial&&!available.length?'<p>没有剩余可开放的角色。世界需要有空白角色槽位以供加入。</p>':''}<div class="slot-list">${rows}</div>${!state.client?(r.slotRequests||[]).map(q=>`<p>${esc(q.memberId)} 请求选择 ${esc(q.actorId)} ${button('slot-decide','同意',`data-claim="${esc(q.id)}" data-decision="approve"`)}${button('slot-decide','拒绝',`data-claim="${esc(q.id)}" data-decision="reject"`)}</p>`).join(''):''}${r.vote&&['requested','voting'].includes(r.vote.status)?button('show-vote','查看回退请求'):''}<div class="modal-actions">${!state.client&&!initial?(r.online?button('close-room','断开服务器'):button('connect-room',state.network?.status==='connecting'?'连接中…':'连接服务器',`class="primary" ${state.network?.status==='connecting'||!state.openPlayerSlots?.length?'disabled':''}`)):state.client?((state.network&&['disconnected','reconnecting'].includes(state.network.status)?button('reconnect-room','重新连接'):'')+button('leave-room','离开房间','class="room-leave-button"')):''}${initial?'':button('close-modal','取消')}</div>${r.online?'':state.client?'<p class="room-footnote">房间未开放，等待房主连接。</p>':'<p class="room-footnote">当前未连接服务器；应用仅保存本地配置，点击「连接服务器」后开放房间。</p>'}`);
+    showModal(initial?'选择角色槽位':state.client?'房间':'多人游戏',`${initial?'<p>选择你的角色，并设置其他槽位的控制方式。</p>':'<p class="room-guidance">加入后，战局设置以房主为准，只有房主产生 token 消耗。</p>'}${!state.client&&!initial&&!available.length?'<p>没有剩余可开放的角色。世界需要有空白角色槽位以供加入。</p>':''}<div class="slot-list">${rows}</div>${!state.client?(r.slotRequests||[]).map(q=>`<p>${esc(q.memberId)} 请求选择 ${esc(q.actorId)} ${button('slot-decide','同意',`data-claim="${esc(q.id)}" data-decision="approve"`)}${button('slot-decide','拒绝',`data-claim="${esc(q.id)}" data-decision="reject"`)}</p>`).join(''):''}${r.vote&&['requested','voting'].includes(r.vote.status)?button('show-vote','查看回退请求'):''}<div class="modal-actions">${!state.client&&!initial?(r.online?button('close-room','断开服务器'):button('connect-room',state.network?.status==='connecting'?'连接中…':'连接服务器',`class="primary" ${state.network?.status==='connecting'||!(state.openPlayerSlots?.length||[...pending.values()].includes('player'))?'disabled':''}`)):state.client?((state.network&&['disconnected','reconnecting'].includes(state.network.status)?button('reconnect-room','重新连接'):'')+button('leave-room','离开房间','class="room-leave-button"')):''}${initial?'':button('close-modal','取消')}</div>${r.online?'':state.client?'<p class="room-footnote">房间未开放，等待房主连接。</p>':'<p class="room-footnote">当前未连接服务器；应用仅保存本地配置，点击「连接服务器」后开放房间。</p>'}`);
     modalRoot.querySelector('.modal')?.classList.add('room-modal');
+    modalRoot.querySelector('.modal').dataset.saveId=state.active.id;
     if(!state.client)modalRoot.querySelector('.modal').dataset.npcSetup=String(GameSlots.canConfigureNPCCards(state.active));
     if(initial){
       const modal=modalRoot.querySelector('.modal');modal.dataset.slotSelection='true';modal.querySelector('header [data-action="close-modal"]')?.remove();
@@ -1180,7 +1222,7 @@ const GameUI = (() => {
     showModal('最近一回合的文件改动',`<p class="muted">${state.running?'本轮进行中，以下为已发生的改动。':'文件改动已生效。这里保留最近一轮的记录。'}</p>${changes.map(c=>`<details class="change" open><summary><span class="change-kind ${esc(c.type)}">${{add:'新增',delete:'删除',modify:'修改'}[c.type]||esc(c.type)}</span> ${esc(c.path)}</summary>${c.binary?'<p>二进制内容已变更</p>':`<div class="diff-columns"><div><header>修改前</header><pre>${esc(c.before??'（不存在）')}</pre></div><div><header>修改后</header><pre>${esc(c.after??'（不存在）')}</pre></div></div>`}</details>`).join('')||'<div class="empty-pane"><span>≡</span><p>本轮没有文件改动</p></div>'}`);
   }
   async function action(name,el) {
-    if(name==='close-modal'){if(modalRoot.querySelector('[data-slot-selection]'))return;if(modalRoot.querySelector('.manual-dice-shell[data-dice-rolling="true"]'))return toast('骰子正在结算，请等待结果');diceBoxToken++;activeDiceBox=null;modalRoot.innerHTML='';return;}
+    if(name==='close-modal'){if(modalRoot.querySelector('[data-slot-selection]'))return;if(modalRoot.querySelector('.manual-dice-shell[data-dice-rolling="true"]'))return toast('骰子正在结算，请等待结果');if(modalRoot.querySelector('.room-modal')&&!await resolveRoomChanges())return;roomSlotDraft.modes={};diceBoxToken++;activeDiceBox=null;modalRoot.innerHTML='';return;}
     if(name==='dice-detail'){const e=state.active?.events?.find(x=>x.id===el.dataset.eventId);if(e)return diceDetailModal(e);}
     if(name==='manual-dice-later'){modalRoot.innerHTML='';return;}
     if(name==='manual-dice-roll'&&state.client)return;
@@ -1216,7 +1258,7 @@ const GameUI = (() => {
       catch(_){showModal('复制邀请',`<p>请选择下方内容并复制。</p><textarea id="room-invitation" class="room-invitation" readonly>${esc(value)}</textarea>`);document.getElementById('room-invitation').select();}
       return;
     }
-    if(name==='connect-room'){el.disabled=true;try{await GameApp.connectRoom();}finally{if(state.active&&!state.home)roomModal();}return;}
+    if(name==='connect-room'){if(!await resolveRoomChanges())return;el.disabled=true;try{await GameApp.connectRoom();}finally{if(el.isConnected&&state.active&&!state.home)roomModal();}return;}
     if(name==='close-room'){await GameApp.closeRoom();return roomModal();}
     if(name==='slot-choose'){
       if(state.active?.slotsConfigured!==false||slotSelection?.saveId!==state.active.id||!slotRows().some(s=>s.id===el.dataset.actor&&!s.occupied))return;
@@ -1232,14 +1274,8 @@ const GameUI = (() => {
     if(name==='slot-decide'){await GameApp.roomCommand('slot.claim.decide',{claimId:el.dataset.claim,decision:el.dataset.decision});return roomModal();}
     if(name==='show-vote'){shownMultiplayerDialog='';modalRoot.innerHTML='';return multiplayerDialogs();}
     if(name==='slot-mode'){
-      const actorId=el.dataset.actor,kind=document.getElementById('slot-mode-'+actorId).value,slot=slotRows().find(s=>s.id===actorId);
-      if(kind==='ai'&&slot?.occupied&&!await appConfirm('将此角色转为 NPC？该玩家会断开连接，原加入密钥随即失效。',{title:'转为 NPC',confirmLabel:'转为 NPC'}))return;
-      if(kind==='player'&&state.active.round>=3&&slot&&!slot.occupied&&!state.network?.invites?.some(i=>i.actorId===actorId)&&GameData.validateCharacterInfo(state.active,slot.path).length){
-        const save=state.active;
-        if(!await appConfirm('该角色卡存在格式错误，中途加入可能出现异常。建议新开游戏，在车卡流程中重新车卡。\n\n如果一定要继续，建议先在调试模式中手动编辑 '+slot.path+'/基础信息.json，并填写正确的格式。否则可能出现无法预料的错误。',{title:'角色卡格式警告',confirmLabel:'我知道了'}))return;
-        if(state.active!==save||state.home)return;
-      }
-      await GameApp.configureInvitationSlot(actorId,kind);return roomModal();
+      const actorId=el.dataset.actor,kind=document.getElementById('slot-mode-'+actorId).value;
+      await applyRoomSlot(actorId,kind);return;
     }
     if(name==='rollback-decide'){await GameApp.roomCommand('rollback.decide',{voteId:el.dataset.vote,decision:el.dataset.decision});modalRoot.innerHTML='';multiplayerDialogs();return;}
     if(name==='rollback-vote'){await GameApp.roomCommand('rollback.vote',{voteId:el.dataset.vote,approve:el.dataset.approve==='true'});modalRoot.innerHTML='';return;}
@@ -1362,9 +1398,8 @@ const GameUI = (() => {
       if(e.target.matches('.slot-mode-control select[data-actor]')&&!state.client){
         if(slotSelection?.saveId===state.active?.id){captureSlotModes();roomModal();}
         else{
-          const card=e.target.closest('.slot-card'),slot=slotRows().find(slot=>slot.id===e.target.dataset.actor);
-          card?.querySelector('.npc-card-requirements')?.remove();
-          if(slot&&e.target.value==='ai')card?.insertAdjacentHTML('beforeend',npcCardInput(slot));
+          const slot=slotRows().find(slot=>slot.id===e.target.dataset.actor);
+          if(slot){roomSlotDraft.modes[slot.id]=e.target.value;if(e.target.value===appliedSlotMode(slot))delete roomSlotDraft.modes[slot.id];roomModal();}
         }
         return;
       }
@@ -1376,7 +1411,7 @@ const GameUI = (() => {
       render();attempt(()=>GameApp.saveDraft(draft,undefined,inputOptions()));
     });
     document.addEventListener('mouseout',e=>{if(e.target.closest?.('#history-navigation.active')&&!e.relatedTarget?.closest?.('#history-navigation'))revealNavigation();});
-    document.addEventListener('keydown',e=>{if(e.key==='Escape'&&modeMenuOpen){e.preventDefault();closeModeMenu(true);return;}if((e.key==='Enter'||e.key===' ')&&e.target.matches?.('.dice-clickable')){e.preventDefault();e.target.click();return;}if(e.key==='Escape'&&dialogRoot?.firstChild){e.preventDefault();finishAppDialog(null);return;}if(e.key==='Escape'&&!modalRoot.querySelector('.manual-dice-stage.rolling,[data-slot-selection]'))modalRoot.innerHTML='';if(['action-input','action-private-input'].includes(e.target.id)){const action=SendShortcut.action(e,state.settings?.reverseSendNewline===true);if(action){e.preventDefault();if(action==='send')e.target.form.requestSubmit();else{e.target.setRangeText('\n',e.target.selectionStart,e.target.selectionEnd,'end');e.target.dispatchEvent(new Event('input',{bubbles:true}));}}}if(e.key==='Tab'&&(dialogRoot?.firstChild||modalRoot.firstChild)){const scope=dialogRoot?.firstChild?dialogRoot:modalRoot,nodes=[...scope.querySelectorAll('button,input,select,textarea,[tabindex]')].filter(x=>!x.disabled);const first=nodes[0],last=nodes[nodes.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}});
+    document.addEventListener('keydown',e=>{if(e.key==='Escape'&&modeMenuOpen){e.preventDefault();closeModeMenu(true);return;}if((e.key==='Enter'||e.key===' ')&&e.target.matches?.('.dice-clickable')){e.preventDefault();e.target.click();return;}if(e.key==='Escape'&&dialogRoot?.firstChild){e.preventDefault();finishAppDialog(null);return;}if(e.key==='Escape'&&!modalRoot.querySelector('.manual-dice-stage.rolling,[data-slot-selection]')){e.preventDefault();attempt(()=>action('close-modal'));return;}if(['action-input','action-private-input'].includes(e.target.id)){const action=SendShortcut.action(e,state.settings?.reverseSendNewline===true);if(action){e.preventDefault();if(action==='send')e.target.form.requestSubmit();else{e.target.setRangeText('\n',e.target.selectionStart,e.target.selectionEnd,'end');e.target.dispatchEvent(new Event('input',{bubbles:true}));}}}if(e.key==='Tab'&&(dialogRoot?.firstChild||modalRoot.firstChild)){const scope=dialogRoot?.firstChild?dialogRoot:modalRoot,nodes=[...scope.querySelectorAll('button,input,select,textarea,[tabindex]')].filter(x=>!x.disabled);const first=nodes[0],last=nodes[nodes.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}});
     document.addEventListener('submit',e=>{e.preventDefault();attempt(async()=>{
       if(e.target.id==='home-join-form')return joinFromHome(e.target);
       if(e.target.id==='join-room-form'){if(!await confirmSaveSwitch())return;return joinWithResult(new FormData(e.target).get('invitation'));}

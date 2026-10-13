@@ -51,21 +51,21 @@ test('room cards sort by actual IDs, keep order across role changes and show mat
  });
  const ids=page=>page.locator('.room-modal .slot-card').evaluateAll(cards=>cards.map(card=>card.dataset.slot||card.dataset.kpc));
  await host.locator('.room-modal .slot-card').first().waitFor();
- assert.deepEqual(await ids(host),['p1','p2','p3','p10','pc']);
+ assert.deepEqual(await ids(host),['pc','p1','p2','p3','p10']);
  assert.doesNotMatch(await host.locator('.slot-card-heading').allTextContents().then(values=>values.join(' ')),/Player-|AIPC-|DISABLE-|KPC-/);
  await host.locator('[data-action="slot-choose"][data-actor="pc"]').click();await host.locator('[data-action="slot-confirm"]').click();
- await host.locator('[data-action="room-panel"]').click();assert.deepEqual(await ids(host),['p1','p2','p3','p10','pc']);
+ await host.locator('[data-action="room-panel"]').click();assert.deepEqual(await ids(host),['pc','p1','p2','p3','p10']);
  assert.equal(await host.locator('[data-slot="pc"] .slot-kind').innerText(),'房主');
  assert.equal(await host.locator('[data-slot="p2"] .slot-kind').innerText(),'NPC');
  await host.locator('#slot-mode-p3').selectOption('player');await host.locator('[data-action="slot-mode"][data-actor="p3"]').click();
- assert.deepEqual(await ids(host),['p1','p2','p3','p10','pc']);assert.equal(await host.locator('[data-slot="p3"] .slot-kind').innerText(),'玩家');
- await host.locator('#slot-mode-p2').selectOption('player');await host.locator('[data-action="slot-mode"][data-actor="p2"]').click();assert.deepEqual(await ids(host),['p1','p2','p3','p10','pc']);
+ assert.deepEqual(await ids(host),['pc','p1','p2','p3','p10']);assert.equal(await host.locator('[data-slot="p3"] .slot-kind').innerText(),'玩家');
+ await host.locator('#slot-mode-p2').selectOption('player');await host.locator('[data-action="slot-mode"][data-actor="p2"]').click();assert.deepEqual(await ids(host),['pc','p1','p2','p3','p10']);
  await guest.goto(origin+'/client.html');await guest.locator('#join-room-form').waitFor();
  await guest.evaluate(async()=>{
    const s=GameApp.getState();s.room={online:true,status:'collecting',members:[{memberId:'host',actorId:'pc',connected:true},{memberId:'guest',actorId:'p2',connected:true}]};s.network={status:'connected'};
    s.active={id:'sort-client',name:'排序测试',actorId:'p2',round:0,status:'waiting',info:{姓名:'自己'},items:[],events:[],slots:[{id:'pc',name:'Player-pc',kind:'player'},{id:'p10',name:'DISABLE-p10',kind:'disabled'},{id:'p3',name:'林医生',kind:'ai'},{id:'p2',name:'Player-p2',kind:'player'}]};await GameApp.updateSettings({});
  });
- await guest.locator('[data-action="room-panel"]').click();assert.deepEqual(await ids(guest),['p2','p3','p10','pc']);
+ await guest.locator('[data-action="room-panel"]').click();assert.deepEqual(await ids(guest),['pc','p2','p3','p10']);
  assert.equal(await guest.locator('[data-slot="pc"] .slot-kind').innerText(),'房主');assert.equal(await guest.locator('[data-slot="p2"] .slot-kind').innerText(),'玩家');
  assert.equal(await guest.locator('[data-slot="p3"] h3').innerText(),'林医生');
  assert.equal(await guest.locator('[data-slot="p2"] h3').innerText(),'p2');
@@ -73,6 +73,87 @@ test('room cards sort by actual IDs, keep order across role changes and show mat
  await guest.screenshot({path:'tests/artifacts/room-role-badges-desktop.png'});
  await guest.setViewportSize({width:390,height:844});assert.ok(await guest.locator('.slot-card-heading').evaluateAll(nodes=>nodes.every(node=>node.getBoundingClientRect().right<=innerWidth)));
  await guest.screenshot({path:'tests/artifacts/room-role-badges-390.png'});
+ assert.deepEqual(errors,[]);
+});
+
+test('connecting and disconnecting the server preserve the open room panel and its scroll position',async t=>{
+ const page=await pageFor(t),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto(origin+'/index.html');await page.locator('[data-action="import"]').waitFor();
+ await page.evaluate(async()=>{
+   const ids=['pc',...Array.from({length:8},(_,i)=>'p'+(i+1))],files=ids.flatMap(id=>[{name:`Player-${id}/基础信息.json`,text:JSON.stringify({姓名:id})},{name:`Player-${id}/背包.json`,text:'[]'}]);
+   await GameApp.importSave(new File([ZIP.makeZip(files)],'滚动位置.zip'));await GameApp.configureSlots('pc',Object.fromEntries(ids.slice(1).map(id=>[id,'ai'])));
+   await GameApp.configureInvitationSlot('p8','player');
+   BridgeTransport.createHost=async options=>{
+     await new Promise((resolve,reject)=>window.finishConnection=fail=>fail?reject(Error('测试连接失败')):resolve());
+     return {transport:{onHost:()=>()=>{},sendToClient:async()=>{}},credentials:()=>options.credentials,close(){}};
+   };
+ });
+ await page.locator('[data-action="room-panel"]').click();
+ for(const fail of [false,true]){
+   await page.locator('[data-action="connect-room"]').click();await page.waitForFunction(()=>typeof window.finishConnection==='function');
+   const top=await page.locator('.room-modal .modal-body').evaluate(body=>{window.roomScrollBody=body;body.scrollTop=350;return body.scrollTop;});assert.ok(top>0);
+   await page.evaluate(fail=>{const done=window.finishConnection;delete window.finishConnection;done(fail);},fail);
+   await page.waitForFunction(fail=>GameApp.getState().network?.status===(fail?'disconnected':'connected'),fail);
+   await page.locator(fail?'[data-action="connect-room"]:not([disabled])':'[data-action="close-room"]').waitFor();
+   assert.equal(await page.evaluate(()=>document.querySelector('.room-modal .modal-body')===window.roomScrollBody),true,'updates reuse the scrolling container');
+   assert.equal(await page.locator('.room-modal .modal-body').evaluate(body=>body.scrollTop),top);
+   if(!fail){
+     const before=await page.locator('[data-action="close-room"]').evaluate(button=>{const body=document.querySelector('.room-modal .modal-body');body.scrollTop=350;const top=body.scrollTop;button.click();return top;});
+     await page.locator('[data-action="connect-room"]').waitFor();
+     assert.equal(await page.evaluate(()=>document.querySelector('.room-modal .modal-body')===window.roomScrollBody),true);
+     assert.equal(await page.locator('.room-modal .modal-body').evaluate(body=>body.scrollTop),before);
+   }
+ }
+ await page.locator('[data-action="connect-room"]').click();await page.waitForFunction(()=>typeof window.finishConnection==='function');
+ await page.locator('[data-action="close-modal"]').first().click();await page.evaluate(()=>window.finishConnection(false));
+ await page.waitForFunction(()=>GameApp.getState().network?.status==='connected');
+ assert.equal(await page.locator('.room-modal').count(),0,'finishing a connection does not reopen a dismissed room panel');
+ assert.deepEqual(errors,[]);
+});
+
+test('unapplied room slot changes are visible and apply/discard/cancel guard closing and connecting',async t=>{
+ const page=await pageFor(t),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto(origin+'/index.html');await page.locator('[data-action="import"]').waitFor();
+ await page.evaluate(async()=>{
+   const files=['pc','p1','p2','p3'].flatMap(id=>[{name:`Player-${id}/基础信息.json`,text:JSON.stringify({姓名:id})},{name:`Player-${id}/背包.json`,text:'[]'}]);
+   await GameApp.importSave(new File([ZIP.makeZip(files)],'未应用变更.zip'));await GameApp.configureSlots('pc',{p1:'ai',p2:'ai',p3:'ai'});
+   window.connectionPlayers=[];BridgeTransport.createHost=async options=>{connectionPlayers.push(options.players.length);return {transport:{onHost:()=>()=>{},sendToClient:async()=>{}},credentials:()=>options.credentials,close(){}};};
+ });
+ await page.locator('[data-action="room-panel"]').click();
+ await page.locator('#slot-mode-p1').selectOption('player');
+ assert.match(await page.locator('[data-slot="p1"]').innerText(),/未应用/);
+ assert.equal(await page.evaluate(()=>GameApp.getState().openPlayerSlots.length),0);
+ await page.setViewportSize({width:390,height:844});
+ assert.ok(await page.locator('.has-pending-mode').evaluateAll(nodes=>nodes.every(node=>node.getBoundingClientRect().right<=innerWidth)));
+ await page.screenshot({path:'tests/artifacts/room-unapplied-390.png'});
+ await page.locator('[data-action="connect-room"]').click();await page.locator('[role="alertdialog"]').waitFor();
+ await page.screenshot({path:'tests/artifacts/room-unapplied-confirm-390.png'});
+ assert.deepEqual(await page.locator('.app-dialog button').allTextContents(),['应用变更','丢弃变更','取消']);
+ await page.locator('[data-dialog-value="cancel"]').click();assert.equal(await page.evaluate(()=>connectionPlayers.length),0);
+ assert.equal(await page.locator('#slot-mode-p1').inputValue(),'player');
+ await page.locator('#slot-mode-p2').selectOption('player');await page.locator('[data-action="slot-mode"][data-actor="p2"]').click();
+ assert.equal(await page.locator('#slot-mode-p1').inputValue(),'player','applying another slot preserves outstanding edits');
+ await page.locator('[data-action="close-modal"]').first().click();await page.locator('[data-dialog-value="cancel"]').click();assert.equal(await page.locator('.room-modal').count(),1);
+ await page.keyboard.press('Escape');await page.locator('[data-dialog-value="apply"]').click();await page.waitForFunction(()=>!document.querySelector('.room-modal'));
+ assert.deepEqual(await page.evaluate(()=>GameApp.getState().openPlayerSlots),['p2','p1']);
+ await page.locator('[data-action="room-panel"]').click();assert.equal(await page.locator('.slot-mode-pending').count(),0);
+ await page.locator('#slot-mode-p3').selectOption('disabled');await page.locator('[data-action="close-modal"]').last().click();await page.locator('[data-dialog-value="discard"]').click();await page.waitForFunction(()=>!document.querySelector('.room-modal'));
+ assert.equal(await page.evaluate(()=>GameApp.getState().active.slots.find(s=>s.id==='p3').kind),'ai');
+ await page.locator('[data-action="room-panel"]').click();await page.locator('#slot-mode-p1').selectOption('ai');
+ await page.locator('[data-action="connect-room"]').click();await page.locator('[data-dialog-value="apply"]').click();await page.locator('[data-action="close-room"]').waitFor();
+ assert.deepEqual(await page.evaluate(()=>connectionPlayers),[1]);assert.equal(await page.locator('.slot-mode-pending').count(),0);
+ await page.locator('[data-action="close-room"]').click();await page.locator('#slot-mode-p3').selectOption('player');
+ await page.locator('[data-action="connect-room"]').click();await page.locator('[data-dialog-value="discard"]').click();await page.locator('[data-action="close-room"]').waitFor();
+ assert.deepEqual(await page.evaluate(()=>connectionPlayers),[1,1]);assert.equal(await page.locator('#slot-mode-p3').inputValue(),'ai');
+ await page.locator('[data-action="close-room"]').click();
+ await page.evaluate(()=>{const original=GameApp.configureInvitationSlot;GameApp.configureInvitationSlot=(id,kind)=>id==='p3'?Promise.reject(Error('测试应用失败')):original(id,kind);});
+ await page.locator('#slot-mode-p1').selectOption('player');await page.locator('#slot-mode-p3').selectOption('player');
+ await page.locator('[data-action="close-modal"]').first().click();await page.locator('[data-dialog-value="apply"]').click();
+ await page.waitForFunction(()=>document.getElementById('toast')?.textContent.includes('测试应用失败'));
+ assert.equal(await page.locator('.room-modal').count(),1,'an apply failure keeps the room window open');
+ assert.equal(await page.locator('[data-slot="p1"] .slot-mode-pending').count(),0);
+ assert.equal(await page.locator('[data-slot="p3"] .slot-mode-pending').count(),1,'failed and unapplied changes remain available for retry');
+ assert.equal(await page.locator('#slot-mode-p3').inputValue(),'player');
  assert.deepEqual(errors,[]);
 });
 
