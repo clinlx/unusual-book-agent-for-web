@@ -40,6 +40,42 @@ test('started room slots lock disabled roles, keep NPC/player switching and expo
 });
 async function pageFor(t){const context=await browser.newContext({viewport:{width:1440,height:960}});t.after(()=>context.close());const page=await context.newPage();await page.route('**/modules.json',route=>route.fulfill({json:[]}));await page.route('**/files/**',route=>route.abort());page.setDefaultTimeout(10000);return page;}
 
+test('room cards sort by actual IDs, keep order across role changes and show matching host/client role badges',async t=>{
+ const host=await pageFor(t),guest=await pageFor(t),errors=[];
+ for(const page of [host,guest])page.on('pageerror',e=>errors.push(e.message));
+ await host.goto(origin+'/index.html');await host.locator('[data-action="import"]').waitFor();
+ await host.evaluate(async()=>{
+   await GameApp.updateSettings({apiKey:'test'});
+   const files=['Player-pc','DISABLE-p3','Player-p10','AIPC-p2','KPC-p1'].flatMap(name=>[{name:name+'/基础信息.json',text:JSON.stringify({姓名:name})},{name:name+'/背包.json',text:'[]'}]);
+   await GameApp.importSave(new File([ZIP.makeZip(files)],'排序测试.zip'));
+ });
+ const ids=page=>page.locator('.room-modal .slot-card').evaluateAll(cards=>cards.map(card=>card.dataset.slot||card.dataset.kpc));
+ await host.locator('.room-modal .slot-card').first().waitFor();
+ assert.deepEqual(await ids(host),['p1','p2','p3','p10','pc']);
+ assert.doesNotMatch(await host.locator('.slot-card-heading').allTextContents().then(values=>values.join(' ')),/Player-|AIPC-|DISABLE-|KPC-/);
+ await host.locator('[data-action="slot-choose"][data-actor="pc"]').click();await host.locator('[data-action="slot-confirm"]').click();
+ await host.locator('[data-action="room-panel"]').click();assert.deepEqual(await ids(host),['p1','p2','p3','p10','pc']);
+ assert.equal(await host.locator('[data-slot="pc"] .slot-kind').innerText(),'房主');
+ assert.equal(await host.locator('[data-slot="p2"] .slot-kind').innerText(),'NPC');
+ await host.locator('#slot-mode-p3').selectOption('player');await host.locator('[data-action="slot-mode"][data-actor="p3"]').click();
+ assert.deepEqual(await ids(host),['p1','p2','p3','p10','pc']);assert.equal(await host.locator('[data-slot="p3"] .slot-kind').innerText(),'玩家');
+ await host.locator('#slot-mode-p2').selectOption('player');await host.locator('[data-action="slot-mode"][data-actor="p2"]').click();assert.deepEqual(await ids(host),['p1','p2','p3','p10','pc']);
+ await guest.goto(origin+'/client.html');await guest.locator('#join-room-form').waitFor();
+ await guest.evaluate(async()=>{
+   const s=GameApp.getState();s.room={online:true,status:'collecting',members:[{memberId:'host',actorId:'pc',connected:true},{memberId:'guest',actorId:'p2',connected:true}]};s.network={status:'connected'};
+   s.active={id:'sort-client',name:'排序测试',actorId:'p2',round:0,status:'waiting',info:{姓名:'自己'},items:[],events:[],slots:[{id:'pc',name:'Player-pc',kind:'player'},{id:'p10',name:'DISABLE-p10',kind:'disabled'},{id:'p3',name:'林医生',kind:'ai'},{id:'p2',name:'Player-p2',kind:'player'}]};await GameApp.updateSettings({});
+ });
+ await guest.locator('[data-action="room-panel"]').click();assert.deepEqual(await ids(guest),['p2','p3','p10','pc']);
+ assert.equal(await guest.locator('[data-slot="pc"] .slot-kind').innerText(),'房主');assert.equal(await guest.locator('[data-slot="p2"] .slot-kind').innerText(),'玩家');
+ assert.equal(await guest.locator('[data-slot="p3"] h3').innerText(),'林医生');
+ assert.equal(await guest.locator('[data-slot="p2"] h3').innerText(),'p2');
+ const colors=await guest.locator('[data-slot="pc"] .slot-kind,[data-slot="p2"] .slot-kind,[data-slot="p3"] .slot-kind').evaluateAll(tags=>tags.map(tag=>getComputedStyle(tag).backgroundColor));assert.equal(new Set(colors).size,3);
+ await guest.screenshot({path:'tests/artifacts/room-role-badges-desktop.png'});
+ await guest.setViewportSize({width:390,height:844});assert.ok(await guest.locator('.slot-card-heading').evaluateAll(nodes=>nodes.every(node=>node.getBoundingClientRect().right<=innerWidth)));
+ await guest.screenshot({path:'tests/artifacts/room-role-badges-390.png'});
+ assert.deepEqual(errors,[]);
+});
+
 test('initial selection and room setup keep separate NPC drafts and start uses only final NPC roles',async t=>{
  const page=await pageFor(t),requests=[],errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.route('https://npc-cards.invalid/**',async route=>{requests.push(route.request().postDataJSON());await route.fulfill({json:{choices:[{message:{content:'',tool_calls:[call('append_story',{content:'开场正文。',one_line_summary_of_content:'开场'},'npc-story'),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'npc-end')]}}]}});});

@@ -604,9 +604,16 @@ const GameUI = (() => {
     if(slotSelection?.saveId!==state.active?.id)return;
     for(const select of modalRoot.querySelectorAll('.slot-mode-control select[data-actor]'))slotSelection.modes[select.dataset.actor]=select.value;
   }
+  const slotIDOrder=new Intl.Collator('en',{numeric:true,sensitivity:'variant'});
+  const compareSlotIDs=(a,b)=>slotIDOrder.compare(String(a.id),String(b.id))||String(a.id).localeCompare(String(b.id),'en');
+  const slotName=slot=>String(slot.name||slot.id).replace(/^(?:Player|AIPC|DISABLE|KPC)-/,'');
+  function slotHeading(slot,role){
+    const name=slotName(slot),label={host:'房主',player:'玩家',npc:'NPC',disabled:'已关闭'}[role];
+    return `<div class="slot-card-heading"><div><h3>${esc(name)}</h3>${name!==slot.id?`<small class="slot-id">${esc(slot.id)}</small>`:''}</div><span class="slot-kind" data-role="${role}">${label}</span></div>`;
+  }
   function slotRows(){
-    if(state.client)return state.active?.slots||[];
-    return (state.active?.slots||[]).map(slot=>{let name=slot.id,flags={};try{const card=GameCore.player({...state.active,playerPath:slot.path},'info');name=card.name;flags=GameData.actorState(card.info);}catch(_){}return {...slot,...flags,name,occupied:!!slot.memberId,submitted:!!state.room?.submissions?.[slot.id]};});
+    if(state.client)return [...(state.active?.slots||[])].sort(compareSlotIDs);
+    return (state.active?.slots||[]).map(slot=>{let name=slot.id,flags={};try{const card=GameCore.player({...state.active,playerPath:slot.path},'info');name=card.name;flags=GameData.actorState(card.info);}catch(_){}return {...slot,...flags,name,occupied:!!slot.memberId,submitted:!!state.room?.submissions?.[slot.id]};}).sort(compareSlotIDs);
   }
   function memberStatus(slot){
     if(!slot)return '';
@@ -629,28 +636,29 @@ const GameUI = (() => {
   function npcCardInput(slot){
     if(state.client||!GameSlots.canConfigureNPCCards(state.active))return '';
     const key=GameSlots.npcRequirementKey(slot),value=GameSlots.npcRequirements(state.active)[key]||'';
-    return `<label class="npc-card-requirements"><span>NPC车卡要求（可选）</span><textarea data-npc-key="${esc(key)}" aria-label="${esc(slot.name||slot.id)}的NPC车卡要求" maxlength="4000" placeholder="填写这名角色的职业、性格或背景；留空由AI补全">${esc(value)}</textarea></label>`;
+    return `<label class="npc-card-requirements"><span>NPC车卡要求（可选）</span><textarea data-npc-key="${esc(key)}" aria-label="${esc(slotName(slot))}的NPC车卡要求" maxlength="4000" placeholder="填写这名角色的职业、性格或背景；留空由AI补全">${esc(value)}</textarea></label>`;
   }
   function roomModal(){
     const r=state.room||{},members=Array.isArray(r.members)?r.members.map(m=>[m.memberId,m]):Object.entries(r.members||{}),initial=state.active?.slotsConfigured===false;
     if(initial&&slotSelection?.saveId!==state.active.id)slotSelection={saveId:state.active.id,actorId:null,modes:Object.fromEntries(slotRows().map(s=>[s.id,s.kind==='ai'?'ai':'disabled']))};
     if(!initial)slotSelection=null;
     const available=slotRows().filter(slot=>!slot.occupied&&slot.id!==state.active?.actorId&&(state.client||!GameSlots.locked(state.active,slot.id,{openPlayerSlots:state.openPlayerSlots})));
-    const kpcRows=!state.client&&GameSlots.canConfigureNPCCards(state.active)?GameSlots.scan(state.active.tree).filter(slot=>slot.kind==='kpc').map(slot=>{
+    const kpcSlots=!state.client&&GameSlots.canConfigureNPCCards(state.active)?GameSlots.scan(state.active.tree).filter(slot=>slot.kind==='kpc').map(slot=>{
       let name=slot.id;try{name=GameCore.player({...state.active,playerPath:slot.path},'info').name;}catch(_){}
-      return `<article class="slot-card" data-kpc="${esc(slot.id)}"><div class="slot-card-heading"><div><h3>${esc(name)}</h3><small class="slot-id">KPC-${esc(slot.id)}</small></div><span class="slot-kind">KPC</span></div>${npcCardInput({...slot,name})}</article>`;
-    }).join(''):'';
-    const rows=slotRows().map(slot=>{
+      return {...slot,name};
+    }):[];
+    const rows=[...slotRows(),...kpcSlots].sort(compareSlotIDs).map(slot=>{
+      if(slot.kind==='kpc')return `<article class="slot-card" data-kpc="${esc(slot.id)}">${slotHeading(slot,'npc')}${npcCardInput(slot)}</article>`;
       const own=slot.id===(initial?slotSelection.actorId:state.active?.actorId),invite=(r.online?state.network?.invites:state.savedInvites)?.find(item=>item.actorId===slot.id),open=!state.client&&(state.openPlayerSlots||[]).includes(slot.id);
       const [memberId,member]=members.find(([,m])=>(m.actorId||m.invitationActorId)===slot.id)||[];
       const kind=initial?slotSelection.modes[slot.id]:invite||open?'player':slot.kind;
-      const label=own?(initial?'已选择':state.client?'你的角色':'房主 · 角色已锁定'):slot.occupied?'玩家角色':kind==='ai'?'NPC':invite||open?'开放给玩家':kind==='disabled'?'已关闭':'可选槽位';
+      const role=memberId==='host'||!state.client&&own?'host':kind==='ai'?'npc':kind==='disabled'?'disabled':'player';
       const started=!initial&&(state.active.round>0||state.active.activeRound?.starting),locked=!state.client&&GameSlots.locked(state.active,slot.id,{openPlayerSlots:state.openPlayerSlots});
       const modeControl=locked?`<small class="room-footnote slot-locked">${esc(GameSlots.LOCK_MESSAGE)}</small>`:!state.client&&!own&&(initial?slotSelection.actorId&&!slot.occupied:true)?`<div class="slot-mode-control"><select id="slot-mode-${esc(slot.id)}" data-actor="${esc(slot.id)}" aria-label="${esc(slot.name)}控制方式">${slot.occupied||started?'':`<option value="disabled" ${kind==='disabled'?'selected':''}>关闭角色</option>`}<option value="ai" ${kind==='ai'?'selected':''}>设为NPC</option>${initial?'':`<option value="player" ${invite||open||slot.occupied?'selected':''}>开放给玩家</option>`}</select>${initial?'':button('slot-mode','应用',`data-actor="${esc(slot.id)}"`)}</div>`:'';
       const controls=`${initial&&!slot.occupied?button('slot-choose',own?'已选择':'选择此角色',`class="${own?'primary':''}" data-actor="${esc(slot.id)}" aria-pressed="${own}"`):''}${member?.actorId?button('player-profile','查看资料',`data-actor="${esc(slot.id)}"`)+button('player-inventory','查看背包',`data-actor="${esc(slot.id)}"`):''}${!state.client&&memberId&&memberId!=='host'&&member.actorId?button('host-skip','代为跳过',`data-member="${esc(memberId)}"`):''}${modeControl}`;
-      return `<article class="slot-card ${own?'is-own':''}" data-slot="${esc(slot.id)}"><div class="slot-card-heading"><div><h3>${esc(slot.name)}</h3><small class="slot-id">${esc(slot.id)}</small></div><span class="slot-kind">${label}</span></div>${member?`<div class="slot-presence">${presenceHTML(member)}${member.actorId?memberStatus(slot):''}</div>`:open?'<div class="slot-presence">已保存 · 等待连接服务器</div>':''}${controls?`<div class="slot-controls">${controls}</div>`:''}${!own&&kind==='ai'&&(!initial||slotSelection.actorId)?npcCardInput(slot):''}${invite?`<div class="slot-invite-actions">${button('copy-invitation','复制邀请链接',`data-actor="${esc(slot.id)}"`)}${button('copy-join-key','复制加入密钥',`data-actor="${esc(slot.id)}"`)}</div><details class="slot-invite-details"><summary>查看加入密钥</summary><textarea aria-label="${esc(slot.name)}加入密钥" class="room-invitation" id="room-invitation-${esc(slot.id)}" readonly>${esc(invite.key)}</textarea></details>`:''}</article>`;
+      return `<article class="slot-card ${own?'is-own':''}" data-slot="${esc(slot.id)}">${slotHeading(slot,role)}${member?`<div class="slot-presence">${presenceHTML(member)}${member.actorId?memberStatus(slot):''}</div>`:open?'<div class="slot-presence">已保存 · 等待连接服务器</div>':''}${controls?`<div class="slot-controls">${controls}</div>`:''}${!own&&kind==='ai'&&(!initial||slotSelection.actorId)?npcCardInput(slot):''}${invite?`<div class="slot-invite-actions">${button('copy-invitation','复制邀请链接',`data-actor="${esc(slot.id)}"`)}${button('copy-join-key','复制加入密钥',`data-actor="${esc(slot.id)}"`)}</div><details class="slot-invite-details"><summary>查看加入密钥</summary><textarea aria-label="${esc(slotName(slot))}加入密钥" class="room-invitation" id="room-invitation-${esc(slot.id)}" readonly>${esc(invite.key)}</textarea></details>`:''}</article>`;
     }).join('');
-    showModal(initial?'选择角色槽位':state.client?'房间':'多人游戏',`${initial?'<p>选择你的角色，并设置其他槽位的控制方式。</p>':'<p class="room-guidance">加入后，战局设置以房主为准，只有房主产生 token 消耗。</p>'}${!state.client&&!initial&&!available.length?'<p>没有剩余可开放的角色。世界需要有空白角色槽位以供加入。</p>':''}<div class="slot-list">${rows}${kpcRows}</div>${!state.client?(r.slotRequests||[]).map(q=>`<p>${esc(q.memberId)} 请求选择 ${esc(q.actorId)} ${button('slot-decide','同意',`data-claim="${esc(q.id)}" data-decision="approve"`)}${button('slot-decide','拒绝',`data-claim="${esc(q.id)}" data-decision="reject"`)}</p>`).join(''):''}${r.vote&&['requested','voting'].includes(r.vote.status)?button('show-vote','查看回退请求'):''}<div class="modal-actions">${!state.client&&!initial?(r.online?button('close-room','断开服务器'):button('connect-room',state.network?.status==='connecting'?'连接中…':'连接服务器',`class="primary" ${state.network?.status==='connecting'||!state.openPlayerSlots?.length?'disabled':''}`)):state.client?((state.network&&['disconnected','reconnecting'].includes(state.network.status)?button('reconnect-room','重新连接'):'')+button('leave-room','离开房间','class="room-leave-button"')):''}${initial?'':button('close-modal','取消')}</div>${r.online?'':state.client?'<p class="room-footnote">房间未开放，等待房主连接。</p>':'<p class="room-footnote">当前未连接服务器；应用仅保存本地配置，点击「连接服务器」后开放房间。</p>'}`);
+    showModal(initial?'选择角色槽位':state.client?'房间':'多人游戏',`${initial?'<p>选择你的角色，并设置其他槽位的控制方式。</p>':'<p class="room-guidance">加入后，战局设置以房主为准，只有房主产生 token 消耗。</p>'}${!state.client&&!initial&&!available.length?'<p>没有剩余可开放的角色。世界需要有空白角色槽位以供加入。</p>':''}<div class="slot-list">${rows}</div>${!state.client?(r.slotRequests||[]).map(q=>`<p>${esc(q.memberId)} 请求选择 ${esc(q.actorId)} ${button('slot-decide','同意',`data-claim="${esc(q.id)}" data-decision="approve"`)}${button('slot-decide','拒绝',`data-claim="${esc(q.id)}" data-decision="reject"`)}</p>`).join(''):''}${r.vote&&['requested','voting'].includes(r.vote.status)?button('show-vote','查看回退请求'):''}<div class="modal-actions">${!state.client&&!initial?(r.online?button('close-room','断开服务器'):button('connect-room',state.network?.status==='connecting'?'连接中…':'连接服务器',`class="primary" ${state.network?.status==='connecting'||!state.openPlayerSlots?.length?'disabled':''}`)):state.client?((state.network&&['disconnected','reconnecting'].includes(state.network.status)?button('reconnect-room','重新连接'):'')+button('leave-room','离开房间','class="room-leave-button"')):''}${initial?'':button('close-modal','取消')}</div>${r.online?'':state.client?'<p class="room-footnote">房间未开放，等待房主连接。</p>':'<p class="room-footnote">当前未连接服务器；应用仅保存本地配置，点击「连接服务器」后开放房间。</p>'}`);
     modalRoot.querySelector('.modal')?.classList.add('room-modal');
     if(!state.client)modalRoot.querySelector('.modal').dataset.npcSetup=String(GameSlots.canConfigureNPCCards(state.active));
     if(initial){
