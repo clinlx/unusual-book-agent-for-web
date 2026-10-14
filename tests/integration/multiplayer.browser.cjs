@@ -13,9 +13,9 @@ after(async()=>{await browser?.close();if(server)await new Promise(r=>server.clo
 
 const call=(name,args,id)=>({id,type:'function',function:{name,arguments:JSON.stringify(args)}});
 
-test('started room slots lock disabled roles, keep NPC/player switching and expose relay settings in Advanced',async t=>{
+test('round-one room slots stay configurable and lock from round two with shared host and client UI',async t=>{
  const page=await pageFor(t),errors=[],requests=[];page.on('pageerror',e=>errors.push(e.message));
- await page.route('https://slot-control.invalid/**',async route=>{requests.push(route.request().postDataJSON());await route.fulfill({contentType:'application/json',body:JSON.stringify({choices:[{message:{content:'',tool_calls:[call('append_story',{content:'测试开局正文。',one_line_summary_of_content:'开局'},'story'),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'end')]}}]})});});
+ await page.route('https://slot-control.invalid/**',async route=>{requests.push(route.request().postDataJSON());await route.fulfill({contentType:'application/json',body:JSON.stringify({choices:[{message:{content:'',tool_calls:[...requests.length>1?[call('trigger_next_round',{phase_plan:{Countdowns:'无',Pending_Triggers:[],Forced_Checks:'无'}},'trigger')]:[],call('append_story',{content:'测试开局正文。',one_line_summary_of_content:'开局'},'story'),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'end')]}}]})});});
  await page.goto(origin+'/index.html');await page.locator('[data-action="import"]').waitFor();
  await page.evaluate(async()=>{await GameApp.updateSettings({apiKey:'test',baseUrl:'https://slot-control.invalid/v1',stream:false});const files=['Player-a','Player-b','Player-c','KPC-guide'].flatMap(name=>[{name:name+'/基础信息.json',text:JSON.stringify({姓名:name})},{name:name+'/背包.json',text:'[]'}]);await GameApp.importSave(new File([ZIP.makeZip(files)],'槽位控制.zip'));await GameApp.configureSlots('a',{b:'ai'});});
  await page.locator('[data-action="room-panel"]').click();await page.locator('[data-npc-key="slot:b"]').fill('b 是外科医生');
@@ -27,10 +27,16 @@ test('started room slots lock disabled roles, keep NPC/player switching and expo
  await page.locator('[data-action="room-panel"]').click();
  assert.equal(await page.locator('[data-npc-key]').count(),0);
  await assert.rejects(page.evaluate(()=>GameApp.configureNPCCards('slot:b','游戏后修改')),/开始故事前/);
- const disabled=page.locator('[data-slot="c"]');assert.equal(await disabled.locator('select,button').count(),0);assert.match(await disabled.innerText(),/已锁定，关闭的角色槽位/);
- assert.deepEqual(await page.locator('#slot-mode-b option').evaluateAll(nodes=>nodes.map(n=>n.value)),['ai','player']);
+ assert.deepEqual(await page.locator('#slot-mode-b option').evaluateAll(nodes=>nodes.map(n=>n.value)),['disabled','ai','player']);
+ await page.locator('#slot-mode-c').selectOption('ai');await page.locator('[data-action="save-room"]').click();
+ assert.equal(await page.evaluate(()=>GameApp.getState().active.slots.find(s=>s.id==='c').kind),'ai');
+ await page.locator('#slot-mode-c').selectOption('disabled');await page.locator('[data-action="save-room"]').click();
  await page.locator('#slot-mode-b').selectOption('player');await page.locator('[data-action="save-room"]').click();assert.equal(await page.evaluate(()=>GameApp.getState().network),null);
  await page.locator('#slot-mode-b').selectOption('ai');await page.locator('[data-action="save-room"]').click();
+ await page.locator('[data-action="close-modal"]').first().click();await page.evaluate(()=>GameApp.send('进入第二回合'));
+ await page.waitForFunction(()=>GameApp.getState().active.round===2);await page.locator('[data-action="room-panel"]').click();
+ const disabled=page.locator('[data-slot="c"]');assert.equal(await disabled.locator('select,button').count(),0);assert.match(await disabled.innerText(),/第二回合开始前/);
+ assert.deepEqual(await page.locator('#slot-mode-b option').evaluateAll(nodes=>nodes.map(n=>n.value)),['ai','player']);
  await page.setViewportSize({width:390,height:844});await page.screenshot({path:'tests/artifacts/locked-slots-390.png'});
  await page.locator('[data-action="close-modal"]').first().click();await page.locator('[data-action="settings"]').click();
  const advanced=page.locator('[data-settings-section="advanced"]');assert.equal(await advanced.locator('input[name="bridgeUrl"]').count(),1);assert.match(await advanced.innerText(),/高级选项/);await advanced.locator('summary').click();assert.match(await advanced.innerText(),/多人游戏中转服务器地址/);

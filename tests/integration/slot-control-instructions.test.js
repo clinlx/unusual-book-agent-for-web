@@ -35,11 +35,35 @@ test('slot instructions use editable external templates and preserve supplied te
  assert.match(instruction,/ROSTER 1 "Player-a"/);assert.ok(instruction.includes('CARD "AIPC-b" "$& {actor}"'));
  assert.deepEqual(Core.context(s,'固定系统',1e6).filter(m=>m.role==='system'),[{role:'system',content:'固定系统'}]);
 });
-test('disabled slots lock after start while NPC/player slots switch and temporary suspension stays reopenable',()=>{
- const s=save();Slots.assertConfigure(s,'c','ai');Core.beginRound(s,'',true);finish(s);
+test('disabled slots lock from round two while NPC/player slots switch and temporary suspension stays reopenable',()=>{
+ const s=save();Slots.assertConfigure(s,'c','ai');Core.beginRound(s,'',true);finish(s);Core.beginRound(s,'第二回合');finish(s);
  assert.equal(Slots.locked(s,'c'),true);assert.throws(()=>Slots.assertConfigure(s,'c','player'),/已锁定/);assert.throws(()=>Slots.assertConfigure(s,'b','disabled'),/已锁定/);
  Slots.assertConfigure(s,'b','player');Slots.setMode(s,'b','player');Slots.setMode(s,'b','disabled');
  assert.equal(Slots.locked(s,'b'),false);Slots.assertConfigure(s,'b','player');
+});
+
+test('the first round retains slot configuration and freezes its final roster when round two starts',()=>{
+ const s=save();Core.beginRound(s,'',true);
+ assert.equal(Slots.locked(s,'c'),false);Slots.assertConfigure(s,'c','player');
+ assert.throws(()=>Slots.setMode(s,'c','ai'),/执行/);
+ finish(s);Slots.assertConfigure(s,'c','ai');Slots.setMode(s,'c','player');Slots.setMode(s,'c','ai');
+ Slots.assertConfigure(s,'b','disabled');Slots.setMode(s,'b','disabled');
+ Core.beginRound(s,'第二回合');
+ assert.equal(s.round,1);assert.equal(Slots.locked(s,'b'),true);assert.equal(Slots.locked(s,'c'),false);
+ assert.equal(s.slotControlState.initialModes.c,'ai');assert.equal(s.slotControlState.initialModes.b,'disabled');
+ const instruction=s.messages.filter(m=>m.internal).at(-1).content;
+ assert.match(instruction,/AIPC-c.*启用/);assert.match(instruction,/DISABLE-b.*关闭/);
+ assert.doesNotMatch(instruction,/Player-c/);
+ assert.ok(!JSON.stringify(Sync.project(s,'a')).includes('角色控制·内部指令'));
+ Core.rollback(s);assert.equal(Slots.locked(s,'b'),false);Slots.assertConfigure(s,'b','ai');Slots.setMode(s,'b','ai');
+ Core.beginRound(s,'重新开始第二回合');assert.equal(Slots.locked(s,'b'),false);assert.equal(s.slotControlState.initialModes.b,'ai');
+});
+
+test('first-round offline invitations remain reopenable after the second-round boundary freezes',()=>{
+ const s=save();Core.beginRound(s,'',true);finish(s);
+ Core.beginRound(s,'第二回合',false,'',{openPlayerSlots:['c']});
+ assert.equal(Slots.locked(s,'c',{openPlayerSlots:['c']}),false);
+ assert.equal(s.slotControlState.initialModes.c,'player');
 });
 test('control changes collapse to final state and rollback restores the comparison baseline',()=>{
  const s=save();Core.beginRound(s,'',true);finish(s);
@@ -62,9 +86,16 @@ test('internal instructions may leave the context window and are absent from pla
  const html=require('../../src/game-presentation').historyHTML(s,text=>text,Core.player(s));assert.ok(!html.includes('角色控制·内部指令'));
 });
 test('host authority rejects reopening locked slots through invitations, claims and direct assignments',async t=>{
- const s=save();Core.beginRound(s,'',true);finish(s);
+ const s=save();Core.beginRound(s,'',true);finish(s);Core.beginRound(s,'第二回合');finish(s);
  const Host=require('../../src/multiplayer-host'),host=Host.create({getSave:()=>s,execute:async()=>{},rollback:async()=>{}});t.after(()=>host.dispose());
  await host.initialize('a');await host.open();await host.addMember('guest');
  await assert.rejects(host.reserveInvitation('invited','c'),/已锁定/);await assert.rejects(host.assign('guest','c'),/已锁定/);
  const r=host.state();await assert.rejects(host.handle('host',{type:'slot.mode',requestId:'closed-slot',epoch:r.epoch,roundId:r.roundId,bindingVersion:r.members.host.bindingVersion,payload:{actorId:'c',kind:'ai'}}),/已锁定/);
+});
+
+test('host authority allows enabling a disabled invitation slot after the first round',async t=>{
+ const s=save();Core.beginRound(s,'',true);finish(s);
+ const Host=require('../../src/multiplayer-host'),host=Host.create({getSave:()=>s,execute:async()=>{},rollback:async()=>{}});t.after(()=>host.dispose());
+ await host.initialize('a');await host.open();await host.reserveInvitation('invited','c');
+ assert.equal(host.state().members.invited.invitationActorId,'c');
 });
