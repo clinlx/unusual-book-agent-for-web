@@ -61,6 +61,7 @@ const MultiplayerHost=(()=>{
     function actor(id){const slot=save().slots.find(x=>x.id===id);if(!slot||slot.kind==='kpc')fail('INVALID_ACTOR','角色槽位不可选择');return slot;}
     function assignRaw(memberId,actorId){
       const r=room(),m=member(memberId),slot=actor(actorId);
+      if(m.role==='spectator')fail('SPECTATOR_READ_ONLY','观战身份不能控制角色');
       if(memberId==='host'&&m.actorId&&m.actorId!==actorId)fail('HOST_SLOT_LOCKED','房主只能在首次进入存档时选择角色，之后不能切换');
       if(m.invitationActorId&&m.invitationActorId!==actorId)fail('FORBIDDEN','邀请仅允许使用指定角色');
       if(Object.entries(r.members).some(([id,x])=>id!==memberId&&(x.actorId===actorId||x.invitationActorId===actorId)))fail('OCCUPIED','该角色已有玩家控制或已开放邀请');
@@ -148,6 +149,10 @@ const MultiplayerHost=(()=>{
       if(!r.online||eligible.length<2)fail('NO_MULTIPLAYER_VOTE','至少两位真人玩家加入联机房间后才能发起投票');
       v.status='voting';v.eligible=eligible;v.votes={};v.expiresAt=now()+120000;scheduleExpiry();
     }
+    function spectatorView(value){
+      if(value!=='none'&&value!=='all'&&!save().slots.some(s=>s.id===value&&s.kind==='player'))fail('INVALID_VIEW','请选择无、全部或有效玩家视角');
+      return value;
+    }
     async function performRollback(){
       const r=room(),v=r.vote,controlModes=new Map(save().slots.map(s=>[s.id,s.kind]));target(v);r.status='rolling_back';cancelTimer();
       await rollback({targetRound:v.targetRound,targetRoundId:v.targetRoundId});
@@ -171,8 +176,13 @@ const MultiplayerHost=(()=>{
       const fingerprint=canonical(command),old=r.receipts.find(x=>x.memberId===memberId&&x.requestId===command.requestId);
       if(old){if(old.fingerprint!==fingerprint)fail('REQUEST_CONFLICT','同一请求标识不能用于不同内容');return clone(old.receipt);}
       scope(m,command);const type=aliases[command.type]||command.type,p=command.payload||command;let start=null,reset=null,cancelled=null,cancelledRequestId;
+      if(m.role==='spectator'&&type!=='spectator.view'&&!(memberId==='host'&&['round.start','round.resume','round.advance','action.hostSkip','rollback.host','rollback.decide','slot.mode','slot.claim.decide'].includes(type)))fail('SPECTATOR_READ_ONLY','观战者只能接收信息，不能提交行动、投票或更改游戏');
       if(expire())await commit('rollback.expired');
       switch(type){
+        case 'spectator.view':{
+          if(m.role!=='spectator'||m.permission!=='all')fail('FORBIDDEN','房主未授予切换观战视角的权限');
+          m.view=spectatorView(p.view);m.bindingVersion++;break;
+        }
         case 'action.prepare':{
           if(r.status!=='executing'||r.vote)fail('BUSY','当前不能预提交');
           validateActors();const entry=r.participants.find(x=>x.memberId===memberId&&x.actorId===m.actorId);
@@ -219,10 +229,10 @@ const MultiplayerHost=(()=>{
         case 'round.resume':host(memberId);if(r.status!=='interrupted'||r.vote)fail('BUSY','当前没有中断的回合');
           validateActors();if(r.automaticStalled){r.automaticStalled=false;r.status='collecting';start=launch({automatic:true});}else start=launch({resume:true});break;
         case 'round.advance':host(memberId);if(r.status!=='collecting'||r.vote||save().status==='new')fail('BUSY','当前不能手动推进');validateActors();
-          if(!r.participants.length)fail('NO_PLAYERS','请先安排真人角色');
+          if(!r.participants.length&&!(save().hostSpectator&&save().slots.some(s=>s.kind==='ai')))fail('NO_PLAYERS','请先安排真人角色或 NPC');
           if(r.participants.some(p=>p.alive&&p.enabled))fail('ACTIVE_PLAYERS','仍有清醒玩家需要提交行动');start=launch({automatic:true});break;
         case 'rollback.host':{
-          host(memberId);if(!m.actorId)fail('FORBIDDEN','请选择角色后再回退');
+          host(memberId);if(!m.actorId&&m.role!=='spectator')fail('FORBIDDEN','请选择角色后再回退');
           if(!['collecting','interrupted','ended'].includes(r.status)||r.vote)fail('BUSY','请先中断当前执行或完成现有回退决策');
           if(!['approve','vote'].includes(p.decision))fail('INVALID_DECISION','请选择直接回退或发起投票');
           r.vote={id:uid(),requester:memberId,...target(p),status:'requested',eligible:[],votes:{},expiresAt:null};
@@ -234,10 +244,10 @@ const MultiplayerHost=(()=>{
           const t=target(p);r.vote={id:uid(),requester:memberId,...t,status:'requested',eligible:[],votes:{},expiresAt:null};break;
         }
         case 'rollback.decide':{
-          host(memberId);const v=r.vote;if(!v||v.id!==p.voteId||v.status!=='requested')fail('STALE_VOTE','回退请求已失效');
+          host(memberId);const v=r.vote;if(!v||v.id!==p.voteId||!['requested','voting'].includes(v.status)||v.status==='voting'&&m.role!=='spectator')fail('STALE_VOTE','回退请求已失效');
           if(p.decision==='reject')r.vote=null;
           else if(p.decision==='approve'){reset=await performRollback();}
-          else if(p.decision==='vote')beginVote();
+          else if(p.decision==='vote'&&v.status==='requested')beginVote();
           else fail('INVALID_DECISION','无效的回退决策');break;
         }
         case 'rollback.vote':{
@@ -283,9 +293,12 @@ const MultiplayerHost=(()=>{
     });}
     return {
       initialize:actorId=>transaction(async()=>{slots().ensure(save());slots().initializeControlState(save());const r=room();if(!r.members.host)r.members.host={actorId:null,bindingVersion:0,connected:true};
-        if(r.status==='selecting'){const chosen=actorId||save().selectedActorId||save().slots.find(x=>x.path===save().playerPath&&x.kind!=='kpc')?.id;actor(chosen);
+        if(r.status==='selecting'&&(actorId==='$spectator'||save().hostSpectator)){
+          if(!save().hostSpectator)for(const slot of [...save().slots])if(slot.kind==='player'&&!slot.memberId)slots().setMode(save(),slot.id,'disabled');
+          Object.assign(r.members.host,{role:'spectator',permission:'all',view:'all',actorId:null,bindingVersion:1});save().hostSpectator=true;save().actorId=null;save().selectedActorId=null;save().slotsConfigured=true;r.status=save().status==='ended'?'ended':save().activeRound&&!save().activeRound.complete?'interrupted':'collecting';
+        }else if(r.status==='selecting'){const chosen=actorId||save().selectedActorId||save().slots.find(x=>x.path===save().playerPath&&x.kind!=='kpc')?.id;actor(chosen);
           for(const slot of [...save().slots])if(slot.id!==chosen&&slot.kind==='player'&&!slot.memberId)slots().setMode(save(),slot.id,'disabled');assignRaw('host',chosen);r.status=save().status==='ended'?'ended':save().activeRound&&!save().activeRound.complete?'interrupted':'collecting';}
-        else if(actorId&&actorId!==r.members.host.actorId){boundary();assignRaw('host',actorId);}refresh();if(!r.online&&['collecting','ended'].includes(r.status)&&!r.vote&&!r.participants.some(p=>p.invalid)){
+        else if(actorId&&actorId!=='$spectator'&&actorId!==r.members.host.actorId){boundary();assignRaw('host',actorId);}refresh();if(!r.online&&['collecting','ended'].includes(r.status)&&!r.vote&&!r.participants.some(p=>p.invalid)){
           suspendRemote();for(const [id,m]of Object.entries(r.members))if(m.invitationActorId&&!m.actorId){slots().setMode(save(),m.invitationActorId,'disabled');delete r.members[id];}
           if(r.suspendedRoom)r.suspendedRoom.bindings=r.suspendedRoom.bindings.filter(x=>r.members[x.memberId]);refresh();
         }await commit('room.initialized');return clone(r);}),
@@ -294,11 +307,22 @@ const MultiplayerHost=(()=>{
         for(const [id,m]of Object.entries(r.members))if(id!=='host'){const actorId=m.actorId||m.invitationActorId;if(actorId){delete actor(actorId).memberId;slots().setMode(save(),actorId,'disabled');}delete r.members[id];}
         r.online=false;r.roomId=null;r.roundId=uid();r.receipts=[];r.slotRequests=[];r.submissions={};r.preparedActions={};delete r.suspendedRoom;refresh();await commit('room.closed');}),
       addMember:memberId=>transaction(async()=>{if(!validId(memberId)||memberId==='host')fail('INVALID_MEMBER','无效成员标识');const r=room();if(!r.online)fail('ROOM_CLOSED','请先开房间');if(!Object.hasOwn(r.members,memberId))r.members[memberId]={actorId:null,bindingVersion:0,connected:true};await commit('member.joined');return clone(r.members[memberId]);}),
+      reserveSpectator:(memberId,permission='none')=>transaction(async()=>{
+        const r=room();if(!r.online)fail('ROOM_CLOSED','请先开房间');
+        if(!validId(memberId)||memberId==='host'||Object.hasOwn(r.members,memberId))fail('INVALID_MEMBER','无效成员标识');
+        if(Object.values(r.members).filter(m=>m.role==='spectator').length>=8)fail('SPECTATOR_LIMIT','最多 8 个观战槽位');
+        spectatorView(permission);r.members[memberId]={role:'spectator',actorId:null,permission,view:permission,bindingVersion:1,connected:false,joined:false};await commit('spectator.added');
+      }),
+      configureSpectator:(memberId,permission)=>transaction(async()=>{
+        const m=member(memberId);if(memberId==='host'||m.role!=='spectator')fail('FORBIDDEN','此成员不是可配置的观战者');spectatorView(permission);
+        m.permission=permission;m.view=permission;m.bindingVersion++;room().receipts=room().receipts.filter(x=>x.memberId!==memberId);await commit('spectator.configured');
+      }),
+      removeSpectator:memberId=>transaction(async()=>{const m=member(memberId);if(memberId==='host'||m.role!=='spectator')fail('FORBIDDEN','不能删除此成员');delete room().members[memberId];room().receipts=room().receipts.filter(x=>x.memberId!==memberId);await commit('spectator.removed');}),
       reserveInvitation:(memberId,actorId)=>transaction(async()=>{boundary();const r=room();if(!r.online)fail('ROOM_CLOSED','请先开房间');if(!validId(memberId)||memberId==='host'||Object.hasOwn(r.members,memberId))fail('INVALID_MEMBER','无效成员标识');actor(actorId);
         slots().assertConfigure(save(),actorId,'player');
         if(Object.values(r.members).some(m=>m.actorId===actorId||m.invitationActorId===actorId))fail('OCCUPIED','该角色已有玩家控制或已开放邀请');
         slots().setMode(save(),actorId,'player');r.members[memberId]={actorId:null,invitationActorId:actorId,bindingVersion:0,connected:false};refresh();await commit('invitation.opened');return clone(r.members[memberId]);}),
-      joinInvitation:memberId=>transaction(async()=>{if(!room().online)fail('ROOM_CLOSED','房间已关闭');const m=member(memberId);if(!m.invitationActorId)fail('UNAUTHORIZED','邀请已失效');assignRaw(memberId,m.invitationActorId);m.connected=true;await commit('member.joined');return clone(m);}),
+      joinInvitation:memberId=>transaction(async()=>{if(!room().online)fail('ROOM_CLOSED','房间已关闭');const m=member(memberId);if(m.role!=='spectator'){if(!m.invitationActorId)fail('UNAUTHORIZED','邀请已失效');assignRaw(memberId,m.invitationActorId);}m.connected=true;m.joined=true;await commit('member.joined');return clone(m);}),
       cancelInvitation:(memberId,kind='disabled')=>transaction(async()=>{boundary();const m=member(memberId);if(m.actorId)fail('OCCUPIED','该槽位已有玩家加入，断线后仍保留占用');if(!m.invitationActorId||!['ai','disabled'].includes(kind))fail('INVALID_MODE','请选择关闭或 AIPC');slots().setMode(save(),m.invitationActorId,kind);delete room().members[memberId];room().receipts=room().receipts.filter(x=>x.memberId!==memberId);refresh();await commit('invitation.closed');}),
       assign:(memberId,actorId)=>transaction(async()=>{boundary();assignRaw(memberId,actorId);await commit('member.assigned');return clone(member(memberId));}),
       release:(memberId,kind='disabled',{forget=false}={})=>transaction(async()=>{boundary();if(memberId==='host')fail('FORBIDDEN','房主请通过切换槽位选择角色');if(!['ai','disabled'].includes(kind))fail('INVALID_MODE','无人槽位仅可设为关闭或 AIPC');const m=member(memberId);if(m.actorId){delete actor(m.actorId).memberId;slots().setMode(save(),m.actorId,kind);delete room().preparedActions[m.actorId];m.actorId=null;m.bindingVersion++;if(forget)delete room().members[memberId];room().receipts=room().receipts.filter(x=>x.memberId!==memberId);room().slotRequests=room().slotRequests.filter(x=>x.memberId!==memberId);refresh();await commit('member.released');}}),

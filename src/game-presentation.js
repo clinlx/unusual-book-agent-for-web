@@ -141,18 +141,19 @@ const GamePresentation=(()=>{
       return bars?'<div class="resource-strips">'+bars+'</div>':'';
     };
     const isPrivate=e=>e.private===true||Array.isArray(e.audience);
+    const spectatorProjection=save.spectator===true&&!save.tree;
     const isDark=e=>e.type==='dice'&&!!(e.secret||e.diceArgs?.is_secret||e.relatedAttr==='心理学'||e.diceArgs?.related_attr==='心理学');
     const events=(save.events||[]).filter(e=>{
       if(!['player','story','round_end','dice','note'].includes(e.type))return false;
       if(e.audience!==undefined&&e.audience!=='public'&&!(Array.isArray(e.audience)&&save.actorId&&e.audience.includes(save.actorId)))return false;
-      if(isPrivate(e)&&e.targetPlayer&&e.targetPlayer!==save.actorId)return false;
+      if(!spectatorProjection&&isPrivate(e)&&e.targetPlayer&&e.targetPlayer!==save.actorId)return false;
       if(isPrivate(e)&&save.tree&&!Array.isArray(e.audience)&&!e.targetPlayer)return false;
       if(e.type==='dice'){
         const roller=e.rollerId||e.diceArgs?.roller||e.data?.roller||e.roller;
         if(e.rollerKind==='gm'||roller==='<|GM|>')return false;
         if(!isPrivate(e)&&(e.playerRelated===false||['ai','kpc','npc'].includes(e.rollerKind)))return false;
       }else if(e.secret&&!isPrivate(e))return false;
-      return !(e.type==='player'&&e.actorId!==save.actorId&&!String(e.content||'').trim()&&e.privateContent&&!e.skip);
+      return spectatorProjection||!(e.type==='player'&&e.actorId!==save.actorId&&!String(e.content||'').trim()&&e.privateContent&&!e.skip);
     });
     const actorName=e=>e.name||(save.slots||[]).find(s=>s.id===e.actorId)?.name||names(save)(e.actorId)||'玩家';
     const eventHTML=(e,index)=>{
@@ -167,7 +168,7 @@ const GamePresentation=(()=>{
       const headerClass=e.type==='story'?' class="story-meta"':'';
       const text=dark?'[AI 进行了一次暗骰]':eventContent(save,e);
       let content=e.type==='story'?renderStory(text):'<p class="plain">'+esc(text)+'</p>';
-      if(e.type==='player'&&save.actorId&&e.actorId===save.actorId&&e.privateContent)content+='<section class="private-story"><small>私密行动</small><p class="plain">'+esc(e.privateContent)+'</p></section>';
+      if(e.type==='player'&&(spectatorProjection||save.actorId&&e.actorId===save.actorId)&&e.privateContent)content+='<section class="private-story"><small>私密行动</small><p class="plain">'+esc(e.privateContent)+'</p></section>';
       return `<article class="${cls}" data-round="${esc(e.round)}"><header${headerClass}>${esc(title)} · ${esc(metadata(e))}</header>${content}</article>`;
     };
     const nodes=events.map((e,i)=>({index:i,round:Number(e.round)||0,type:e.type,secret:!!e.secret,html:eventHTML(e,i)}));

@@ -46,7 +46,7 @@ const GameApp=(()=>{
       inputs=view.actorId?local.load(identity):{epoch:next.scope.epoch,inputHistory:[],draft:'',privateDraft:'',draftRound:view.round+1,draftVersion:0};
       if(next.scope.epoch>inputs.epoch)inputs=local.rollback(identity,{round:view.round,epoch:next.scope.epoch});
       const draftRound=GameInputs.targetRound(view);
-      if(inputs.draftRound!==draftRound){
+      if(view.actorId&&inputs.draftRound!==draftRound){
         const prepared=view.room?.preparedAction?.status==='queued'||!!preSubmit.current();
         const advancing=same&&before?.scope.epoch===next.scope.epoch&&draftRound>inputs.draftRound;
         const submitted=inputs.inputHistory.find(r=>r.round===inputs.draftRound&&['pending','accepted'].includes(r.status)),sent=submitted?.draftState;
@@ -63,6 +63,7 @@ const GameApp=(()=>{
     if(transport)await transport.sendToHost(memberId,{type:'sync.ack',payload:cache.request()});
   }
   async function command(type,payload={},options={}){
+    if(S.active?.spectator&&!['spectator.view','profile.request','inventory.request'].includes(type))throw Error('观战者不能提交行动、投票或更改游戏');
     if(S.network&&S.network.status!=='connected')throw Error('连接已中断，请等待重连或重新连接');if(!transport||!S.room)throw Error('尚未连接房主');if(S.room.online===false)throw Error('房间已关闭');const r=options.room||S.room,requestId=options.requestId||crypto.randomUUID();
     const c={type,payload,requestId,roomId:r.roomId,epoch:r.epoch,roundId:r.roundId,bindingVersion:r.bindingVersion};
     return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{pending.delete(requestId);reject(Error('房主尚未确认，请同步状态后重试'));},15000);pending.set(requestId,{resolve,reject,timer});Promise.resolve(transport.sendToHost(memberId,c)).catch(e=>{clearTimeout(timer);pending.delete(requestId);reject(e);});});
@@ -119,8 +120,8 @@ const GameApp=(()=>{
       }});
       if(generation!==joinGeneration){session.close();return;}
       bridgeSession=session;S.network={status:'connected',message:'已连接房间'};S.joining={phase:'sync',message:'正在同步角色与故事…'};emit();await attach(session.transport,session.memberId);
-      if(!S.active?.actorId)await new Promise((resolve,reject)=>{
-        const check=()=>{if(generation!==joinGeneration||S.network?.status==='closed'||S.network?.status==='disconnected'){finish();reject(Error('房间连接已中断'));}else if(S.active?.actorId){finish();resolve();}};
+      if(!S.active?.actorId&&!S.active?.spectator)await new Promise((resolve,reject)=>{
+        const check=()=>{if(generation!==joinGeneration||S.network?.status==='closed'||S.network?.status==='disconnected'){finish();reject(Error('房间连接已中断'));}else if(S.active?.actorId||S.active?.spectator){finish();resolve();}};
         const finish=()=>{clearTimeout(timer);listeners.delete(check);};
         const timer=setTimeout(()=>{finish();reject(Error('房主未返回可用角色，请确认房间仍开放且槽位有效'));},15000);listeners.add(check);check();
       });
@@ -131,7 +132,7 @@ const GameApp=(()=>{
   return {getState:()=>S,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},init:async()=>{try{S.settings=JSON.parse(localStorage.getItem('trpg-client-settings')||'{}');}catch(_){}},
     connect:async(t,id)=>{stopNetwork();S.network=null;await attach(t,id);},joinRoom,reconnectRoom,receive,sync,
     preSubmit,send:(text,privateContent,options)=>submitInput(text,privateContent,options),cancelAction,profile:async actorId=>(await command('profile.request',{actorId})).profile,inventory:async actorId=>(await command('inventory.request',{actorId})).inventory,skip:(options={})=>submitInput('','',{draftState:GameInputs.draftState(S.active||{}),...options},true),requestRollback:()=>command('rollback.request',{targetRound:S.active.rollbackTargetRound??Math.max(0,S.active.round-1)}),roomCommand:command,
-    player:()=>({info:S.active?.info||{},items:S.active?.items||[],name:S.active?.playerName}),exportView:()=>cache.getState()?.view,
+    player:()=>({info:S.active?.info||{},items:S.active?.items||[],name:S.active?.playerName}),exportView:()=>cache.getState()?.view,setSpectatorView:async view=>{await command('spectator.view',{view});await sync();},
     stageDraft,saveDraft:async(...args)=>stageDraft(...args),
     updateSettings:async values=>{const bridgeUrl=values.bridgeUrl===undefined?S.settings.bridgeUrl:BridgeTransport.validateServerUrl(values.bridgeUrl);S.settings={...S.settings,bridgeUrl,reverseSendNewline:values.reverseSendNewline===true};localStorage.setItem('trpg-client-settings',JSON.stringify(S.settings));emit();},
     setMode:()=>{},returnHome:()=>{S.home=true;emit();},returnToGame:()=>{if(S.active){S.home=false;emit();}},closeSave:()=>{stopNetwork();S.joining=null;S.active=null;S.home=false;S.room=null;S.network=null;preSubmit.tick();emit();}

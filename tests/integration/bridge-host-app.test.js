@@ -34,6 +34,26 @@ test('failed network room creation returns to offline without phantom online roo
 
 async function ready(t,options){const f=setup(t,options);await f.app.init();await f.app.openSave(f.save.id);if(f.app.multiplayerState().status==='selecting')await f.app.configureSlots('a');return f;}
 
+test('spectator-only room persists invites, routes view commands and rejects mutation requests',async t=>{
+ const f=await ready(t),id='s_'+crypto.randomUUID().replaceAll('-','');assert.deepEqual(Array.from(f.app.getState().spectators),[]);
+ await f.app.configureSpectators([{id,permission:'all'}]);assert.equal(f.calls,0);assert.equal(f.app.getState().openPlayerSlots.length,0);
+ await f.app.connectRoom();assert.equal(f.calls,1);let invite=f.app.getState().savedInvites[0];assert.equal(invite.spectatorId,id);
+ await f.options.onMember({type:'joined',memberId:id});let r=f.app.multiplayerState();assert.equal(r.members[id].role,'spectator');assert.equal(r.members[id].connected,true);
+ const command=(type,payload={})=>({type,payload,requestId:crypto.randomUUID(),epoch:r.epoch,roundId:r.roundId,roomId:r.roomId,bindingVersion:r.members[id].bindingVersion});
+ await f.receive(id,command('action.submit',{content:'forbidden'}));assert.equal(f.sent.at(-1).packet.error,'SPECTATOR_READ_ONLY');
+ await f.receive(id,command('spectator.view',{view:'a'}));assert.equal(f.sent.at(-1).packet.ok,true);assert.equal(f.app.multiplayerState().members[id].view,'a');
+ const key=invite.key;await f.app.closeRoom();await f.app.connectRoom();assert.equal(f.app.getState().savedInvites[0].key,key);
+ await f.app.rotateInvitation(id);assert.notEqual(f.app.getState().savedInvites[0].key,key);
+ await f.app.configureSpectators([]);assert.equal(f.app.multiplayerState().members[id],undefined);assert.equal(f.app.getState().savedInvites.length,0);
+});
+
+test('host can initially spectate without occupying a player and reopening preserves the role',async t=>{
+ const f=setup(t);await f.app.init();await f.app.openSave(f.save.id);await f.app.configureSlots('$spectator',{a:'player',b:'ai'});
+ assert.equal(f.app.getState().active.actorId,null);assert.equal(f.app.multiplayerState().members.host.role,'spectator');assert.deepEqual(Array.from(f.app.getState().openPlayerSlots),['a']);assert.deepEqual(f.app.player().info,{});
+ const id=f.app.getState().active.id;f.app.closeSave();await f.app.openSave(id);assert.equal(f.app.getState().active.actorId,null);assert.equal(f.app.multiplayerState().members.host.role,'spectator');
+ await f.app.connectRoom();assert.equal(f.app.getState().savedInvites[0].actorId,'a');
+});
+
 test('offline configured player slots cannot be silently omitted when starting a game',async t=>{
  const f=await ready(t);f.app.getState().active.status='new';await f.app.configureInvitationSlot('b','player');
  await assert.rejects(f.app.start(),/开放给玩家.*没有玩家加入/);assert.equal(f.calls,0);assert.equal(f.app.getState().active.activeRound,null);
@@ -199,4 +219,16 @@ test('regenerated invitations persist separately from save data online and offli
 test('failed rotated key persistence closes the online room and keeps the saved old invitation',async t=>{
  const control={},f=await ready(t,{control});const first=await f.app.setInvitationSlot('b','player');control.failRoomConfig=true;
  await assert.rejects(f.app.rotateInvitation('b'),/room config quota/);assert.equal(f.closed,true);assert.equal(f.app.multiplayerState().online,false);assert.equal(f.app.getState().savedInvites[0].key,first.key);
+});
+
+
+test('spectator invitations open after player reservations and survive the watched actor becoming NPC',async t=>{
+ const f=await ready(t);const watcher={id:'s_'+'b'.repeat(32),permission:'all'};
+ await f.app.configureSpectators([watcher]);await f.app.connectRoom();await f.app.closeRoom();
+ await f.app.configureInvitationSlot('b','player');await f.app.configureSpectators([{...watcher,permission:'b'}]);
+ await f.app.connectRoom();const key=f.app.getState().savedInvites.find(i=>i.spectatorId).key;
+ assert.equal(f.app.multiplayerState().members[watcher.id].permission,'b');
+ await f.app.configureInvitationSlot('b','ai');await f.app.closeRoom();await f.app.connectRoom();
+ assert.equal(f.app.multiplayerState().members[watcher.id].permission,'none');
+ assert.equal(f.app.getState().savedInvites.find(i=>i.spectatorId).key,key);
 });

@@ -2,7 +2,7 @@
 const GameSlots=(()=>{
   const prefixes={player:'Player',ai:'AIPC',disabled:'DISABLE',kpc:'KPC'};
   const clone=value=>JSON.parse(JSON.stringify(value));
-  const LOCK_MESSAGE='已锁定，关闭的角色槽位需要在存档开始游戏前进行配置开启。';
+  const LOCK_MESSAGE='已锁定，关闭的角色槽位需要在第二回合开始前进行配置开启。';
   const INTERNAL_HEADER='[角色控制·内部指令]';
   const started=save=>(save.round||0)>1||(save.activeRound?.number||0)>1;
   const canConfigureNPCCards=save=>save?.status==='new'&&!(save.round>0)&&!save.activeRound;

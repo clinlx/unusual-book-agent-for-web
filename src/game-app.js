@@ -8,19 +8,19 @@ const GameApp=(()=>{
   const invitationTask=fn=>{const job=invitationQueue.then(fn);invitationQueue=job.catch(()=>{});return job;};
   const inputScope=s=>({gameId:s.id,memberId:'host',actorId:s.actorId});
   const localInputs=()=>GameLocalInputs.create(storage);
-  function saveLocalInputs(){const s=S.active;if(!s||!storage||localInputOwner!==JSON.stringify(inputScope(s)))return;try{
+  function saveLocalInputs(){const s=S.active;if(!s||!s.actorId||!storage||localInputOwner!==JSON.stringify(inputScope(s)))return;try{
     const scope=inputScope(s),epoch=s.multiplayer?.epoch||0,old=localInputs().load(scope);
     if(epoch>old.epoch){Object.assign(s,localInputs().rollback(scope,{round:s.round,epoch}));return;}
     const records=(s.inputHistory||[]).map(r=>({...r,epoch:r.epoch??epoch,privateContent:r.privateContent||'',status:r.status||(r.rolledBack?'retracted':'accepted')}));
     localInputs().save(scope,{epoch,inputHistory:records,draft:s.draft||'',privateDraft:s.privateDraft||'',hiddenSend:s.hiddenSend??!!s.privateDraft,disguiseSend:s.disguiseSend??!!(s.privateDraft&&s.draft),draftRound:s.draftRound||s.round+1,draftVersion:s.draftVersion||0});
   }catch(error){S.storageWarning=error.message;}}
-  function loadLocalInputs(s){localInputOwner=JSON.stringify(inputScope(s));if(!storage)return;try{
+  function loadLocalInputs(s){localInputOwner=JSON.stringify(inputScope(s));if(!storage||!s.actorId)return;try{
     const scope=inputScope(s),saved=localInputs().load(scope);
     if(saved.inputHistory.length||saved.draft||saved.privateDraft||saved.hiddenSend||saved.disguiseSend)Object.assign(s,saved);
     else saveLocalInputs();
   }catch(error){S.storageWarning=error.message;}}
   async function setupHost(s){
-    await stopBridge();hostSession?.dispose();savedRoom=await db.getRoomConfig?.(s.id)||null;S.savedInvites=structuredClone(savedRoom?.invites||[]);S.openPlayerSlots=[...(savedRoom?.openSlots||S.savedInvites.map(i=>i.actorId))];GameSlots.ensure(s);GameSlots.initializeControlState(s,S.openPlayerSlots);s.actorId||=s.slots.find(x=>x.path===s.playerPath)?.id;
+    await stopBridge();hostSession?.dispose();savedRoom=await db.getRoomConfig?.(s.id)||null;S.savedInvites=structuredClone(savedRoom?.invites||[]);S.spectators=structuredClone(savedRoom?.spectators||[]);S.openPlayerSlots=[...(savedRoom?.openSlots||S.savedInvites.filter(i=>!i.spectatorId).map(i=>i.actorId))];GameSlots.ensure(s);GameSlots.initializeControlState(s,S.openPlayerSlots);if(!s.hostSpectator)s.actorId||=s.slots.find(x=>x.path===s.playerPath)?.id;
     loadLocalInputs(s);publishedSave=structuredClone(s);
     hostSession=MultiplayerHost.create({getSave:()=>s,getSettings:()=>S.settings,persist:async()=>{if(localInputOwner!==JSON.stringify(inputScope(s))){s.inputHistory=[];s.draft='';s.privateDraft='';s.hiddenSend=false;s.disguiseSend=false;s.draftVersion=0;loadLocalInputs(s);}await persist();saveLocalInputs();},
       execute:async(actions,options)=>{
@@ -41,7 +41,7 @@ const GameApp=(()=>{
   }
   async function publishClients(){
     if(!roomTransport||!hostSession?.state().online)return;
-    for(const [id,m]of Object.entries(hostSession.state().members))if(id!=='host'&&m.actorId&&m.connected)scheduleClientSync(id);
+    for(const [id,m]of Object.entries(hostSession.state().members))if(id!=='host'&&(m.actorId||m.role==='spectator')&&m.connected)scheduleClientSync(id);
   }
   const clientCursors=new Map();
   const profileRequests=new Map();
@@ -69,7 +69,7 @@ const GameApp=(()=>{
     transportStop=transport.onHost(async(memberId,command)=>{
       try{
         if(!hostSession?.state().online)throw Error('房间尚未开启');
-        if(bridgeSession){const invited=S.network?.invites?.find(x=>x.memberId===memberId),bound=hostSession.state().members[memberId];if(!invited||bound?.actorId!==invited.actorId||!bound.connected||command.type==='slot.claim.request')throw Error('邀请仅允许使用指定角色');}
+        if(bridgeSession){const invited=S.network?.invites?.find(x=>x.memberId===memberId),bound=hostSession.state().members[memberId];if(!invited||!bound?.connected||(invited.spectatorId?bound.role!=='spectator':bound.actorId!==invited.actorId)||command.type==='slot.claim.request')throw Error('邀请仅允许使用指定身份');}
         if(command.type==='sync.ack'){clientCursors.set(memberId,command.payload||{});return;}
         if(command.type==='sync.request'){clientCursors.set(memberId,command.payload||{});scheduleClientSync(memberId,true);return;}
         if(['profile.request','inventory.request'].includes(command.type)){
@@ -112,15 +112,21 @@ const GameApp=(()=>{
     saveLocalInputs();await persist();emit();return result;
   }
   async function configureSlots(actorId,modes={}){idle();const s=active();peerCheck(s);if(hostSession?.state().status!=='selecting')throw Error('房主只能在首次进入存档时选择角色，之后不能切换');saveLocalInputs();
-    if(hostSession?.state().status==='selecting'){GameSlots.select(s,actorId,modes);s.inputHistory=[];s.draft='';s.privateDraft='';s.hiddenSend=false;s.disguiseSend=false;s.draftVersion=0;loadLocalInputs(s);await hostSession.initialize(actorId);}
+    if(hostSession?.state().status==='selecting'){
+      if(actorId==='$spectator'){
+        await hostSession.initialize(actorId);for(const slot of [...s.slots])GameSlots.setMode(s,slot.id,modes[slot.id]==='ai'?'ai':'disabled');
+        await saveRoomRecord({version:1,saveId:s.id,...savedRoom,openSlots:Object.keys(modes).filter(id=>modes[id]==='player'),invites:savedRoom?.invites||[]});
+      }else{GameSlots.select(s,actorId,modes);await hostSession.initialize(actorId);}
+      s.inputHistory=[];s.draft='';s.privateDraft='';s.hiddenSend=false;s.disguiseSend=false;s.draftVersion=0;loadLocalInputs(s);
+    }
     GameInputs.advance(s);saveLocalInputs();publishedSave=structuredClone(s);await persist();emit();
   }
   async function openRoom(){idle();if(!S.active.slotsConfigured)throw Error('请先选择角色槽位');return hostSession.open();}
   async function closeRoom(){const previous=hostSession.state();await hostSession.close();for(const id of Object.keys(previous.members))if(id!=='host')try{await roomTransport?.sendToClient(id,{type:'room.closed',roomId:previous.roomId});}catch(_){}await stopBridge();emit();}
   function stopBridge(){bridgeGeneration++;clearClientSyncJobs();profileRequests.clear();const previous=bridgeSession;bridgeSession=null;if(previous)bridgeClosing=Promise.resolve(previous.close()).catch(()=>{});transportStop?.();transportStop=null;roomTransport=null;clientCursors.clear();S.network=null;return bridgeClosing;}
   async function saveRoomRecord(value){
-    const id=value?.saveId||active().id,next=value?{...value,openSlots:value.openSlots||value.invites.map(i=>i.actorId)}:null;
-    await db.putRoomConfig?.(id,next);if(S.active?.id===id){savedRoom=structuredClone(next);S.savedInvites=structuredClone(next?.invites||[]);S.openPlayerSlots=[...(next?.openSlots||[])];}
+    const id=value?.saveId||active().id,next=value?{...value,spectators:value.spectators||savedRoom?.spectators||[],openSlots:value.openSlots||value.invites.filter(i=>!i.spectatorId).map(i=>i.actorId)}:null;
+    await db.putRoomConfig?.(id,next);if(S.active?.id===id){savedRoom=structuredClone(next);S.savedInvites=structuredClone(next?.invites||[]);S.openPlayerSlots=[...(next?.openSlots||[])];S.spectators=structuredClone(next?.spectators||[]);}
   }
   async function forgetSavedInvite(memberId){if(savedRoom){const invite=savedRoom.invites.find(i=>i.memberId===memberId);await saveRoomRecord({...savedRoom,openSlots:(savedRoom.openSlots||[]).filter(id=>id!==invite?.actorId),invites:savedRoom.invites.filter(i=>i.memberId!==memberId)});}}
   async function configureInvitationSlot(actorId,kind){
@@ -141,7 +147,7 @@ const GameApp=(()=>{
     });
   }
   async function connectRoom(){
-    if(!S.openPlayerSlots?.length)throw Error('请先将至少一个角色槽位开放给玩家');
+    if(!S.openPlayerSlots?.length&&!S.spectators?.length)throw Error('请先将至少一个角色槽位开放给玩家，或添加观战槽位');
     return invitationTask(()=>openOnlineRoom());
   }
   async function openOnlineRoom(){
@@ -156,21 +162,22 @@ const GameApp=(()=>{
     const generation=++bridgeGeneration;S.network={status:'connecting',message:'正在创建联机房间',invites:[]};emit();
     try{
       const room=restored?await domain.open({roomId:restored.roomId}):await openRoom();
-      const wanted=[...(S.openPlayerSlots||[])],invites=(restored?.invites||[]).filter(i=>active().slots.some(slot=>slot.id===i.actorId&&slot.kind!=='kpc'&&slot.id!==active().actorId));
-      const additions=wanted.filter(id=>!invites.some(i=>i.actorId===id)).map(actorId=>({actorId,memberId:'p_'+crypto.randomUUID().replaceAll('-','')}));
+      const wanted=[...(S.openPlayerSlots||[])],watchers=(S.spectators||[]).map(w=>({...w,permission:['none','all'].includes(w.permission)||wanted.includes(w.permission)||active().slots.some(s=>s.id===w.permission&&s.kind==='player')?w.permission:'none'})),invites=(restored?.invites||[]).filter(i=>i.spectatorId?watchers.some(w=>w.id===i.spectatorId):active().slots.some(slot=>slot.id===i.actorId&&slot.kind!=='kpc'&&slot.id!==active().actorId));
+      const additions=[...wanted.filter(id=>!invites.some(i=>i.actorId===id)).map(actorId=>({actorId,memberId:'p_'+crypto.randomUUID().replaceAll('-','')})),...watchers.filter(w=>!invites.some(i=>i.spectatorId===w.id)).map(w=>({spectatorId:w.id,memberId:w.id}))];
       let credentials=restored?.credentials;
       if(additions.length){
         const prepared=await BridgeTransport.prepareHostAuthorization({url,roomId:room.roomId,credentials,players:invites.map(i=>BridgeTransport.parseInvitation(i.key)),memberIds:additions.map(i=>i.memberId)});credentials=prepared.credentials;
         for(const item of additions){const key=BridgeTransport.encodeInvitation(prepared.players.find(i=>i.memberId===item.memberId)),link=new URL('client.html',location.href);link.search='';link.hash='join='+key;invites.push({...item,key,link:link.href});}
       }
-      for(const invite of invites)if(!domain.state().members[invite.memberId])await domain.reserveInvitation(invite.memberId,invite.actorId);
+      for(const invite of invites.filter(i=>!i.spectatorId))if(!domain.state().members[invite.memberId])await domain.reserveInvitation(invite.memberId,invite.actorId);
+      for(const invite of invites.filter(i=>i.spectatorId)){const permission=watchers.find(w=>w.id===invite.spectatorId).permission;if(!domain.state().members[invite.memberId])await domain.reserveSpectator(invite.memberId,permission);else if(domain.state().members[invite.memberId].permission!==permission)await domain.configureSpectator(invite.memberId,permission);}
       S.network.invites=structuredClone(invites);
       const session=await BridgeTransport.createHost({url,roomId:room.roomId,title:active().name,credentials,players:invites.map(i=>BridgeTransport.parseInvitation(i.key)),
         onMember:event=>invitationTask(async()=>{if(generation!==bridgeGeneration)return;const invited=S.network?.invites?.find(x=>x.memberId===event.memberId);if(!invited)return;if(event.type==='joined')await domain.joinInvitation(event.memberId);else if(domain.state().members[event.memberId])await domain.setConnected(event.memberId,false);}),
         onState:info=>{if(generation!==bridgeGeneration)return;S.network={...S.network,...info};if(info.status!=='connected')for(const [id,m]of Object.entries(domain.state().members))if(id!=='host'&&m.connected)domain.setConnected(id,false).catch(()=>{});emit();}
       });
       if(generation!==bridgeGeneration){session.close();throw Error('开房已取消');}
-      bridgeSession=session;await saveRoomRecord({version:1,saveId,url,roomId:room.roomId,credentials:session.credentials?.(),invites});await attachMultiplayerTransport(session.transport);S.network={...S.network,status:'connected',message:'联机房间已开启'};emit();
+      bridgeSession=session;await saveRoomRecord({version:1,saveId,url,roomId:room.roomId,credentials:session.credentials?.(),invites,spectators:watchers});await attachMultiplayerTransport(session.transport);S.network={...S.network,status:'connected',message:'联机房间已开启'};emit();
     }catch(error){if(generation===bridgeGeneration){await stopBridge();try{if(domain.state().online)await domain.close();}catch(_){}S.network={status:'disconnected',message:error.message,code:error.code,invites:[]};emit();}throw error;}
   }
   function setInvitationSlot(actorId,kind){const domain=hostSession;return invitationTask(async()=>{
@@ -213,10 +220,31 @@ const GameApp=(()=>{
       const result={actorId,memberId,key,link:url.href};await saveRoomRecord({...savedRoom,openSlots:[...new Set([...(savedRoom?.openSlots||[]),actorId])],invites:[...S.network.invites,result]});S.network.invites.push(result);emit();return structuredClone(result);
     }catch(error){try{await session.revoke(memberId);}catch(_){}if(generation===bridgeGeneration)try{await domain.cancelInvitation(memberId,oldKind==='ai'?'ai':'disabled');}catch(_){}throw error;}
   });}
+  function configureSpectators(value){return invitationTask(async()=>{
+    idle();const s=active();peerCheck(s);const r=hostSession.state();
+    if(r.vote||Object.keys(r.submissions).length)throw Error('请在回合边界保存观战配置');
+    if(!Array.isArray(value)||value.length+(s.hostSpectator?1:0)>8)throw Error('最多 8 个观战槽位（含观战房主）');
+    const next=value.map(w=>({id:w.id,permission:w.permission}));
+    if(new Set(next.map(w=>w.id)).size!==next.length||next.some(w=>!/^s_[a-f0-9]{32}$/.test(w.id)||!['none','all'].includes(w.permission)&&!s.slots.some(slot=>slot.id===w.permission&&(slot.kind==='player'||S.openPlayerSlots.includes(slot.id)))))throw Error('观战槽位或权限无效');
+    const old=S.spectators||[],removed=old.filter(w=>!next.some(n=>n.id===w.id)),invites=(savedRoom?.invites||[]).filter(i=>!i.spectatorId||next.some(w=>w.id===i.spectatorId));
+    await saveRoomRecord({version:1,saveId:s.id,...savedRoom,spectators:next,openSlots:S.openPlayerSlots||[],invites});
+    if(r.online)try{
+      for(const w of removed){await bridgeSession.revoke(w.id);await hostSession.removeSpectator(w.id);clientCursors.delete(w.id);}
+      for(const w of next){
+        const member=hostSession.state().members[w.id];
+        if(member){if(member.permission!==w.permission){await hostSession.configureSpectator(w.id,w.permission);clientCursors.delete(w.id);}}
+        else{
+          await hostSession.reserveSpectator(w.id,w.permission);const invitation=await bridgeSession.invite(w.id),key=BridgeTransport.encodeInvitation(invitation),link=new URL('client.html',location.href);link.search='';link.hash='join='+key;invites.push({spectatorId:w.id,memberId:w.id,key,link:link.href});
+        }
+      }
+      await saveRoomRecord({...savedRoom,invites});S.network.invites=structuredClone(invites);
+    }catch(error){await closeRoom();throw error;}
+    emit();return structuredClone(next);
+  });}
   function rotateInvitation(actorId){return invitationTask(async()=>{
     idle();const s=active();peerCheck(s);const domain=hostSession,r=domain.state();
     if(actorId===s.actorId||r.status!=='collecting'||r.vote||Object.keys(r.submissions).length)throw Error('请在回合边界重新生成玩家密钥');
-    const old=savedRoom?.invites.find(i=>i.actorId===actorId);if(!old)throw Error('请先连接服务器生成该槽位的邀请');
+    const old=savedRoom?.invites.find(i=>i.actorId===actorId||i.spectatorId===actorId);if(!old)throw Error('请先连接服务器生成该槽位的邀请');
     const session=bridgeSession,generation=bridgeGeneration;let invitation;
     if(r.online){if(!session)throw Error('房间连接已关闭');invitation=await session.rotate(old.memberId);}
     else{
@@ -235,7 +263,7 @@ const GameApp=(()=>{
     if(!actorId){const occupied=new Set(Object.values(hostSession.state().members).map(m=>m.actorId));actorId=active().slots.find(s=>s.kind!=='kpc'&&!occupied.has(s.id)&&!S.network?.invites?.some(i=>i.actorId===s.id))?.id;}
     if(!actorId)throw Error('世界需要有空白角色槽位');return (await setInvitationSlot(actorId,'player')).link;
   }
-  async function revokeInvitation(memberId){const invite=(S.network?.invites||S.savedInvites)?.find(x=>x.memberId===memberId);if(!invite)throw Error('邀请已失效');await setInvitationSlot(invite.actorId,'disabled');}
+  async function revokeInvitation(memberId){const invite=(S.network?.invites||S.savedInvites)?.find(x=>x.memberId===memberId);if(!invite)throw Error('邀请已失效');if(invite.spectatorId)return configureSpectators(S.spectators.filter(w=>w.id!==invite.spectatorId));await setInvitationSlot(invite.actorId,'disabled');}
   const multiplayerState=()=>hostSession?.state();
   async function requestRollback(){const snap=active().snapshots.at(-1);if(!snap)throw Error('没有可回退的回合');return roomCommand('rollback.request',{targetRound:snap.round,targetRoundId:snap.inputRoundId});}
   async function decideHostRollback(decision){idle();peerCheck(active());const snap=active().snapshots.at(-1);if(!snap)throw Error('没有可回退的回合');const result=await roomCommand('rollback.host',{targetRound:snap.round,targetRoundId:snap.inputRoundId,decision});if(decision==='approve')S.lastRequest=null;emit();return result;}
@@ -337,7 +365,7 @@ const GameApp=(()=>{
     const pp=GameCore.validateTree(t,s.playerPath);if(pp!==s.playerPath)throw Error('请通过角色槽位管理修改控制方式');s.tree=t;await persist();emit();}
   const readInfo=GamePresentation.createReader(s=>GameCore.player(s,'info')),readItems=GamePresentation.createReader(s=>GameCore.player(s,'items'));
   const readPlayer={clear:s=>{readInfo.clear(s);readItems.clear(s);}};
-  function player(){const s=active(),info=readInfo(s),items=readItems(s);return {info:info.info,name:info.name,items:items.items,stale:info.stale||items.stale,infoStale:info.stale,itemsStale:items.stale,error:[info.error,items.error].filter(Boolean).join('；')};}
+  function player(){const s=active();if(s.hostSpectator){const view=exportView();return {info:view.info,items:view.items,name:view.playerName};}const info=readInfo(s),items=readItems(s);return {info:info.info,name:info.name,items:items.items,stale:info.stale||items.stale,infoStale:info.stale,itemsStale:items.stale,error:[info.error,items.error].filter(Boolean).join('；')};}
   function setMode(mode){S.mode=mode==='debug'?'debug':'play';emit();}
   function system(overrides){let world='';try{world=rawRead('/workspace/system.md');}catch(_){}return Prompts.buildSystem(overrides,world);}
   function currentContext(){
@@ -455,7 +483,7 @@ const GameApp=(()=>{
     window.addEventListener('storage',e=>{if(e.key?.startsWith('awl:lease:'))emit();});
   }
   return {getState:()=>S,subscribe,init,importSave,importHandoff,importLink,openSave,closeSave,returnHome,returnToGame,leaveForClient,renameSave,deleteSave,exportSave,send,skip,start,resume,abort,rollback,setMode,
-    configureSlots,configureNPCCards,configureInvitationSlot,connectRoom,setInvitationSlot,openRoom,createInvitation,rotateInvitation,revokeInvitation,closeRoom,reconnectRoom:async()=>{if(!bridgeSession)throw Error('请先连接服务器建立房间');await bridgeSession.reconnect();},multiplayerState,roomCommand,requestRollback,decideHostRollback,exportView,attachMultiplayerTransport,
+    configureSlots,configureNPCCards,configureInvitationSlot,configureSpectators,spectatorView:()=>S.active?.hostSpectator?exportView():null,setSpectatorView:view=>roomCommand('spectator.view',{view},{acceptOnly:true}),connectRoom,setInvitationSlot,openRoom,createInvitation,rotateInvitation,revokeInvitation,closeRoom,reconnectRoom:async()=>{if(!bridgeSession)throw Error('请先连接服务器建立房间');await bridgeSession.reconnect();},multiplayerState,roomCommand,requestRollback,decideHostRollback,exportView,attachMultiplayerTransport,
     addMember:id=>hostSession.addMember(id),setMemberConnected:(id,connected)=>hostSession.setConnected(id,connected),assignMember:(id,actor)=>hostSession.assign(id,actor),dispatchMember:(id,command)=>hostSession.handle(id,command),multiplayerSync:(id,request)=>syncHost.sync(id,request),
     readFile,writeFile,fileOperation,player,currentContext,updateSettings,stageDraft,saveDraft,resolveManualDice,cancelAction,
     profile:actorId=>MultiplayerSync.profile(active(),actorId,{room:hostSession?.state(),memberId:'host'}),

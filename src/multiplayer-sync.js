@@ -10,9 +10,13 @@ const MultiplayerSync=(()=>{
   }
   async function hash(x){const bytes=new TextEncoder().encode(canonical(x)),digest=await globalThis.crypto.subtle.digest('SHA-256',bytes);return Array.from(new Uint8Array(digest),v=>v.toString(16).padStart(2,'0')).join('');}
   const members=room=>Array.isArray(room?.members)?room.members.map(m=>[m.memberId||m.id,m]):Object.entries(room?.members||{});
+  function spectatorPerspective(save,member){
+    const requested=member.permission==='all'?(member.view||'all'):member.permission;
+    return ['none','all'].includes(requested)?requested:save.slots?.some(s=>s.id===requested&&s.kind==='player')?requested:'none';
+  }
   function profile(save,actorId,{room=save.multiplayer,memberId='host'}={}){
     const people=members(room),viewer=people.find(([id])=>id===memberId)?.[1],slot=save.slots?.find(s=>s.id===actorId);
-    if(!viewer?.actorId||!slot||!people.some(([,m])=>m.actorId===actorId))throw Object.assign(Error('角色资料不可访问'),{code:'PROFILE_UNAVAILABLE'});
+    if((viewer?.role==='spectator'?spectatorPerspective(save,viewer)!==actorId:!viewer?.actorId)||!slot||!people.some(([,m])=>m.actorId===actorId))throw Object.assign(Error('角色资料不可访问'),{code:'PROFILE_UNAVAILABLE'});
     const Data=typeof module!=='undefined'&&module.exports?require('./game-data'):GameData,Core=typeof module!=='undefined'&&module.exports?require('./game-core'):GameCore;
     const raw=Data.read(save,slot.path+'/基础信息.json');
     if(Data.hiddenFlag(raw['.是否对玩家隐藏']))return {actorId,name:'角色',info:{}};
@@ -97,9 +101,11 @@ const MultiplayerSync=(()=>{
     const Core=typeof module!=='undefined'&&module.exports?require('./game-core.js'):GameCore;
     const Data=typeof module!=='undefined'&&module.exports?require('./game-data.js'):GameData;
     const slots=Array.isArray(save.slots)?save.slots:[];
+    const people=members(room),ownMember=people.find(([id])=>id===memberId)?.[1],spectator=ownMember?.role==='spectator',perspective=spectator?spectatorPerspective(save,ownMember):null;
+    if(spectator)actorId=['none','all'].includes(perspective)?null:perspective;
     const slot=slots.find(s=>s.id===actorId);
-    if(!slot&&!(allowUnassigned&&actorId===null))throw Object.assign(Error('角色授权已失效'),{code:'SCOPE_INVALID'});
-    const own=slot?Core.player({...save,playerPath:slot.path}):{info:{},items:[],name:''},people=members(room);
+    if(!slot&&!spectator&&!(allowUnassigned&&actorId===null))throw Object.assign(Error('角色授权已失效'),{code:'SCOPE_INVALID'});
+    const own=slot?Core.player({...save,playerPath:slot.path}):{info:{},items:[],name:''};
     const publicSlots=slots.map(s=>{
       const card=Core.player({...save,playerPath:s.path},'info');
       const binding=people.find(([,m])=>m.actorId===s.id);
@@ -115,15 +121,21 @@ const MultiplayerSync=(()=>{
         if(object(ownState))roundStates.set(Number(match[1]),{info:Data.visible(ownState.info||{}),items:Data.visible(ownState.items||[],true)});
       }catch(_){}
     }
-    const events=[];for(const e of slot?save.events||[]:[]){const visible=eventView(e,actorId,events.length+1,save,Core);if(visible){if(e.type==='round_end'&&roundStates.has(e.round))visible.roundState=roundStates.get(e.round);events.push(visible);}}
-    const ownMember=people.find(([id])=>id===memberId)?.[1];
+    const events=[];for(const e of slot||spectator?save.events||[]:[]){
+      const candidates=perspective==='all'?[e.actorId,...slots.filter(s=>s.kind!=='kpc').map(s=>s.id),null].filter((id,i,a)=>a.indexOf(id)===i):[actorId];
+      const visible=candidates.map(id=>eventView(e,id,events.length+1,save,Core)).find(Boolean);
+      if(visible){if(e.type==='round_end'&&slot&&roundStates.has(e.round))visible.roundState=roundStates.get(e.round);events.push(visible);}
+    }
     const roomView=room?{...pick(room,['roomId','epoch','roundId','round','status','online','autoAdvanceUnconscious']),memberId,actorId,bindingVersion:ownMember?.bindingVersion||0,submitted:!!room.submissions?.[actorId],members:people.map(([id,m])=>({memberId:id,actorId:m.actorId,connected:m.connected===true||m.online===true})),vote:room.vote?{...pick(room.vote,['id','requester','targetRound','targetRoundId','status','expiresAt']),eligible:(room.vote.eligible||[]).includes(memberId),voted:Object.hasOwn(room.vote.votes||{},memberId),yes:Object.values(room.vote.votes||{}).filter(Boolean).length,required:Math.ceil((room.vote.eligible||[]).length/2)}:null}:null;
     if(roomView)roomView.slotRequests=(room.slotRequests||[]).map(request=>pick(request,['id','memberId','actorId','at']));
-    if(roomView){const q=room.preparedActions?.[actorId];roomView.preparedAction=q&&q.memberId===memberId&&q.bindingVersion===ownMember?.bindingVersion&&q.epoch===room.epoch?pick(q,['id','version','status','epoch','fromRound','round','roundId','content','privateContent','disguise']):null;}
+    if(roomView){const q=room.preparedActions?.[actorId];roomView.preparedAction=!spectator&&q&&q.memberId===memberId&&q.bindingVersion===ownMember?.bindingVersion&&q.epoch===room.epoch?pick(q,['id','version','status','epoch','fromRound','round','roundId','content','privateContent','disguise']):null;}
     if(roomView)roomView.collection=collection(room,publicSlots);
-    return {id:save.id,name:save.name,actorId,round:save.round||0,status:save.status,events,pendingActions:slot?pendingActions(save,actorId,{room}):[],rollbackCount:Math.min(10,save.snapshots?.length||0),rollbackTargetRound:save.snapshots?.at(-1)?.round??null,info:own.info,items:own.items,itemKeys:slot?itemKeys(save,slot,Data,keyMap):[],playerName:own.name,slots:publicSlots,room:roomView};
+    if(spectator&&roomView){roomView.actorId=null;roomView.submitted=false;roomView.spectator=true;roomView.perspective=perspective;roomView.canChoosePerspective=ownMember.permission==='all';}
+    const pending=slot||spectator?pendingActions(save,actorId,{room}):[];
+    if(perspective==='all')for(const id of Object.keys(room.submissions||{})){const ownAction=pendingActions(save,id,{room}).find(e=>e.actorId===id);if(ownAction){const i=pending.findIndex(e=>e.actorId===id);if(i>=0)pending[i]=ownAction;else pending.push(ownAction);}}
+    return {id:save.id,name:save.name,actorId:spectator?null:actorId,...spectator?{spectator:true,spectatedActorId:actorId,panelsLocked:!slot}:{},round:save.round||0,status:save.status,events,pendingActions:pending,rollbackCount:Math.min(10,save.snapshots?.length||0),rollbackTargetRound:save.snapshots?.at(-1)?.round??null,info:own.info,items:own.items,itemKeys:slot?itemKeys(save,slot,Data,keyMap):[],playerName:own.name,slots:publicSlots,room:roomView};
   }
-  function meta(view){return pick(view,['id','name','actorId','round','status','playerName','slots','room','pendingActions','rollbackCount','rollbackTargetRound']);}
+  function meta(view){return pick(view,['id','name','actorId','spectator','spectatedActorId','panelsLocked','round','status','playerName','slots','room','pendingActions','rollbackCount','rollbackTargetRound']);}
   async function hashes(view){const [history,info,items,state]=await Promise.all([hash(view.events),hash(view.info),hash({items:view.items,itemKeys:view.itemKeys}),hash(meta(view))]);return {history,info,items,state};}
   const same=(a,b)=>canonical(a)===canonical(b);
   function createHost({getSave,getRoom,pageSize=200}){

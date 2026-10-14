@@ -67,7 +67,7 @@ const GameCore = (() => {
   function createSave(name,tree) {
     const playerPath=validateTree(tree),actors=slots.scan(tree).filter(n=>n.kind!=='kpc');
     return {id:uid(),name:String(name||'未命名存档'),createdAt:Date.now(),updatedAt:Date.now(),playerPath,
-      actorId:actors.find(x=>x.path===playerPath).id,slots:actors,slotsConfigured:actors.length===1,tree:copy(tree),requestHistory:[],messages:[],events:[],round:0,cache:{},summaries:[],status:'new',
+      actorId:actors.find(x=>x.path===playerPath).id,slots:actors,slotsConfigured:false,tree:copy(tree),requestHistory:[],messages:[],events:[],round:0,cache:{},summaries:[],status:'new',
       snapshots:[],lastChanges:[],activeRound:null,contextFromRound:1,draft:'',draftRound:1,draftVersion:0,inputHistory:[]};
   }
   function emit(s,type,payload={}) {
@@ -329,7 +329,7 @@ const GameCore = (() => {
           const participantIds=round.participantIds??(s.multiplayer?.members?Object.values(s.multiplayer.members).map(m=>m.actorId).filter(Boolean):null),participants=participantIds?new Set(participantIds):null;
           const actors=slots.scan(s.tree).filter(x=>x.kind!=='disabled'&&(x.kind!=='player'||!participants||participants.has(x.id))).map(x=>({...x,...data.actorState(readJson(s,x.path+'/基础信息.json',{}))}));
           const living=actors.filter(x=>x.kind==='player'&&x.alive),unconsciousActors=living.length&&living.every(x=>!x.enabled)?living.map(x=>x.id):[];
-          result={action:round.action,actions:round.actions||[],...round.actions?.some(a=>a.disguise)?{disguiseInstruction:'disguise=true 的 content 是角色对外公开的伪装说辞，真实行动以 privateContent 为准。按角色感知与动机决定他人能发现什么；不在公开正文中泄露真实行动或伪装标记。'}:{},player:s.playerPath,actors,unconsciousActors,
+          result={action:round.action,actions:round.actions||[],...round.actions?.some(a=>a.disguise)?{disguiseInstruction:'disguise=true 的 content 是角色对外公开的伪装说辞，真实行动以 privateContent 为准。按角色感知与动机决定他人能发现什么；不在公开正文中泄露真实行动或伪装标记。'}:{},player:s.hostSpectator?null:s.playerPath,actors,unconsciousActors,
             instruction:unconsciousActors.length?(options.multiplayerPrompts?.all_unconscious||'所有存活玩家均失去意识。推进时间并描写苏醒，通过工具恢复这些存活角色的 Enabled，不恢复死亡角色。').replace('{actorIds}',unconsciousActors.join('、')):(options.multiplayerPrompts?.ai_roles||'AIPC/KPC 由主持人依照人设代为行动；死亡者不能行动，无意识者只能等待。'),
             phase_plan:plan,warnings:round.number>3?data.references(s,plan.Pending_Triggers):[]};break;
         }

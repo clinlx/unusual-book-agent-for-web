@@ -18,7 +18,7 @@ test('opening guide and host pre-submit lock, cancel, automatic acceptance, and 
   await route.fulfill({contentType:'application/json',body:JSON.stringify({choices:[{message:{content:'',tool_calls:calls}}]})});
  });
  await page.goto(origin+'/index.html');await page.locator('[data-action="import"]').waitFor();
- await page.evaluate(async()=>{await GameApp.updateSettings({apiKey:'test',baseUrl:'https://pre-submit.invalid/v1',stream:false});await GameApp.importSave(new File([ZIP.makeZip([{name:'Player-a/基础信息.json',text:'{"姓名":"甲"}'},{name:'Player-a/背包.json',text:'[]'}])],'开场引导.zip'));});
+ await page.evaluate(async()=>{await GameApp.updateSettings({apiKey:'test',baseUrl:'https://pre-submit.invalid/v1',stream:false});await GameApp.importSave(new File([ZIP.makeZip([{name:'Player-a/基础信息.json',text:'{"姓名":"甲"}'},{name:'Player-a/背包.json',text:'[]'}])],'开场引导.zip'));await GameApp.configureSlots('a');});
  await page.locator('.composer-start-guide').waitFor();assert.equal(await page.locator('#action-input').isDisabled(),true);assert.match(await page.locator('.composer-start-guide').innerText(),/开始故事/);
  await page.screenshot({path:'tests/artifacts/opening-guide-host-390.png'});
  await page.locator('#action-form [data-action="start"]').click();await page.locator('[data-action="pre-submit"]').waitFor();await page.locator('#action-input').fill('我预先查看门锁');

@@ -45,7 +45,7 @@ test('invitation links show progress without flashing a key form, and failures o
   await guest.screenshot({path:path.join(__dirname,'../artifacts/client-join-failure-390.png')});
   await host.evaluate(()=>GameApp.closeRoom());assert.deepEqual(errors,[]);
 });
-async function pageFor(t,errors,sockets){const context=await browser.newContext();t.after(()=>context.close());const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));page.on('console',message=>{if(message.type()==='error')errors.push(message.text());});page.on('websocket',socket=>{const record={url:socket.url(),received:[],sent:[]};sockets.push(record);socket.on('framereceived',frame=>record.received.push(typeof frame.payload==='string'?Buffer.byteLength(frame.payload):frame.payload.byteLength));socket.on('framesent',frame=>record.sent.push(typeof frame.payload==='string'?Buffer.byteLength(frame.payload):frame.payload.byteLength));});return page;}
+async function pageFor(t,errors,sockets){const context=await browser.newContext();await context.route('**/modules.json',r=>r.fulfill({json:[]}));await context.route('**/files/**',r=>r.abort());t.after(()=>context.close());const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));page.on('console',message=>{if(message.type()==='error')errors.push(message.text());});page.on('websocket',socket=>{const record={url:socket.url(),received:[],sent:[]};sockets.push(record);socket.on('framereceived',frame=>record.received.push(typeof frame.payload==='string'?Buffer.byteLength(frame.payload):frame.payload.byteLength));socket.on('framesent',frame=>record.sent.push(typeof frame.payload==='string'?Buffer.byteLength(frame.payload):frame.payload.byteLength));});return page;}
 async function waitHost(page,round){await page.waitForFunction(round=>GameApp.getState().active.round===round&&GameApp.multiplayerState().status==='collecting',round);}
 async function closeModal(page){if(await page.locator('[data-action="close-modal"]').count())await page.locator('[data-action="close-modal"]').first().click();}
 
@@ -452,4 +452,32 @@ test('global save rotates room keys online and offline without affecting other p
  assert.equal(await host.evaluate(async key=>{try{await BridgeTransport.probeInvitation(key);return true;}catch{return false;}},changed[0].key),false);
  await guest.goto(offline[0].link);await guest.waitForFunction(()=>GameApp.getState().active?.actorId==='p1'&&GameApp.getState().network?.status==='connected');
  await host.evaluate(()=>GameApp.closeRoom());assert.deepEqual(errors,[]);
+});
+
+
+test('real Bridge spectators retain authorization across reconnects and lose revoked views and keys', {timeout:60000},async t=>{
+  const errors=[],host=await pageFor(t,errors,[]),watch=await pageFor(t,errors,[]);
+  await host.goto(site.origin+'/index.html');await host.locator('[data-action="import"]').waitFor();
+  const invite=await host.evaluate(async bridgeUrl=>{
+    await GameApp.updateSettings({bridgeUrl});
+    const files=['a','b'].flatMap(id=>[{name:`Player-${id}/基础信息.json`,text:JSON.stringify({姓名:id})},{name:`Player-${id}/背包.json`,text:'[]'}]);
+    await GameApp.importSave(new File([ZIP.makeZip(files)],'真实观战.zip'));await GameApp.configureSlots('a');
+    const s=GameApp.getState().active;s.status='waiting';s.events=[{type:'story',content:'公开故事',audience:'public'},{type:'story',content:'甲私密故事',audience:['a'],private:true}];
+    await GameApp.configureSpectators([{id:'s_'+ 'a'.repeat(32),permission:'all'}]);await GameApp.connectRoom();return GameApp.getState().savedInvites[0];
+  },bridge.url);
+  await watch.goto(invite.link);await watch.locator('#spectator-view').waitFor();assert.equal(await watch.locator('#action-form').count(),0);assert.match(await watch.locator('#history').innerText(),/甲私密故事/);
+  await watch.locator('#spectator-view').selectOption('a');await watch.waitForFunction(()=>GameApp.getState().active?.spectatedActorId==='a');
+  await watch.evaluate(()=>GameApp.reconnectRoom());await watch.waitForFunction(()=>GameApp.getState().network.status==='connected'&&GameApp.getState().active?.spectatedActorId==='a');
+  assert.equal(await watch.evaluate(async()=> (await GameApp.profile('a')).info.姓名),'a');
+  await host.evaluate(()=>GameApp.configureSpectators([{id:'s_'+ 'a'.repeat(32),permission:'none'}]));
+  await watch.locator('#spectator-view').waitFor({state:'detached'});assert.ok(!(await watch.locator('#history').innerText()).includes('私密'));
+  assert.equal(await watch.evaluate(async()=>{try{await GameApp.profile('a');return false;}catch{return true;}}),true);
+  const replacement=await host.evaluate(async()=>{await GameApp.rotateInvitation('s_'+ 'a'.repeat(32));return GameApp.getState().savedInvites[0];});assert.notEqual(replacement.key,invite.key);
+  await watch.goto('about:blank');await watch.goto(invite.link);await watch.locator('[role="alertdialog"]').waitFor();assert.match(await watch.locator('[role="alertdialog"]').innerText(),/加入失败/);
+  await watch.goto('about:blank');await watch.goto(replacement.link);await watch.waitForFunction(()=>GameApp.getState().active?.spectator===true);assert.equal(await watch.evaluate(()=>GameApp.getState().room.perspective),'none');
+  await host.evaluate(()=>GameApp.closeRoom());await host.evaluate(()=>GameApp.connectRoom());
+  assert.equal(await host.evaluate(()=>GameApp.getState().savedInvites[0].key),replacement.key);
+  await watch.goto('about:blank');await watch.goto(replacement.link);await watch.waitForFunction(()=>GameApp.getState().active?.spectator===true);
+  await host.evaluate(()=>GameApp.configureSpectators([]));await watch.waitForFunction(()=>GameApp.getState().network?.status!=='connected');
+  await host.evaluate(()=>GameApp.closeRoom());assert.deepEqual(errors,[]);
 });

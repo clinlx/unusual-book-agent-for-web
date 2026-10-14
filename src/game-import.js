@@ -46,6 +46,7 @@ const GameImport=(()=>{
       s.playerPath=core.validateTree(s.tree,s.playerPath);
       s.slots=slots.scan(s.tree).filter(slot=>slot.kind!=='kpc');
       s.actorId=s.slots.find(slot=>slot.path===s.playerPath).id;
+      if(st.hostSpectator===true){s.hostSpectator=true;s.actorId=null;}
       s.slotsConfigured=s.slots.length===1||st.slotsConfigured===true;
       for(const snapshot of s.snapshots||[]){
         delete snapshot.multiplayer;delete snapshot.room;delete snapshot.memberId;
@@ -53,6 +54,7 @@ const GameImport=(()=>{
         if(snapshot.tree){snapshot.playerPath=core.validateTree(snapshot.tree,snapshot.playerPath||s.playerPath);snapshot.slots=slots.scan(snapshot.tree).filter(slot=>slot.kind!=='kpc');snapshot.actorId=snapshot.slots.find(slot=>slot.path===snapshot.playerPath).id;}
         else if(typeof snapshot.playerPath==='string'){const role=/^\/workspace\/(?:Player|AIPC|DISABLE)-([^/]+)$/.exec(snapshot.playerPath);if(role)snapshot.actorId=role[1];else delete snapshot.actorId;}
         else delete snapshot.actorId;
+        if(s.hostSpectator)snapshot.actorId=null;
       }
     }else history.restoreReference(s);
     if(coverBytes)s.cover={mime:'image/png',data:toBase64(coverBytes)};
