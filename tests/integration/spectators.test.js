@@ -63,8 +63,8 @@ test('spectator views filter private dice, pending actions and profile access at
  const all=(await projector.sync('all')).view,one=(await projector.sync('one')).view,none=(await projector.sync('none')).view;
  assert.equal(all.events.length,1);assert.equal(all.events[0].data.total,37);assert.equal(one.events.length,0);assert.equal(none.events.length,0);
  assert.equal(all.pendingActions[0].privateContent,'乙真实意图');assert.equal(none.pendingActions[0].privateContent,undefined);assert.equal(one.pendingActions[0].privateContent,undefined);
- assert.throws(()=>Sync.profile(f.save,'b',{room:f.host.state(),memberId:'one'}),{code:'PROFILE_UNAVAILABLE'});
- assert.throws(()=>Sync.inventory(f.save,'a',{room:f.host.state(),memberId:'all'}),{code:'PROFILE_UNAVAILABLE'});
+ assert.equal(Sync.profile(f.save,'b',{room:f.host.state(),memberId:'one'}).name,'b');
+ assert.equal(Sync.inventory(f.save,'a',{room:f.host.state(),memberId:'all'}).items.length,1);
 });
 
 
@@ -73,4 +73,26 @@ test('spectating host may advance unconscious players but cannot bypass consciou
  await assert.rejects(f.send('host','round.advance'),{code:'ACTIVE_PLAYERS'});
  for(const id of ['a','b'])VFS.writeFile(f.save.tree,`/workspace/Player-${id}/基础信息.json`,JSON.stringify({姓名:id,Enabled:false,Alive:true}));
  await f.send('host','round.advance');await f.host.waitForIdle();assert.equal(f.runs.length,2);
+});
+
+
+test('spectator roster and details respect effective perspective and omit missing resources',async t=>{
+ const f=await setup(t);for(const [id,permission]of [['none','none'],['all','all']])await f.host.reserveSpectator(id,permission);
+ VFS.writeFile(f.save.tree,'/workspace/Player-a/基础信息.json',JSON.stringify({姓名:'甲',性别:'女',状态:{HP:6,MAXHP:10,MP:0,MAXMP:8,SAN:42,MAXSAN:80,Alive:true,Enabled:true},'.秘密':'角色秘密'}));
+ VFS.writeFile(f.save.tree,'/workspace/Player-a/背包.json',JSON.stringify([{名称:'公开物品'},{名称:'隐藏物品',可见性:'Hide'},{名称:'点号隐藏物品','.是否对玩家隐藏':true},'密封信']));
+ VFS.writeFile(f.save.tree,'/workspace/存档-索引-物品/密封信/物品基础信息.json',JSON.stringify({名称:'密封信','.是否对玩家隐藏':true,'.内容':'密文'}));
+ const projector=Sync.createHost({getSave:()=>f.save,getRoom:()=>f.host.state()});
+ const pub=(await projector.sync('none')).view,all=(await projector.sync('all')).view;
+ const a=pub.slots.find(s=>s.id==='a'),b=pub.slots.find(s=>s.id==='b');
+ assert.equal(a.gender,'女');assert.equal(a.condition,'受伤');assert.equal(a.itemCount,1);assert.equal(a.vitals.hp.value,6);assert.equal(a.vitals.mp.value,0);assert.equal(a.vitals.san.max,80);assert.equal(b.vitals.hp,null);
+ assert.equal(all.slots.find(s=>s.id==='a').itemCount,4);assert.ok(!JSON.stringify(pub).includes('角色秘密'));assert.ok(!JSON.stringify(all.slots).includes('密文'),'roster sends summaries, not full inventories');
+ const options=memberId=>({memberId,room:f.host.state()});
+ assert.equal(Sync.profile(f.save,'a',options('none')).info['.秘密'],undefined);
+ const detail=Sync.profile(f.save,'a',options('all'));assert.equal(detail.info['.秘密'],'角色秘密');assert.equal(detail.omniscient,true);
+ assert.equal(Sync.inventory(f.save,'a',options('none')).items.length,1);const full=Sync.inventory(f.save,'a',options('all'));assert.equal(full.items.length,4);assert.equal(full.items[3]['.内容'],'密文');
+ const P=require('../../src/game-presentation');assert.ok(P.fields(detail.info,detail.info,'info',{showHidden:detail.omniscient}).includes('角色秘密'));assert.ok(!P.fields(detail.info).includes('角色秘密'));
+ await f.send('all','spectator.view',{view:'a'});assert.equal(Sync.inventory(f.save,'a',options('all')).items.length,1);assert.equal(Sync.profile(f.save,'a',options('all')).omniscient,false);
+ await assert.rejects(projector.sync('unknown'),{code:'SCOPE_INVALID'});assert.throws(()=>Sync.profile(f.save,'a',options('unknown')),{code:'PROFILE_UNAVAILABLE'});
+ VFS.writeFile(f.save.tree,'/workspace/Player-a/基础信息.json',JSON.stringify({姓名:'甲',Alive:false,Enabled:false}));assert.equal((await projector.sync('none')).view.slots.find(s=>s.id==='a').condition,'死亡');
+ VFS.writeFile(f.save.tree,'/workspace/Player-a/基础信息.json',JSON.stringify({姓名:'甲',Alive:true,Enabled:false}));assert.equal((await projector.sync('none')).view.slots.find(s=>s.id==='a').condition,'异常');
 });

@@ -137,20 +137,20 @@ const GameCore = (() => {
     if(n.type!=='file'||n.encoding==='base64')throw Error(p+' 必须是文本 JSON');
     try{return JSON.parse(n.content.replace(/^\uFEFF/,''));}catch(_){throw Error(p+' 的 JSON 格式不正确，请在 DEBUG 中修正');}
   }
-  function player(s,section) {
-    const info=section==='items'?{}:data.displayPaths(s,filterVisible(readJson(s,s.playerPath+'/基础信息.json',{})));
+  function player(s,section,{includeHidden=false}={}) {
+    const info=section==='items'?{}:data.displayPaths(s,includeHidden?readJson(s,s.playerPath+'/基础信息.json',{}):filterVisible(readJson(s,s.playerPath+'/基础信息.json',{})));
     if(!object(info))throw Error('基础信息.json 必须是 JSON 对象');
     if(section==='info')return {info,name:data.get(info,'姓名')||s.playerPath.split('/').pop()};
     const bag=readJson(s,s.playerPath+'/背包.json',[]);
     if(!Array.isArray(bag)&&!object(bag))throw Error('背包.json 必须是数组或兼容的物品列表对象');
     let list=Array.isArray(bag)?bag:(bag.物品||bag.Items||bag.items||bag.背包||Object.values(bag));
     if(!Array.isArray(list))list=Object.values(list||{});
-    const items=list.filter(i=>!object(i)||!hiddenFlag(i['.是否对玩家隐藏'])).map(i=>{
-      if(typeof i!=='string')return filterVisible(i,true);
+    const items=list.filter(i=>includeHidden||!object(i)||!hiddenFlag(i['.是否对玩家隐藏'])).map(i=>{
+      if(typeof i!=='string')return includeHidden?i:filterVisible(i,true);
       let p=i.replace(/\\/g,'/').replace(/^\/?workspace\//,'').replace(/\/$/,'');
       if(!p.startsWith('存档-索引-物品/'))p='存档-索引-物品/'+p;
       if(!p.endsWith('.json'))p+='/物品基础信息.json';
-      const detail=readJson(s,p,null);return detail&&hiddenFlag(detail['.是否对玩家隐藏'])?null:detail?filterVisible(detail,true):{名称:i};
+      const detail=readJson(s,p,null);return detail&&!includeHidden&&hiddenFlag(detail['.是否对玩家隐藏'])?null:detail?(includeHidden?detail:filterVisible(detail,true)):{名称:i};
     }).filter(i=>i!==null);
     return {info,items,name:data.get(info,'姓名')||s.playerPath.split('/').pop()};
   }

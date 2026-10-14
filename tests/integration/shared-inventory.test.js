@@ -27,5 +27,5 @@ test('inventory authorization matches profiles and hidden character cards disclo
  f.room.members.lobby={actorId:null};assert.throws(()=>Sync.inventory(f.save,'a',{room:f.room,memberId:'lobby'}));
  delete f.room.members.host;assert.throws(()=>Sync.inventory(f.save,'a',{room:f.room,memberId:'guest'}));
  f.room.members.host={actorId:'a'};VFS.writeFile(f.tree,'/workspace/Player-a/基础信息.json','{"姓名":"PRIVATE_NAME",".是否对玩家隐藏":true}');
- assert.deepEqual(Sync.inventory(f.save,'a',{room:f.room,memberId:'guest'}),{actorId:'a',name:'角色',items:[]});
+ assert.deepEqual(Sync.inventory(f.save,'a',{room:f.room,memberId:'guest'}),{actorId:'a',name:'角色',items:[],omniscient:false});
 });

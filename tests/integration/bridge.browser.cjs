@@ -471,7 +471,7 @@ test('real Bridge spectators retain authorization across reconnects and lose rev
   assert.equal(await watch.evaluate(async()=> (await GameApp.profile('a')).info.姓名),'a');
   await host.evaluate(()=>GameApp.configureSpectators([{id:'s_'+ 'a'.repeat(32),permission:'none'}]));
   await watch.locator('#spectator-view').waitFor({state:'detached'});assert.ok(!(await watch.locator('#history').innerText()).includes('私密'));
-  assert.equal(await watch.evaluate(async()=>{try{await GameApp.profile('a');return false;}catch{return true;}}),true);
+  assert.equal(await watch.evaluate(async()=> (await GameApp.profile('a')).info.姓名),'a');
   const replacement=await host.evaluate(async()=>{await GameApp.rotateInvitation('s_'+ 'a'.repeat(32));return GameApp.getState().savedInvites[0];});assert.notEqual(replacement.key,invite.key);
   await watch.goto('about:blank');await watch.goto(invite.link);await watch.locator('[role="alertdialog"]').waitFor();assert.match(await watch.locator('[role="alertdialog"]').innerText(),/加入失败/);
   await watch.goto('about:blank');await watch.goto(replacement.link);await watch.waitForFunction(()=>GameApp.getState().active?.spectator===true);assert.equal(await watch.evaluate(()=>GameApp.getState().room.perspective),'none');

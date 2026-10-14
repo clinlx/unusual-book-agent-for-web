@@ -14,24 +14,37 @@ const MultiplayerSync=(()=>{
     const requested=member.permission==='all'?(member.view||'all'):member.permission;
     return ['none','all'].includes(requested)?requested:save.slots?.some(s=>s.id===requested&&s.kind==='player')?requested:'none';
   }
-  function profile(save,actorId,{room=save.multiplayer,memberId='host'}={}){
-    const people=members(room),viewer=people.find(([id])=>id===memberId)?.[1],slot=save.slots?.find(s=>s.id===actorId);
-    if((viewer?.role==='spectator'?spectatorPerspective(save,viewer)!==actorId:!viewer?.actorId)||!slot||!people.some(([,m])=>m.actorId===actorId))throw Object.assign(Error('角色资料不可访问'),{code:'PROFILE_UNAVAILABLE'});
-    const Data=typeof module!=='undefined'&&module.exports?require('./game-data'):GameData,Core=typeof module!=='undefined'&&module.exports?require('./game-core'):GameCore;
+  const Data=typeof module!=='undefined'&&module.exports?require('./game-data'):typeof GameData!=='undefined'?GameData:null;
+  const Core=typeof module!=='undefined'&&module.exports?require('./game-core'):typeof GameCore!=='undefined'?GameCore:null;
+  const Presentation=typeof module!=='undefined'&&module.exports?require('./game-presentation'):typeof GamePresentation!=='undefined'?GamePresentation:null;
+  const visibilityKeys=new Set(['可见性','visibility','visible','是否可见']);
+  function visibleItem(item){return object(item)&&!Object.entries(item).some(([k,v])=>visibilityKeys.has(Data.normalize(k))&&(v===false||v===0||/^(false|否|no|0)$/i.test(String(v).trim())||/不可见|隐藏|hide|hidden|invisible/i.test(String(v))));}
+  function roleCard(save,slot,omniscient=false,section){
     const raw=Data.read(save,slot.path+'/基础信息.json');
-    if(Data.hiddenFlag(raw['.是否对玩家隐藏']))return {actorId,name:'角色',info:{}};
-    const card=Core.player({...save,playerPath:slot.path},'info');return {actorId,name:card.name,info:clone(card.info)};
+    if(!omniscient&&Data.hiddenFlag(raw['.是否对玩家隐藏']))return {name:'角色',info:{},items:[]};
+    const card=Core.player({...save,playerPath:slot.path},section,{includeHidden:omniscient});
+    return {...card,items:omniscient?card.items:(card.items||[]).filter(visibleItem)};
+  }
+  // Summaries use the same visibility rules as click-through details; no full cards go into the roster.
+  function summary(save,slot,{omniscient=false}={}){
+    const card=roleCard(save,slot,omniscient,'info'),flags=Data.actorState(card.info),vitals=Presentation.vitals(card.info);
+    let itemCount=null;try{itemCount=roleCard(save,slot,omniscient,'items').items.length;}catch(_){}
+    const state=Data.get(card.info,'状态'),status=typeof state==='string'?state:Object.entries(object(state)?state:{}).filter(([key,value])=>!/^(?:alive|enabled)$/i.test(key)&&value!==false&&value!==0).map(([key,value])=>key+' '+value).join(' ');
+    const abnormal=!flags.enabled||vitals.hp?.value===0||/昏迷|失去意识|昏厥|中毒|麻痹|眩晕|疯狂|濒死|unconscious|incapacitated/i.test(status);
+    return {name:String(card.name||slot.id),gender:String(Data.get(card.info,'性别')||''),...flags,condition:!flags.alive?'死亡':abnormal?'异常':vitals.hp&&vitals.hp.value<vitals.hp.max?'受伤':'正常',vitals,itemCount};
+  }
+  function detailAccess(save,actorId,{room=save.multiplayer,memberId='host'}={}){
+    const viewer=members(room).find(([id])=>id===memberId)?.[1],slot=save.slots?.find(s=>s.id===actorId);
+    if(!viewer||!(viewer.actorId||viewer.role==='spectator')||!slot||['ai','disabled','kpc'].includes(slot.kind)||viewer.role!=='spectator'&&!members(room).some(([,m])=>m.actorId===actorId))throw Object.assign(Error('角色资料不可访问'),{code:'PROFILE_UNAVAILABLE'});
+    return {slot,omniscient:viewer.role==='spectator'&&spectatorPerspective(save,viewer)==='all'};
+  }
+  function profile(save,actorId,options={}){
+    const {slot,omniscient}=detailAccess(save,actorId,options),card=roleCard(save,slot,omniscient,'info');
+    return {actorId,name:card.name,info:clone(card.info),omniscient};
   }
   function inventory(save,actorId,options={}){
-    const publicProfile=profile(save,actorId,options),slot=save.slots.find(s=>s.id===actorId);
-    const Data=typeof module!=='undefined'&&module.exports?require('./game-data'):GameData,Core=typeof module!=='undefined'&&module.exports?require('./game-core'):GameCore;
-    if(Data.hiddenFlag(Data.read(save,slot.path+'/基础信息.json')['.是否对玩家隐藏']))return {actorId,name:publicProfile.name,items:[]};
-    const visibilityKeys=new Set(['可见性','visibility','visible','是否可见']);
-    const items=Core.player({...save,playerPath:slot.path},'items').items.filter(item=>object(item)&&!Object.entries(item).some(([k,v])=>{
-      if(!visibilityKeys.has(Data.normalize(k)))return false;
-      return v===false||v===0||/^(false|否|no|0)$/i.test(String(v).trim())||/不可见|隐藏|hide|hidden|invisible/i.test(String(v));
-    }));
-    return {actorId,name:publicProfile.name,items:clone(items)};
+    const {slot,omniscient}=detailAccess(save,actorId,options),card=roleCard(save,slot,omniscient);
+    return {actorId,name:card.name,items:clone(card.items),omniscient};
   }
   const itemIdentities=new WeakMap();
   function itemKeys(save,slot,Data,keyMap){
@@ -107,9 +120,9 @@ const MultiplayerSync=(()=>{
     if(!slot&&!spectator&&!(allowUnassigned&&actorId===null))throw Object.assign(Error('角色授权已失效'),{code:'SCOPE_INVALID'});
     const own=slot?Core.player({...save,playerPath:slot.path}):{info:{},items:[],name:''};
     const publicSlots=slots.map(s=>{
-      const card=Core.player({...save,playerPath:s.path},'info');
+      const card=summary(save,s,{omniscient:perspective==='all'});
       const binding=people.find(([,m])=>m.actorId===s.id);
-      return {id:s.id,name:String(card.name||''),kind:s.kind,occupied:!!binding,connected:binding?.[1].connected===true||binding?.[1].online===true,...Data.actorState(card.info),submitted:!!room?.submissions?.[s.id]};
+      return {id:s.id,...card,kind:s.kind,occupied:!!binding,connected:binding?.[1].connected===true||binding?.[1].online===true,submitted:!!room?.submissions?.[s.id]};
     });
     const roundStates=new Map();
     for(const dir of Object.values(Data.node(save,'过往回合历史记忆')?.children||{})){
@@ -237,6 +250,6 @@ const MultiplayerSync=(()=>{
     function enqueue(memberId,args){pending.push({memberId,args:clone(args)});if(autoFlush)return flush(pending.length-1);return Promise.resolve();}
     return {onHost(fn){host.add(fn);return ()=>host.delete(fn);},onClient(memberId,fn){if(!clients.has(memberId))clients.set(memberId,new Set());clients.get(memberId).add(fn);return ()=>clients.get(memberId)?.delete(fn);},sendToHost:(memberId,message)=>enqueue(null,[memberId,message]),sendToClient:(memberId,message)=>enqueue(memberId,[message]),flush,drop(index=0){return !!pending.splice(index,1).length;},pending:()=>clone(pending)};
   }
-  return {project,profile,inventory,collection,pendingActions,hash,canonical,createHost,createClient,createMemoryTransport};
+  return {project,profile,inventory,summary,collection,pendingActions,hash,canonical,createHost,createClient,createMemoryTransport};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=MultiplayerSync;

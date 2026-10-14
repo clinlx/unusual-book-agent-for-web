@@ -27,9 +27,9 @@ const GamePresentation=(()=>{
       if(result.children.every(x=>x.status==='same')&&status==='modified')result.status='same';
     }return result;
   }
-  function fields(value,before=value,key='info'){
+  function fields(value,before=value,key='info',{showHidden=false}={}){
     const tag=status=>{const text={added:'新增',deleted:'移除',modified:'修改',increased:'增加',decreased:'减少'}[status];return text?`<span class="change-tag ${status}">${text}</span>`:'';};
-    function render(d){if(d.value===null||d.value===undefined||d.value===''||d.label.startsWith('.'))return '';const cls=d.status==='same'?'':' diff-'+d.status;
+    function render(d){if(d.value===null||d.value===undefined||d.value===''||!showHidden&&d.label.startsWith('.'))return '';const cls=d.status==='same'?'':' diff-'+d.status;
       const kind=x=>x===null?'null':Array.isArray(x)?'array':typeof x;
       if(d.oldValue!==undefined&&d.status!=='deleted'&&kind(d.oldValue)!==kind(d.value)&&(kind(d.oldValue)==='object'||kind(d.value)==='object'||kind(d.oldValue)==='array'||kind(d.value)==='array'))return `<div class="info-replaced"><small>原资料</small>${render(diff(d.oldValue,undefined,d.label,d.key+'/old'))}<small>新资料</small>${render(diff(undefined,d.value,d.label,d.key+'/new'))}</div>`;
       if(d.children){const content=d.children.map(render).join('');if(!content)return '';if(d.key===key)return content;return `<details class="info-group${cls}" data-key="${esc(d.key)}" data-change="${esc(d.status==='same'?'':JSON.stringify(d.value))}" open><summary>${esc(d.label)}${Array.isArray(d.value)?' ['+d.value.length+']':''}${tag(d.status)}</summary>${content}</details>`;}

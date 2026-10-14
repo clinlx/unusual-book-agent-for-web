@@ -129,12 +129,12 @@ const GameApp=(()=>{
     }catch(error){if(generation===joinGeneration){stopNetwork();S.joining=null;S.active=null;S.room=null;S.network={status:'disconnected',message:error.message,code:error.code};S.error=error.message;emit();}throw error;}
   }
   async function reconnectRoom(){if(!bridgeSession)throw Error('请重新粘贴邀请链接加入房间');await bridgeSession.reconnect();}
-  return {getState:()=>S,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},init:async()=>{try{S.settings=JSON.parse(localStorage.getItem('trpg-client-settings')||'{}');}catch(_){}},
+  return {getState:()=>S,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},init:async()=>{try{S.settings={reverseSendNewline:JSON.parse(localStorage.getItem('trpg-client-settings')||'{}')?.reverseSendNewline===true};}catch(_){}},
     connect:async(t,id)=>{stopNetwork();S.network=null;await attach(t,id);},joinRoom,reconnectRoom,receive,sync,
     preSubmit,send:(text,privateContent,options)=>submitInput(text,privateContent,options),cancelAction,profile:async actorId=>(await command('profile.request',{actorId})).profile,inventory:async actorId=>(await command('inventory.request',{actorId})).inventory,skip:(options={})=>submitInput('','',{draftState:GameInputs.draftState(S.active||{}),...options},true),requestRollback:()=>command('rollback.request',{targetRound:S.active.rollbackTargetRound??Math.max(0,S.active.round-1)}),roomCommand:command,
     player:()=>({info:S.active?.info||{},items:S.active?.items||[],name:S.active?.playerName}),exportView:()=>cache.getState()?.view,setSpectatorView:async view=>{await command('spectator.view',{view});await sync();},
     stageDraft,saveDraft:async(...args)=>stageDraft(...args),
-    updateSettings:async values=>{const bridgeUrl=values.bridgeUrl===undefined?S.settings.bridgeUrl:BridgeTransport.validateServerUrl(values.bridgeUrl);S.settings={...S.settings,bridgeUrl,reverseSendNewline:values.reverseSendNewline===true};localStorage.setItem('trpg-client-settings',JSON.stringify(S.settings));emit();},
+    updateSettings:async values=>{S.settings={reverseSendNewline:values.reverseSendNewline===true};localStorage.setItem('trpg-client-settings',JSON.stringify(S.settings));emit();},
     setMode:()=>{},returnHome:()=>{S.home=true;emit();},returnToGame:()=>{if(S.active){S.home=false;emit();}},closeSave:()=>{stopNetwork();S.joining=null;S.active=null;S.home=false;S.room=null;S.network=null;preSubmit.tick();emit();}
   };
 })();

@@ -225,3 +225,35 @@ for (const name of ['game', 'designer']) {
     } finally { await context.close(); }
   });
 }
+
+
+test('client settings use invitation routing and a compact shortcut card with a fixed footer',async()=>{
+  const context=await browser.newContext({viewport:{width:1440,height:900}});
+  try{
+    const page=await context.newPage();page.setDefaultTimeout(5000);
+    const errors=[];page.on('pageerror',error=>errors.push(error.message));
+    await page.route('https://**/*',route=>route.abort());
+    await page.route('**/modules.json',route=>route.fulfill({json:[]}));await page.route('**/files/**',route=>route.abort());
+    await page.goto(origin+'/client.html');await page.locator('#join-room-form').waitFor();
+    await page.evaluate(()=>localStorage.setItem('trpg-client-settings',JSON.stringify({bridgeUrl:'wss://obsolete.invalid/',reverseSendNewline:false})));
+    await page.reload();await page.locator('[data-action="settings"]').click();
+    assert.equal(await page.locator('[name="bridgeUrl"]').count(),0);assert.equal(await page.locator('.settings-section').count(),0);
+    assert.deepEqual(await page.evaluate(()=>GameApp.getState().settings),{reverseSendNewline:false});
+    const toggle=page.getByRole('checkbox',{name:'反转发送与换行'});
+    assert.deepEqual(await page.locator('.client-shortcut-preview kbd').allTextContents(),['Ctrl / ⌘ + Enter','Enter']);
+    await toggle.check();assert.deepEqual(await page.locator('.client-shortcut-preview kbd').allTextContents(),['Enter','Ctrl / ⌘ + Enter']);
+    await page.getByRole('button',{name:'取消',exact:true}).click();assert.equal(await page.evaluate(()=>GameApp.getState().settings.reverseSendNewline),false);
+    await page.locator('[data-action="settings"]').click();await toggle.check();await page.getByRole('button',{name:'保存设置',exact:true}).click();
+    assert.deepEqual(await page.evaluate(()=>JSON.parse(localStorage.getItem('trpg-client-settings'))),{reverseSendNewline:true});
+    await page.reload();await page.locator('[data-action="settings"]').click();assert.equal(await toggle.isChecked(),true);
+    for(const width of [1440,390,320]){
+      await page.setViewportSize({width,height:700});
+      const bounds=await page.locator('.client-settings-modal').boundingBox();assert.ok(bounds.width<=480);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+      assert.equal(await page.locator('.modal-actions').evaluate(el=>!el.closest('.modal-body')),true);
+      const footer=await page.locator('.modal-actions').boundingBox();assert.ok(footer.y+footer.height<=700);
+      const label=await page.locator('.client-shortcut-toggle span').boundingBox(),switchBox=await toggle.boundingBox();assert.ok(Math.abs(label.y+label.height/2-switchBox.y-switchBox.height/2)<2,'toggle stays beside its label');assert.equal(switchBox.height,22);
+      await page.screenshot({path:path.join(artifacts,'client-settings-'+width+'.png')});
+    }
+    await openSettings(page,'game');assert.equal(await page.locator('[name="bridgeUrl"]').count(),1,'hosts still configure the server for their invitations');assert.deepEqual(errors,[]);
+  }finally{await context.close();}
+});
