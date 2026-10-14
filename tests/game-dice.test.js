@@ -57,3 +57,13 @@ test('critical ranges accept arrays and legacy comma strings',()=>{
   const legacyResult=GameCore.dice(base({critical_success_range:'1,14',critical_failure_range:'96,100'}),()=>.5);
   assert.equal(legacyResult.data.target,70);
 });
+
+
+test('plain dice text states the comparison operator for each formal check',()=>{
+ for(const [mode,symbol]of Object.entries({gt:'>',ge:'≥',lt:'<',le:'≤',eq:'=',ne:'≠'})){
+  const out=GameCore.dice(base({compare_mode:mode,dice_dict:{检定:'set-force:42'}}));
+  assert.ok(out.content.includes('42 '+symbol+' 70'),mode);
+ }
+ const independent=GameCore.dice(base({dice_combine_mode:'independent',dice_dict:{甲:'set-force:42',乙:'set-force:80'}}));
+ assert.match(independent.content,/甲: 42 ≤ 70 · 通过/);assert.match(independent.content,/乙: 80 ≤ 70 · 未通过/);
+});

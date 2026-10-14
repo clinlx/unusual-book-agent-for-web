@@ -210,3 +210,18 @@ test('accumulated short flow reminders also fit without dropping their order or 
   const index=JSON.parse(sent.find(m=>m.content.startsWith('[上下文资料索引]')).content.split('\n').slice(1).join('\n'));
   assert.deepEqual(JSON.parse(file(s,index.archive_path)),s.messages.map(m=>({role:m.role,content:m.content})));
 });
+
+
+test('compressed dice checkpoints retain comparison rules and independent outcomes with exact receipts archived',async()=>{
+ const s=save();let requests=0;
+ const args={description:'两次侦查',roller:'Player-p',related_attr:'侦查',is_secret:false,dice_dict:{甲:'set-force:42',乙:'set-force:80'},calculate_only:false,target_value:70,compare_mode:'le',critical_success_range:null,critical_failure_range:null,dice_combine_mode:'independent',left_modifiers:{},right_modifiers:{}};
+ await Core.run(s,async messages=>{
+  if(++requests===1)return {reasoning:'检查'.repeat(6000),tool_calls:[call('dice-checkpoint','roll_dice',args)]};
+  const checkpoint=messages.find(m=>m.content.startsWith('[本回合执行记录]'));assert.ok(checkpoint);
+  const progress=JSON.parse(checkpoint.content.split('\n').slice(1).join('\n')),d=progress.recent_calls.find(c=>c.id==='dice-checkpoint').dice;
+  assert.equal(d.compare_mode,'le');assert.equal(d.mode,'independent');assert.equal(d.rows.length,2);
+  assert.deepEqual(d.rows.map(r=>[r.label,r.total,r.compare_mode,r.target,r.success]),[['甲',42,'le',70,true],['乙',80,'le',70,false]]);
+  const index=JSON.parse(file(s,progress.archive_path));assert.ok(index.some(entry=>file(s,entry.path).includes('compare_mode')));
+  return finish();
+ },{system:'规则',cap:2200});assert.equal(requests,2);
+});

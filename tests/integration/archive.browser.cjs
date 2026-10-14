@@ -255,15 +255,40 @@ test('archive centers mobile replay controls, collapses empty vitals and opens s
   assert.match(await card.innerText(),/推开木门/);assert.match(await card.innerText(),/通过/);
   assert.equal(await page.locator('[data-dice-detail]').nth(1).locator('.dice-outcome').count(),2,'independent checks show individual outcomes');
   assert.equal(await page.locator('.secret-dice[data-dice-detail]').count(),0);
-  await card.click();await page.locator('#dice-details').waitFor({state:'visible'});
+  await card.click({delay:3050});await page.locator('#dice-details').waitFor({state:'visible'});
   assert.match(await page.locator('#dice-details-content').innerText(),/伤势/);assert.match(await page.locator('#dice-details-content').innerText(),/critical_success_range/);
   assert.equal(await page.locator('article.revealed').count(),count,'opening dice does not advance replay');
   await page.screenshot({path:path.resolve(__dirname,'../artifacts/archive-dice-details-mobile.png')});
   await page.keyboard.press('Escape');assert.equal(await page.locator('#dice-details').isVisible(),false);assert.equal(await card.evaluate(el=>el===document.activeElement),true);
-  await card.press('Enter');assert.equal(await page.locator('#dice-details').isVisible(),true);await page.locator('#dice-details footer button').click();
+  await card.press('Enter',{delay:3050});assert.equal(await page.locator('#dice-details').isVisible(),true);await page.locator('#dice-details footer button').click();
   await page.screenshot({path:path.resolve(__dirname,'../artifacts/archive-dice-cards-mobile.png')});
   await page.locator('#replay-next').click();await page.locator('#replay-next').click();assert.equal(await page.locator('#archive-vitals').isVisible(),true,'state change restores vitals');
   await page.locator('#replay-prev').click();assert.equal(await page.locator('#archive-vitals').isVisible(),false,'rewind collapses unavailable vitals');
   await page.locator('[data-mode=overview]').click();assert.equal(await page.locator('#archive-vitals').isVisible(),true);
   assert.deepEqual(requests,[]);assert.deepEqual(errors,[]);
+});
+
+
+test('replay dice require a three-second stationary hold; taps advance and scrolling cancels on touch screens',async t=>{
+ const context=await browser.newContext({viewport:{width:390,height:844},hasTouch:true,isMobile:true,reducedMotion:'reduce'});t.after(()=>context.close());const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ const html=Presentation.historyHTML({name:'手势测试',events:[{type:'dice',round:1,content:'检定记录'},{type:'story',round:2,content:'下一节点'},{type:'story',round:3,content:'末尾节点'}]});
+ await page.setContent(html);await page.clock.install();const card=page.locator('[data-dice-detail]'),dialog=page.locator('#dice-details');
+ await page.clock.pauseAt(new Date());
+ await card.tap();assert.equal(await dialog.isVisible(),false);assert.equal(await page.locator('#replay-jump').inputValue(),'2');
+ const cdp=await context.newCDPSession(page),box=await card.boundingBox(),point={x:Math.round(box.x+30),y:Math.round(box.y+30)};
+ const touch=type=>cdp.send('Input.dispatchTouchEvent',{type,touchPoints:type==='touchEnd'?[]:[point]});
+ await touch('touchStart');await page.clock.runFor(2999);assert.equal(await dialog.isVisible(),false);await page.clock.runFor(1);assert.equal(await dialog.isVisible(),true);await touch('touchEnd');
+ assert.equal(await page.locator('#replay-jump').inputValue(),'2');await page.keyboard.press('Escape');
+ const down=()=>card.dispatchEvent('pointerdown',{pointerId:9,pointerType:'touch',isPrimary:true,button:0,clientX:point.x,clientY:point.y});
+ for(const cancel of [()=>card.dispatchEvent('pointermove',{pointerId:9,clientX:point.x,clientY:point.y+18}),()=>page.locator('#archive-history').dispatchEvent('scroll'),()=>card.dispatchEvent('pointercancel',{pointerId:9}),()=>page.evaluate(()=>window.dispatchEvent(new Event('blur'))),()=>card.dispatchEvent('pointerdown',{pointerId:10,pointerType:'touch',isPrimary:false,button:0})]){
+  await down();await page.clock.runFor(2000);await cancel();await page.clock.runFor(4000);assert.equal(await dialog.isVisible(),false);await card.dispatchEvent('pointerup',{pointerId:9,button:0,clientX:point.x,clientY:point.y});assert.equal(await page.locator('#replay-jump').inputValue(),'2');
+ }
+ await page.locator('[data-mode="overview"]').click();await card.tap();assert.equal(await dialog.isVisible(),true,'overview tap');
+ await page.keyboard.press('Escape');await card.press('Enter');assert.equal(await dialog.isVisible(),true,'overview keyboard');await page.keyboard.press('Escape');await page.locator('[data-mode="replay"]').click();
+ // Verify actual touch scrolling remains native and never opens details.
+ await page.evaluate(()=>{document.querySelector('[data-dice-detail]').style.height='1100px';});
+ await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:point.x,y:point.y+100}]});
+ await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:point.x,y:point.y-30}]});await page.clock.runFor(4000);await touch('touchEnd');
+ assert.equal(await dialog.isVisible(),false);assert.ok(await page.locator('#archive-history').evaluate(el=>el.scrollTop)>0);assert.deepEqual(errors,[]);
+
 });

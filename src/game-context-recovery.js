@@ -99,7 +99,11 @@ const GameContextRecovery=(()=>{
         if(entry.ok&&call.function.name==='trigger_next_round')phasePlan=receipt.result?.phase_plan;
         if(call.function.name==='roll_dice'){
           const d=receipt?.result?.data;
-          if(d)entry.dice={total:d.total,target:d.target,success:d.success,critical:d.critical};
+          if(d){
+            const keys=['mode','compare_mode','raw','left','right','total','target','success','critical','special'];
+            const brief=value=>Object.fromEntries(keys.filter(k=>value[k]!==undefined).map(k=>[k,value[k]]));
+            entry.dice=brief(d);if(d.mode==='independent')entry.dice.rows=(d.rows||[]).map(row=>({label:row.label,...brief(row)}));
+          }
         }
         recentCalls.push(entry);
       }

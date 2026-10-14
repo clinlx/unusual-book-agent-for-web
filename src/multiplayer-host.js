@@ -150,7 +150,7 @@ const MultiplayerHost=(()=>{
       v.status='voting';v.eligible=eligible;v.votes={};v.expiresAt=now()+120000;scheduleExpiry();
     }
     function spectatorView(value){
-      if(value!=='none'&&value!=='all'&&!save().slots.some(s=>s.id===value&&s.kind==='player'))fail('INVALID_VIEW','请选择无、全部或有效玩家视角');
+      if(value!=='none'&&value!=='all'&&!save().slots.some(s=>s.id===value&&s.kind==='player'))fail('INVALID_VIEW','请选择观众视角、全知视角或有效玩家视角');
       return value;
     }
     async function performRollback(){

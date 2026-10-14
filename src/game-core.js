@@ -287,7 +287,7 @@ const GameCore = (() => {
     const summary=judge(raw);
     if(mode==='independent')Object.assign(summary,{success:null,criticalHints:[],critical:null,special:false});
     const result={rows:mode==='independent'?rows.map(r=>({...r,left,right,compare_mode:a.compare_mode,...judge(r.total)})):rows,mode,left,right,compare_mode:a.compare_mode,...summary};
-    const describe=r=>r.special?r.raw+' · '+r.critical+'（已忽略修正值，已省略比较）':r.total+(r.success===null?'':(' / '+r.target+' · '+(r.success?'通过':'未通过')));
+    const describe=r=>r.special?r.raw+' · '+r.critical+'（已忽略修正值，已省略比较）':r.total+(r.success===null?'':(' '+({gt:'>',ge:'≥',lt:'<',le:'≤',eq:'=',ne:'≠'}[r.compare_mode||a.compare_mode])+' '+r.target+' · '+(r.success?'通过':'未通过')));
     const resultText=mode==='independent'?result.rows.map(r=>r.label+': '+describe(r)).join('；'):describe(result);
     return {data:result,content:`${a.roller||'角色'} · ${a.description||a.related_attr||'掷骰'}\n${rows.map(r=>`${r.label} ${r.formula} [${r.rolls.join(', ')}]`).join('；')}\n${resultText}`};
   }
