@@ -216,3 +216,54 @@ test('built game, client and designer load local UI dependencies without CDN req
     await page.close();
   }
 });
+
+
+test('archive centers mobile replay controls, collapses empty vitals and opens safe dice details',async t=>{
+  const args={description:'推开木门',roller:'p',related_attr:'力量',is_secret:false,dice_dict:{力量:'2d6'},calculate_only:false,target_value:9,compare_mode:'le',critical_success_range:[2,2],critical_failure_range:[12,12],dice_combine_mode:'sum',left_modifiers:{伤势:1},right_modifiers:{环境:2}};
+  const view={name:'雨夜车站',actorId:'p',events:[
+    {type:'dice',round:1,...Core.dice(args,()=>.4),diceArgs:args},
+    {type:'dice',round:1,private:true,targetPlayer:'p',...Core.dice({...args,dice_combine_mode:'independent',dice_dict:{甲:'2d6',乙:'2d6'}},()=>.5)},
+    {type:'dice',round:1,secret:true,content:'SECRET_DETAIL_TEXT',diceArgs:{...args,description:'SECRET_DETAIL_ARGS'},data:{total:456789}},
+    {type:'round_end',round:1},
+    {type:'story',round:2,content:'门开了。'},
+    {type:'round_end',round:2,roundState:{info:{状态:{HP:8,MAXHP:12}},items:[]}},
+    {type:'story',round:3,content:'屋里传来脚步声。'},
+  ]};
+  const html=Presentation.historyHTML(view,undefined,{info:{状态:{HP:8,MAXHP:12}},items:[]});
+  assert.doesNotMatch(html,/SECRET_DETAIL_TEXT|SECRET_DETAIL_ARGS|456789/);
+  const file=path.resolve(__dirname,'../artifacts/archive-controls-'+randomUUID()+'.html');fs.writeFileSync(file,html);t.after(()=>fs.rmSync(file,{force:true}));
+  const context=await browser.newContext({viewport:{width:390,height:844}});context.setDefaultTimeout(5000);t.after(()=>context.close());
+  const page=await context.newPage(),requests=[],errors=[];page.on('request',r=>{if(/^https?:/.test(r.url()))requests.push(r.url())});page.on('pageerror',e=>errors.push(e.message));
+  await page.goto(pathToFileURL(file).href);
+  assert.equal(await page.locator('.archive-brand svg').isVisible(),true);
+  assert.equal(await page.locator('#archive-vitals').isVisible(),false);
+  const paper=await page.locator('#replay-surface').boundingBox(),column=await page.locator('#archive-story').boundingBox();assert.ok(Math.abs(paper.height-column.height)<1,'empty dock leaves no bottom gap');
+  for(const width of [320,390,600,768]){
+    await page.setViewportSize({width,height:844});
+    const boxes=await Promise.all(['#replay-prev','#replay-progress','#replay-next'].map(sel=>page.locator(sel).boundingBox()));
+    const [prev,progress,next]=boxes;
+    assert.ok(Math.abs(prev.width-next.width)<1,'equal button widths at '+width);
+    assert.ok(Math.abs(progress.x+progress.width/2-width/2)<1,'centered progress at '+width);
+    assert.ok(Math.abs((progress.x-prev.x-prev.width)-(next.x-progress.x-progress.width))<1,'symmetric spacing at '+width);
+    assert.equal(await page.locator('.archive-github').isVisible(),true);
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  }
+  assert.equal(await page.locator('.archive-github').getAttribute('href'),'https://github.com/clinlx/unusual-book-agent-for-web');
+  await page.setViewportSize({width:390,height:844});
+  const card=page.locator('[data-dice-detail]').first(),count=await page.locator('article.revealed').count();
+  assert.equal(await card.locator('.dice-roll-chip').count(),1);assert.equal(await card.locator('.dice-target').count(),1);assert.equal(await card.locator('.dice-face').count(),2);
+  assert.match(await card.innerText(),/推开木门/);assert.match(await card.innerText(),/通过/);
+  assert.equal(await page.locator('[data-dice-detail]').nth(1).locator('.dice-outcome').count(),2,'independent checks show individual outcomes');
+  assert.equal(await page.locator('.secret-dice[data-dice-detail]').count(),0);
+  await card.click();await page.locator('#dice-details').waitFor({state:'visible'});
+  assert.match(await page.locator('#dice-details-content').innerText(),/伤势/);assert.match(await page.locator('#dice-details-content').innerText(),/critical_success_range/);
+  assert.equal(await page.locator('article.revealed').count(),count,'opening dice does not advance replay');
+  await page.screenshot({path:path.resolve(__dirname,'../artifacts/archive-dice-details-mobile.png')});
+  await page.keyboard.press('Escape');assert.equal(await page.locator('#dice-details').isVisible(),false);assert.equal(await card.evaluate(el=>el===document.activeElement),true);
+  await card.press('Enter');assert.equal(await page.locator('#dice-details').isVisible(),true);await page.locator('#dice-details footer button').click();
+  await page.screenshot({path:path.resolve(__dirname,'../artifacts/archive-dice-cards-mobile.png')});
+  await page.locator('#replay-next').click();await page.locator('#replay-next').click();assert.equal(await page.locator('#archive-vitals').isVisible(),true,'state change restores vitals');
+  await page.locator('#replay-prev').click();assert.equal(await page.locator('#archive-vitals').isVisible(),false,'rewind collapses unavailable vitals');
+  await page.locator('[data-mode=overview]').click();assert.equal(await page.locator('#archive-vitals').isVisible(),true);
+  assert.deepEqual(requests,[]);assert.deepEqual(errors,[]);
+});

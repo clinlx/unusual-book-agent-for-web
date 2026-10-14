@@ -40,7 +40,7 @@ test('archive filters raw private audiences and masks private secret dice before
   {type:'player',round:1,actorId:'other',content:'',privateContent:'OTHER_ACTION'},
  ];
  const before=structuredClone(s.events),html=P.historyHTML(s);
- a.match(html,/VISIBLE_PRIVATE_ROLL/);a.match(html,/<article class="dice private-dice"/);a.match(html,/<article class="dice secret-dice private-dice"/);
+ a.match(html,/VISIBLE_PRIVATE_ROLL/);a.match(html,/<article class="dice private-dice dice-clickable"/);a.match(html,/<article class="dice secret-dice private-dice"/);
  a.match(html,/<article class="story private-story"/);a.match(html,/OWN_PRIVATE_STORY/);a.match(html,/私密暗骰/);
  a.doesNotMatch(html,/OTHER_PRIVATE|HIDDEN_DARK|43219|HOST_ROLL|GM_ROLL|LEGACY_HOST_STORY|OTHER_ACTION/);
  a.equal((html.match(/<article /g)||[]).length,3);a.deepEqual(s.events,before);
@@ -80,4 +80,18 @@ test('archive embeds the shared game identity and stylesheet without external re
  a.ok(favicon,'offline archive has a favicon');
  a.match(decodeURIComponent(favicon[1]),/<rect[^>]*rx=/,'favicon has a rounded frame');
  a.match(html,/img-src data:/,'allow only embedded favicon images');
+});
+
+
+test('export dice cards contain results, formulas and raw details, but never dark data',()=>{
+ const args={description:'开门检定',roller:'p',related_attr:'力量',is_secret:false,dice_dict:{力量:'2d6'},calculate_only:false,target_value:9,compare_mode:'le',critical_success_range:[2,2],critical_failure_range:[12,12],dice_combine_mode:'sum',left_modifiers:{伤势:1},right_modifiers:{环境:2}};
+ const result=Core.dice(args,()=>.4);
+ const html=P.historyHTML({name:'检定',actorId:'p',events:[
+  {type:'dice',round:1,...result,diceArgs:args},
+  {type:'dice',round:1,secret:true,content:'DARK_TEXT',data:{total:987654321},diceArgs:{...args,description:'DARK_REASON'}},
+ ]});
+ a.match(html,/dice-roll-chip/);a.match(html,/data-dice-detail/);a.match(html,/力量/);a.match(html,/2d6/);
+ a.match(html,/原始检定文本/);a.match(html,/伤势/);a.match(html,/环境/);
+ a.doesNotMatch(html,/DARK_TEXT|DARK_REASON|987654321/);
+ a.match(html,/id="dice-details"/);a.match(html,/aria-label="GitHub 项目"/);
 });
