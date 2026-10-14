@@ -68,8 +68,8 @@ test('abort after end can resume remaining protocol results without applying lat
  const s=save();Core.beginRound(s,'',true,'start');let aborted=false;
  const transport=async()=>({tool_calls:[call('append_story',{content:'story',one_line_summary_of_content:'summary'},'a'),call('end_the_round',{NEXT_TURN_CACHE:cache},'e'),call('write_file',{path:'/workspace/late.txt',content:'must not write'},'w')]});
  await assert.rejects(Core.run(s,transport,{signal:{get aborted(){return aborted;}},onStep:async()=>{if(s.activeRound.complete)aborted=true;}}),/中止/);
- assert.equal(s.messages.filter(m=>m.role==='tool').length,2);
+ assert.equal(s.messages.filter(m=>m.role==='tool'&&['a','e','w'].includes(m.tool_call_id)).length,2);
  await Core.run(s,async()=>{throw Error('should not resend completed round');});
- assert.equal(s.status,'waiting');assert.equal(s.messages.filter(m=>m.role==='tool').length,3);
+ assert.equal(s.status,'waiting');assert.equal(s.messages.filter(m=>m.role==='tool'&&['a','e','w'].includes(m.tool_call_id)).length,3);
  assert.equal(VFS.resolve(s.tree,['workspace','late.txt']),null);assert.equal(s.events.filter(e=>e.type==='round_end').length,1);
 });

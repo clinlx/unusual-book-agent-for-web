@@ -96,3 +96,10 @@ test('repair message includes each exact diagnostic and directs tools to validat
   assert.match(text, /保留现有故事/);
   for (const issue of report.issues) { assert.ok(text.includes(issue.message)); assert.ok(text.includes(issue.path)); }
 });
+
+
+test('optional preset opening files and preload paths are validated without requiring them',()=>{
+ const f=fixture();f.write('开局内部说明.md','幕后资料');f.write('预设第一回合.md','车门打开了。');f.write('开局预读.json',{version:1,files:['模组.md','/workspace/Player-pc/基础信息.json']});assert.deepEqual(Builder.validate(f.tree,f.root).errors,[]);
+ for(const config of [{version:2,files:[]},{version:1,files:['../secret']},{version:1,files:['/etc/secret']},{version:1,files:['https://x/a']},{version:1,files:['不存在.md']},{version:1,files:['Player-pc']}]){f.write('开局预读.json',config);assert.ok(Builder.validate(f.tree,f.root).issues.some(i=>i.path===f.root+'/开局预读.json'));}
+ f.write('开局预读.json',{version:1,files:[]});f.write('预设第一回合.md','');assert.ok(Builder.validate(f.tree,f.root).issues.some(i=>i.path===f.root+'/预设第一回合.md'));
+});

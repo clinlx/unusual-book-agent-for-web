@@ -86,7 +86,7 @@ const GameApp=(()=>{
   }
   async function roomCommand(type,payload={},options={}){
     if(!hostSession)throw Error('请先选择存档');
-    if(!S.settings.apiKey.trim()&&['action.submit','action.skip','round.start','round.resume','round.advance'].includes(type))throw Error('请先在设置中填写 API Key');
+    if(!S.settings.apiKey.trim()&&!(['round.start','round.resume'].includes(type)&&GameCore.localOpening(active()))&&['action.submit','action.skip','round.start','round.resume','round.advance'].includes(type))throw Error('请先在设置中填写 API Key');
     if(S.active.slotsConfigured===false)throw Error('请先选择角色槽位');
     const r=hostSession.state(),m=r.members.host;
     const result=await hostSession.handle('host',{type,payload,requestId:GameCore.uid(),roomId:r.roomId,epoch:r.epoch,roundId:r.roundId,bindingVersion:m.bindingVersion});
@@ -376,7 +376,7 @@ const GameApp=(()=>{
     return GameSlots.playerContext(built);
   }
   async function executeRound(kind,text,roundOptions={}){
-    idle();let s=active();if(!S.settings.apiKey.trim())throw Error('请先在设置中填写 API Key');peerCheck(s);
+    idle();let s=active();if(!S.settings.apiKey.trim()&&!(['start','resume'].includes(kind)&&GameCore.localOpening(s)))throw Error('请先在设置中填写 API Key');peerCheck(s);
     if(lease?.available){const lock=lease.acquireForRun(s.id,s.id);if(!lock.ok)throw Error('该存档正在另一个页面运行');}
     S.running=true;S.error=null;controller=new AbortController();
     const settings=structuredClone(S.settings);const overrides={};
@@ -385,7 +385,7 @@ const GameApp=(()=>{
       
       const latest=await db.getSave(s.id);if(latest&&latest.updatedAt>s.updatedAt)throw Error('存档已在其他页面更新，请重新打开后继续');
       if(kind!=='resume'&&pendingBatch(s))throw Error('上一轮尚有工具记录需要恢复，请先继续本回合');
-      if(kind!=='resume')GameCore.beginRound(s,text,kind==='start',Prompts.roundPrompt(kind==='start',overrides),{skip:kind==='skip',openPlayerSlots:S.openPlayerSlots,slotPrompts:Prompts.slotControl(overrides),...roundOptions});
+      if(kind!=='resume')GameCore.beginRound(s,text,kind==='start',Prompts.roundPrompt(kind==='start',overrides),{skip:kind==='skip',openPlayerSlots:S.openPlayerSlots,slotPrompts:Prompts.slotControl(overrides),presetFollowup:Prompts.flows(overrides).flow_preset_followup,...roundOptions});
       else if(!s.activeRound)throw Error('没有可继续的回合');
       if(!s.activeRound.promptSnapshot||Object.keys(s.activeRound.promptSnapshot.overrides||{}).length)s.activeRound.promptSnapshot={overrides,system:system(overrides)};
       if(!Number.isFinite(s.activeRound.requestCount))s.activeRound.requestCount=s.messages.filter(m=>m.round===s.activeRound.number&&m.role==='assistant').length;
@@ -405,7 +405,7 @@ const GameApp=(()=>{
             if(parts.length){if(!S.stream.story)S.stream.storyPublished=s.activeRound?.published||0;S.stream.story=parts.join('\n\n');}
           }
           if(currentRequest)currentRequest.response.tools=structuredClone(t);emit();}});
-      const transport=async messages=>{if(roundOptions.isCurrent&&!roundOptions.isCurrent())throw Error('回合已失效');currentRequest=null;clearStream();emit();try{const response=await raw(messages);if(roundOptions.isCurrent&&!roundOptions.isCurrent())throw Error('回合已失效');if(currentRequest){currentRequest.status='completed';currentRequest.response=structuredClone(response);}return response;}catch(e){if(currentRequest){currentRequest.status='interrupted';currentRequest.error=e.message;}throw e;}};
+      const transport=async messages=>{if(!settings.apiKey.trim())throw Error('请先在设置中填写 API Key');if(roundOptions.isCurrent&&!roundOptions.isCurrent())throw Error('回合已失效');currentRequest=null;clearStream();emit();try{const response=await raw(messages);if(roundOptions.isCurrent&&!roundOptions.isCurrent())throw Error('回合已失效');if(currentRequest){currentRequest.status='completed';currentRequest.response=structuredClone(response);}return response;}catch(e){if(currentRequest){currentRequest.status='interrupted';currentRequest.error=e.message;}throw e;}};
       const flows=Prompts.flows(snapshot.overrides);
       await GameCore.run(s,transport,{signal:controller.signal,system:snapshot.system,manualDice:settings.manualDice===true,
         cap:GameTransport.inputBudget(settings,defs),maxToolLoops:settings.maxToolLoops,multiplayerPrompts:Prompts.multiplayer(snapshot.overrides),

@@ -4,6 +4,7 @@ const Prompts = (() => {
   "system/host.md": "主持人系统规则",
   "system/runtime.md": "网页运行与工具协议",
   "flow/start_game.md": "首次开局",
+  "flow/preset_followup.md": "预设开场后首次 AI 准备",
   "flow/next_round.md": "每轮推进",
   "system/round.md": "回合流程与状态缓存",
   "reference/游戏前准备.md": "游戏前准备",

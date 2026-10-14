@@ -73,9 +73,30 @@ const GameCore = (() => {
   function emit(s,type,payload={}) {
     const e={id:uid(),type,round:s.activeRound?.number||s.round,at:Date.now(),worldTime:data.worldTime(s),...payload};s.events.push(e);return e;
   }
+  function openingFiles(s) {
+    const read=name=>{
+      const n=vfs.resolve(s.tree,['workspace',name]);if(!n)return '';
+      if(n.type!=='file'||n.encoding==='base64'||typeof n.content!=='string')throw Error(name+' 必须为文本文件');
+      if(n.content.length>120000)throw Error(name+' 超过 120000 字符');
+      return n.content.replace(/^\uFEFF/,'').trim();
+    };
+    const internal=read('开局内部说明.md'),story=read('预设第一回合.md'),config=read('开局预读.json');
+    const configNode=vfs.resolve(s.tree,['workspace','开局预读.json']);let extra=[];
+    if(configNode){fileValidation.validate('/workspace/开局预读.json',config);extra=fileValidation.openingFiles(JSON.parse(config));}
+    for(const p of extra){const n=vfs.resolve(s.tree,vfs.normalize(p));if(!n||n.type!=='file'||n.encoding==='base64')throw Error('开局预读.json 引用了不存在或非文本的文件：'+p);}
+    return {internal,story,extra};
+  }
+  function localOpening(s) {
+    if(!s)return false;
+    if(s.activeRound&&!s.activeRound.complete)return !!s.activeRound.presetOpening;
+    if(s.status!=='new'||s.round!==0)return false;
+    const n=vfs.resolve(s.tree,['workspace','预设第一回合.md']);
+    return n?.type==='file'&&n.encoding!=='base64'&&!!n.content?.trim();
+  }
   function beginRound(s,text,isStart=false,prompt='',options={}) {
     if(s.activeRound&&!s.activeRound.complete)throw Error('当前回合尚未结束，请继续或回退本回合');
     if(s.status==='ended')throw Error('游戏已结束，可回退至上一回合');
+    const opening=isStart&&s.round===0||s.openingPending?openingFiles(s):null;
     const flags=data.actorState(readJson(s,s.playerPath+'/基础信息.json',{}));
     if(!options.actions&&!isStart&&!flags.alive)throw Error('角色已死亡，无法提交行动；可以回溯或查看历史');
     if(!options.actions&&!isStart&&!flags.enabled&&!options.skip)throw Error('角色失去意识，无法主动行动；可以等待局势发展');
@@ -86,7 +107,7 @@ const GameCore = (() => {
       (String(s.draft||'')!==submittedDraft.draft||String(s.privateDraft||'')!==submittedDraft.privateDraft);
     s.snapshots.push({tree:copy(s.tree),slots:copy(s.slots||[]),actorId:s.actorId,playerPath:s.playerPath,messageCount:s.messages.length,eventCount:s.events.length,round:s.round,
       worldTime:data.worldTime(s),at:Date.now(),
-      cache:copy(s.cache),slotControlState:s.slotControlState?copy(s.slotControlState):null,summaryCount:s.summaries.length,status:s.status,contextFromRound:s.contextFromRound,lastChanges:copy(s.lastChanges),
+      cache:copy(s.cache),openingPending:s.openingPending?copy(s.openingPending):null,slotControlState:s.slotControlState?copy(s.slotControlState):null,summaryCount:s.summaries.length,status:s.status,contextFromRound:s.contextFromRound,lastChanges:copy(s.lastChanges),
       draft:isStart||options.skip?boundDraft:String(text||''),draftRound:inputRound,inputRoundId:roundId});
     pruneRollback(s);
     if(!options.skip&&String(text||'').trim())inputs.record(s,inputRound,roundId,text);
@@ -97,9 +118,20 @@ const GameCore = (() => {
     s.status='running';s.error=null;s.lastChanges=[];
     if(!keepDraft){s.draft='';s.privateDraft='';}s.draftRound=inputRound+1;
     if(!isStart){if(options.actions){for(const action of options.actions)emit(s,'player',{actorId:action.actorId,content:action.content||(action.skip?'等待局势发展。':''),privateContent:action.privateContent||'',...action.disguise?{disguise:true}:{},audience:'public',skip:!!action.skip,roundId});}else emit(s,'player',{actorId:s.actorId,content:actionText,name:'player_action',args:{action:actionText},skip:!!options.skip,roundId});}
-    s.messages.push({role:'user',content:String(prompt),round:s.activeRound.number});
-    const instruction=slots.roundInstruction(s,isStart,options);
-    if(instruction)s.messages.push({role:'user',content:instruction,internal:true,round:s.activeRound.number});
+    const round=s.activeRound,instruction=slots.roundInstruction(s,isStart,options);
+    if(isStart&&opening?.internal)s.messages.push({role:'user',content:'[开局内部说明]\n'+opening.internal,internal:true,round:round.number});
+    if(isStart&&opening?.story){
+      round.presetOpening=opening.story;
+      s.openingPending={prompt:String(prompt),instruction};
+    }else{
+      if(s.openingPending){
+        for(const content of [s.openingPending.prompt,s.openingPending.instruction,options.presetFollowup])if(content)s.messages.push({role:'user',content,internal:true,round:round.number});
+        round.deferredOpening=true;delete s.openingPending;
+      }
+      s.messages.push({role:'user',content:String(prompt),round:round.number});
+      if(instruction)s.messages.push({role:'user',content:instruction,internal:true,round:round.number});
+      if(opening)round.openingExtraReads=opening.extra;
+    }
     return s.activeRound;
   }
   function flatten(t) {
@@ -120,6 +152,7 @@ const GameCore = (() => {
     const input=inputs.retract(s,snap.round+1,snap.inputRoundId);
     s.tree=copy(snap.tree);s.messages.length=snap.messageCount;s.events.length=snap.eventCount;
     s.round=snap.round;s.cache=copy(snap.cache);s.summaries.length=snap.summaryCount;s.status=snap.status;
+    if(snap.openingPending)s.openingPending=copy(snap.openingPending);else delete s.openingPending;
     if(snap.slotControlState)s.slotControlState=copy(snap.slotControlState);else delete s.slotControlState;
     s.draft=input?.text??(snap.draftRound==null||snap.draftRound===snap.round+1?snap.draft||'':'');s.draftRound=snap.round+1;inputs.advance(s);
     if(input?.draftState)Object.assign(s,input.draftState);
@@ -567,6 +600,41 @@ const GameCore = (() => {
     if(used>cap)throw Object.assign(Error('自动整理后仍超过上下文上限（估算消息 '+used+' / 可用消息 '+cap+' tokens）。固定提示词或必须保留的输入过大，请在设置中调大上下文上限或降低输出上限，再点击“继续本轮”。'),{code:'CONTEXT_LIMIT',used,cap});
     s.contextFromRound=from;return sent;
   }
+  function prepareOpeningReads(s){
+    const round=s.activeRound;
+    // Only prepare a fresh opening. Persisted calls and receipts resume through the normal batch runner.
+    if(round.presetOpening||!(round.starting&&round.number===1||round.deferredOpening)||round.openingReadsPrepared||round.requestCount>0||Object.keys(round.receipts).length||s.messages.some(m=>m.round===round.number&&['assistant','tool'].includes(m.role)))return false;
+    const root=vfs.resolve(s.tree,['workspace']),paths=[];
+    const moduleName=['模组.md','故事.txt'].find(name=>root?.children?.[name]?.type==='file');
+    if(moduleName)paths.push('/workspace/'+moduleName);
+    for(const slot of slots.scan(s.tree).filter(slot=>['player','ai'].includes(slot.kind))){
+      paths.push(slot.path+'/基础信息.json',slot.path+'/背包.json');
+    }
+    for(const p of round.openingExtraReads||[])if(!paths.includes(p))paths.push(p);
+    round.openingReadsPrepared=true;
+    if(!paths.length)return false;
+    const limit=Math.min(16000,Math.max(1,Math.floor(64000/paths.length))),tool_calls=[];
+    for(let i=0;i<paths.length;i+=20)tool_calls.push({id:uid(),type:'function',function:{name:'read_multiple_files',arguments:JSON.stringify({paths:paths.slice(i,i+20),limit})}});
+    s.messages.push({role:'assistant',content:'',tool_calls,round:round.number,internal:true,origin:'opening-preload'});
+    return true;
+  }
+  function preparePresetOpening(s) {
+    const round=s.activeRound;
+    if(!round.presetOpening)return false;
+    if(round.presetPrepared){
+      const failed=new Set(s.messages.filter(m=>m.origin==='preset-opening'&&m.round===round.number).flatMap(m=>m.tool_calls||[]).filter(c=>round.receipts[c.id]?.ok===false).map(c=>c.id));
+      for(const id of failed)delete round.receipts[id];
+      s.messages=s.messages.filter(m=>m.role!=='tool'||!failed.has(m.tool_call_id));
+      return failed.size>0;
+    }
+    round.presetPrepared=true;
+    const call=(name,args)=>({id:uid(),type:'function',function:{name,arguments:JSON.stringify(args)}});
+    s.messages.push({role:'assistant',content:'',round:round.number,origin:'preset-opening',tool_calls:[
+      call('append_story',{content:round.presetOpening,one_line_summary_of_content:'预设开场已发布；待完成角色审核与开局准备。'}),
+      call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏前准备',opening_preparation_pending:true}})
+    ]});
+    return true;
+  }
   async function run(s,transport,opts={}) {
     if(!s.activeRound)throw Error('尚未开始回合');
     const abort=()=>{if(opts.signal?.aborted)throw Object.assign(Error('已中止本回合'),{name:'AbortError'});};
@@ -597,15 +665,17 @@ const GameCore = (() => {
         catch(e){const rawError=e.message||String(e),suggestion=toolFailureSuggestion(tc.function.name,a,rawError);out={ok:false,error:'工具参数解析失败：'+rawError,raw_error:rawError,...(suggestion?{suggestion}:{})};emit(s,'tool',{name:tc.function.name,args:a??tc.function.arguments,result:{error:out.error,raw_error:rawError,...(suggestion?{suggestion}:{})},success:false,callId:tc.id});}
         if(out.ok&&tc.function.name==='append_story')storyInBatch=true;
         s.messages.push({role:'tool',tool_call_id:tc.id,content:JSON.stringify(out),round:s.activeRound.number});await step();
+        if(message.origin==='preset-opening'&&!out.ok)throw Error('预设开场执行失败：'+out.error);
       }
       if(storyInBatch&&!s.activeRound.complete&&opts.afterStory){s.messages.push({role:'user',content:opts.afterStory,round:s.activeRound.number});await step();}
       return false;
     }
     try{
-      
+      abort();if(preparePresetOpening(s)||prepareOpeningReads(s))await step();
       const pending=s.messages.filter(m=>m.role==='assistant'&&m.tool_calls&&m.round===s.activeRound.number);
       for(const m of pending)if(await completeBatch(m))return;
       if(s.activeRound.complete){s.status=s.cache.game_over===true?'ended':'waiting';await step();return;}
+      if(s.activeRound.presetOpening)throw Error('预设第一回合未能完成，请检查工具回执并修复世界文件后继续或回退');
       if(opts.resumePrompt&&!(s.messages.at(-1)?.role==='user'&&s.messages.at(-1).content===opts.resumePrompt)){s.messages.push({role:'user',content:opts.resumePrompt,round:s.activeRound.number});await step();}
       let requestCap=opts.cap??240000,recoveries=0;
       for(let loop=0;loop<(opts.maxToolLoops||60);loop++){
@@ -636,6 +706,6 @@ const GameCore = (() => {
       const last=s.events.at(-1);if(last?.type!=='error'||last.round!==s.activeRound.number||last.content!==e.message)emit(s,'error',{content:e.message});
       await step();throw e;}
   }
-  return {uid,path,createSave,validateTree,beginRound,execute,run,context,estimate,player,filterVisible,visibleEvents,rollback,pruneRollback,ROLLBACK_LIMIT,changes,flatten,dice,dicePlayerRelated,diceSecret,diceEventAccess,resolveManualDice,repairManualDiceEvents};
+  return {uid,path,openingFiles,localOpening,createSave,validateTree,beginRound,execute,run,context,estimate,player,filterVisible,visibleEvents,rollback,pruneRollback,ROLLBACK_LIMIT,changes,flatten,dice,dicePlayerRelated,diceSecret,diceEventAccess,resolveManualDice,repairManualDiceEvents};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=GameCore;

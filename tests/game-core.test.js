@@ -99,7 +99,7 @@ test('中断后补齐未执行工具，不重复故事，并保留完整工具�
   assert.equal(s.events.filter(e=>e.type==='story').length,1);
   await Core.run(s,transport,{system:'系统'});
   assert.equal(requests,1);assert.equal(s.status,'waiting');assert.equal(s.events.filter(e=>e.type==='story').length,1);
-  assert.equal(s.messages.filter(m=>m.role==='tool').length,2);
+  assert.equal(s.messages.filter(m=>m.role==='tool'&&['a','e'].includes(m.tool_call_id)).length,2);
 });
 test('折半切断保留系统与当前完整回合，本地历史不丢失',()=>{
   const s=save();
@@ -118,7 +118,7 @@ test('同批结束后的额外写入被阻止',async()=>{
   const s=save();Core.beginRound(s,'',true,'开局');
   await Core.run(s,async()=>({tool_calls:[call('append_story',{content:'开场',one_line_summary_of_content:'开场'}),call('end_the_round',{NEXT_TURN_CACHE:cache}),call('write_file',{path:'/workspace/坏.txt',content:'不应发生'})]}),{system:'系统'});
   assert.equal(VFS.resolve(s.tree,['workspace','坏.txt']),null);
-  assert.equal(s.messages.filter(m=>m.role==='tool').length,3);
+  assert.equal(s.messages.filter(m=>m.role==='tool'&&['append_story','end_the_round','write_file'].includes(m.tool_call_id)).length,3);
 });
 test('提示词目录可列举，设置覆盖后读取同一内容',()=>{
   const s=save();Core.beginRound(s,'',true,'开局');

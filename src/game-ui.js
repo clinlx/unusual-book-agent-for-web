@@ -818,7 +818,7 @@ const GameUI = (() => {
   const hasApiKey=()=>state?.client||!!String(state?.settings?.apiKey||'').trim();
   function apiKeyWarning(){
     if(state.active?.slotsConfigured===false)return true;
-    if(hasApiKey())return true;
+    if(hasApiKey()||!state.client&&typeof GameCore!=='undefined'&&GameCore.localOpening(state.active))return true;
     showModal('需要设置 API Key',`<div class="api-key-warning"><strong>尚未设置 API Key</strong><p>你仍然可以查看存档内容，但开始故事、继续回合或提交行动都需要先配置可用的 API Key。</p></div><div class="modal-actions">${button('close-modal','关闭')}${button('api-key-settings','去设置','class="primary"')}</div>`);
     return false;
   }

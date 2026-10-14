@@ -39,7 +39,7 @@ const GameImport=(()=>{
       if(!Array.isArray(st.messages)||!Array.isArray(st.events)||!Number.isSafeInteger(st.round)||st.round<0)throw Error('存档历史格式不正确');
       const unsafeKey=(k,v)=>{if(['__proto__','prototype','constructor'].includes(k))throw Error('存档包含不安全字段');return v;};
       JSON.parse(JSON.stringify(st),unsafeKey);
-      for(const key of ['playerPath','slotsConfigured','name','round','cache','messages','events','summaries','status','snapshots','activeRound','contextFromRound','lastChanges','draft','privateDraft','draftRound','draftVersion','inputHistory','error','requestHistory','historyArchiveVersion','importNotice','pendingManualDice'])
+      for(const key of ['playerPath','slotsConfigured','name','round','cache','messages','events','summaries','status','snapshots','activeRound','contextFromRound','lastChanges','draft','privateDraft','draftRound','draftVersion','inputHistory','error','requestHistory','historyArchiveVersion','importNotice','pendingManualDice','openingPending'])
         if(st[key]!==undefined)s[key]=structuredClone(st[key]);
       if(s.activeRound&&!s.activeRound.complete)s.status='interrupted';
       if(st.draftRound===undefined)s.draftRound=inputs.targetRound(s);

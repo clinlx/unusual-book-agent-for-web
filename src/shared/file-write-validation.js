@@ -13,16 +13,27 @@ const FileWriteValidation = (() => {
       annotations(child, next, found);
     }
   }
+  function openingFiles(value) {
+    const fail=()=>{throw Error('开局预读.json 必须为 {"version":1,"files":["工作目录内的文件路径"]}，最多 100 个路径，不支持外部地址、目录或越界路径');};
+    if(!value||typeof value!=='object'||Array.isArray(value)||value.version!==1||!Array.isArray(value.files)||value.files.length>100)fail();
+    return [...new Set(value.files.map(raw=>{
+      if(typeof raw!=='string'||!raw.trim()||raw!==raw.trim()||/[\\:\u0000-\u001f?#]/.test(raw))fail();
+      const relative=raw.replace(/^\/?workspace\//,'');
+      if(relative.startsWith('/')||relative.split('/').some(p=>!p||['.','..','__proto__','prototype','constructor'].includes(p)))fail();
+      return '/workspace/'+relative;
+    }))];
+  }
   function validate(path, content, metadata = {}) {
     const parts = String(path).split('/').filter(Boolean), file = parts.at(-1) || '';
     if (!/\.json$/i.test(file)) return;
     if (metadata.encoding === 'base64') throw Error('JSON 文件必须保存文本内容: ' + path);
-    if (!content.trim()) return;
+    if (!content.trim()) {if(file==='开局预读.json')openingFiles(null);return;}
     let value;
     try { value = JSON.parse(content.replace(/^\uFEFF/, '')); }
     catch (error) {
       throw Error('JSON 格式错误: ' + path + '。' + error.message + '。请提交完整合法的 JSON；大文件可先分段写入 .txt，完成后再改为 .json。本次修改未写入。');
     }
+    if(file==='开局预读.json')openingFiles(value);
     if (/^Player-.+/i.test(parts.at(-2) || '') && /^基础信息\.json$/i.test(file)
       && value && typeof value === 'object' && !Array.isArray(value)) {
       const found = [];
@@ -39,6 +50,6 @@ const FileWriteValidation = (() => {
         + '。同一列表的 ID 必须唯一，多件同类物品使用数量/余量，不同实例使用不同 ID 并建立索引。本次修改未写入。');
     }
   }
-  return { validate };
+  return { validate, openingFiles };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = FileWriteValidation;

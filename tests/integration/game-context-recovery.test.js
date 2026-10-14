@@ -53,7 +53,7 @@ test('oversized completed batches including thinking and writes resume through a
     assert.ok(checkpoint);const progress=JSON.parse(checkpoint.content.slice(checkpoint.content.indexOf('\n')+1));
     assert.equal(progress.triggered,true);assert.equal(progress.published,0);
     const index=JSON.parse(file(s,progress.archive_path));
-    assert.deepEqual(JSON.parse(file(s,index[0].path)),original.slice(1));
+    assert.deepEqual(index.flatMap(entry=>JSON.parse(file(s,entry.path))),original.slice(1));
     assert.ok(messages.some(m=>m.content==='本轮任务'));assert.ok(!messages.some(m=>m.tool_calls?.some(c=>c.id==='write')));
     return finish();
   },{system:'规则',cap:2000});

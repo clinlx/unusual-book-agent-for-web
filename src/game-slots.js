@@ -55,7 +55,7 @@ const GameSlots=(()=>{
     save.slotControlState={initialModes:openingConfiguration?controlModes(save,openPlayerSlots):save.slotControlState?.initialModes||{...modes},lastModes:{...modes}};
     return lines.length?[INTERNAL_HEADER,...lines,text('privacy')].join('\n'):'';
   }
-  const playerContext=messages=>messages.filter(m=>!m.content?.startsWith(INTERNAL_HEADER));
+  const playerContext=messages=>messages.filter(m=>![INTERNAL_HEADER,'[开局内部说明]','[预设开局·内部流程]'].some(header=>m.content?.startsWith(header)));
   function scan(tree){
     const root=tree?.children?.workspace,seen=new Set(),slots=[];
     for(const [name,node] of Object.entries(root?.children||{})){

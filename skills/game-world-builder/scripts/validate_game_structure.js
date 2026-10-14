@@ -25,6 +25,25 @@ function validateStructure(world) {
   for (const file of walk(root).filter(f=>/\.json$/i.test(f))) {
     try { parsed.set(file, readJSON(file)); } catch(e) { report(`[JSON格式错误] ${rel(file)}: ${e.message}`, file); }
   }
+  // These files are optional; legacy opening samples never activate local round one.
+  for(const name of ['开局内部说明.md','预设第一回合.md']){
+    const file=path.join(root,name);
+    if(kind(file)){const text=fs.readFileSync(file,'utf8');if(!text.trim()||text.length>120000)report(`[开局文件错误] ${name} 应为非空文本，最多 120000 字符`,file);}
+    else if(kind(file,true))report(`[开局文件错误] ${name} 必须是文件`,file);
+  }
+  const openingConfig=path.join(root,'开局预读.json');
+  if(kind(openingConfig,true))report('[开局预读错误] 开局预读.json 必须是文件',openingConfig);
+  if(parsed.has(openingConfig)){
+    const value=parsed.get(openingConfig);
+    if(!object(value)||value.version!==1||!Array.isArray(value.files)||value.files.length>100)report('[开局预读错误] 需要 version: 1 和 files 路径数组（最多 100 个）',openingConfig);
+    else for(const raw of value.files){
+      const clean=typeof raw==='string'?raw.replace(/^\/?workspace\//,''):'';
+      if(typeof raw!=='string'||!raw.trim()||raw!==raw.trim()||/[\\:\u0000-\u001f?#]/.test(raw)||clean.startsWith('/')||clean.split('/').some(p=>!p||['.','..','__proto__','prototype','constructor'].includes(p))){report(`[开局预读错误] 非法文件路径：${JSON.stringify(raw)}`,openingConfig);continue;}
+      const target=path.join(root,clean);
+      if(!kind(target))report(`[开局预读错误] 文件不存在：${raw}`,openingConfig);
+      else {const actual=path.relative(fs.realpathSync(root),fs.realpathSync(target));if(actual.startsWith('..')||path.isAbsolute(actual))report(`[开局预读错误] 文件超出世界目录：${raw}`,openingConfig);}
+    }
+  }
   function json(file, type) {
     if (!need(file) || !parsed.has(file)) return undefined;
     const data = parsed.get(file);
