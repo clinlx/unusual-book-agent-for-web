@@ -294,3 +294,43 @@ test('offline and pending-only rooms cannot vote through either rollback entry p
  await assert.rejects(f.send('host','rollback.host',{targetRound:1,decision:'vote'}),{code:'NO_MULTIPLAYER_VOTE'});assert.equal(f.host.state().vote,null);
  await f.host.close();await f.send('host','rollback.host',{targetRound:1,decision:'approve'});assert.equal(f.rollbacks.length,1);
 });
+
+
+test('host owns one-shot prepared actions across disconnect and inactive rounds, with private acknowledgements',async t=>{
+ let release;const gate=new Promise(r=>release=r);t.after(()=>release());
+ const f=await fixture(t,{execute:async(a,o,{save,finish})=>{save.events=[{type:'story',round:3,content:'正文'}];await gate;finish();}});
+ await f.send('host','action.submit',{content:'现在'});await f.send('member-b','action.submit',{content:'现在'});
+ await new Promise(r=>setImmediate(r));
+ const packet=f.packet('member-b','action.prepare',{content:'伪装',privateContent:'下一轮秘密',disguise:true});
+ const receipt=await f.host.handle('member-b',packet);assert.equal(receipt.preparedAction.status,'queued');
+ assert.deepEqual(await f.host.handle('member-b',packet),receipt);
+ await assert.rejects(f.send('member-b','action.prepare',{content:'重复'}),{code:'ALREADY_PREPARED'});
+ const Sync=require('../../src/multiplayer-sync');assert.ok(!JSON.stringify(Sync.project(f.save,'a',{memberId:'host',room:f.host.state()})).includes('下一轮秘密'));
+ assert.equal(Sync.project(f.save,'b',{memberId:'member-b',room:f.host.state()}).room.preparedAction.id,packet.requestId);
+ f.flags('b',{Enabled:false});await f.host.setConnected('member-b',false);release();await f.host.waitForIdle();assert.equal(f.host.state().preparedActions.b.status,'queued');
+ f.flags('b',{Enabled:true});await f.host.checkAutomatic();assert.equal(f.host.state().submissions.b.privateContent,'下一轮秘密');assert.equal(f.host.state().preparedActions.b.status,'submitted');
+ await f.host.checkAutomatic();assert.equal(f.host.state().submissions.b.requestId,packet.requestId);
+ await f.send('host','action.submit',{content:'下一轮'});await f.host.waitForIdle();assert.equal(f.runs.length,2);assert.equal(f.host.state().submissions.b,undefined);
+});
+
+test('prepared commands are durable, scoped, cancellable, and cannot revive after rollback',async t=>{
+ let release,failPersist=false;const gate=new Promise(r=>release=r);t.after(()=>release());
+ const f=await fixture(t,{persist:async()=>{if(failPersist)throw Error('storage failed');},execute:async(a,o,{save,finish})=>{save.events=[{type:'story',round:3,content:'正文'}];await gate;finish();}});
+ await assert.rejects(f.send('member-b','action.prepare',{content:'too early'}),{code:'BUSY'});
+ await f.send('host','action.skip');await f.send('member-b','action.skip');await new Promise(r=>setImmediate(r));
+ await assert.rejects(f.send('member-b','action.prepare',{actorId:'a',content:'spoof'}),{code:'FORBIDDEN'});
+ const packet=f.packet('member-b','action.prepare',{content:'下一轮'});failPersist=true;
+ await assert.rejects(f.host.handle('member-b',packet),/storage failed/);assert.equal(f.host.state().preparedActions.b,undefined);failPersist=false;
+ const receipt=await f.host.handle('member-b',packet);
+ await assert.rejects(f.send('host','action.prepare.cancel',{preparedId:packet.requestId}),{code:'STALE_ACTION'});
+ const cancel=f.packet('member-b','action.prepare.cancel',{preparedId:packet.requestId});const cancelled=await f.host.handle('member-b',cancel);assert.equal(cancelled.preparedAction.status,'cancelled');
+ assert.deepEqual(await f.host.handle('member-b',cancel),cancelled);
+ const next=f.packet('member-b','action.prepare',{privateContent:'真正的下一轮'});await f.host.handle('member-b',next);
+ await assert.rejects(f.send('member-b','action.prepare.cancel',{preparedId:packet.requestId}),{code:'STALE_ACTION'});
+ release();await f.host.waitForIdle();assert.equal(f.host.state().submissions.b.requestId,next.requestId);
+ assert.deepEqual(await f.host.handle('member-b',packet),receipt,'late retry cannot queue the old action again');
+ await assert.rejects(f.send('member-b','action.prepare.cancel',{preparedId:next.requestId}),{code:'ALREADY_SUBMITTED'});
+ await f.send('member-b','action.cancel',{submissionRequestId:next.requestId});await f.host.checkAutomatic();assert.equal(f.host.state().submissions.b,undefined);
+ await f.send('host','rollback.host',{targetRound:1,decision:'approve'});assert.deepEqual(f.host.state().preparedActions,{});
+ await assert.rejects(f.host.handle('member-b',next),{code:'STALE_ROUND'});
+});

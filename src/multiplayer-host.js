@@ -19,7 +19,7 @@ const MultiplayerHost=(()=>{
     function room(){
       const s=save();
       if(!s.multiplayer)s.multiplayer={version:1,roomId:null,online:false,epoch:0,roundId:uid(),round:(s.round||0)+1,status:'selecting',members:{},participants:[],submissions:{},receipts:[],vote:null,slotRequests:[]};
-      s.multiplayer.slotRequests||=[];
+      s.multiplayer.slotRequests||=[];s.multiplayer.preparedActions||={};
       return s.multiplayer;
     }
     const first=room();
@@ -119,6 +119,20 @@ const MultiplayerHost=(()=>{
         ).catch(()=>{if(room().execution?.id===token.id)room().status='interrupted';}).finally(()=>{execution=null;if(!disposed)checkAutomatic().catch(()=>{});});
       };
     }
+    function promotePrepared(){
+      const r=room();if(r.status!=='collecting'||r.vote||save().status==='new')return false;
+      refresh();let changed=false;
+      for(const [actorId,q]of Object.entries(r.preparedActions)){
+        if(q.status!=='queued')continue;
+        const m=r.members[q.memberId],entry=r.participants.find(p=>p.actorId===actorId&&p.memberId===q.memberId);
+        if(q.epoch!==r.epoch||m?.actorId!==actorId||m.bindingVersion!==q.bindingVersion){q.status='cancelled';q.version++;changed=true;continue;}
+        if(save().round<q.fromRound||!entry?.alive||!entry.enabled||entry.invalid)continue;
+        if(r.submissions[actorId])continue;
+        r.submissions[actorId]={actorId,memberId:q.memberId,requestId:q.id,content:q.content,privateContent:q.privateContent,...q.disguise?{disguise:true}:{},skip:false,automatic:false,submissionVersion:1};
+        q.status='submitted';q.round=r.round;q.roundId=r.roundId;q.version++;changed=true;
+      }
+      return changed;
+    }
     function awaitingInvite(){return Object.values(room().members).some(m=>m.invitationActorId&&!m.actorId);}
     function shouldRun(){const r=room();if(r.status!=='collecting'||r.vote||save().status==='new'||awaitingInvite())return false;refresh();if(r.participants.some(p=>p.invalid))return false;const living=r.participants.filter(p=>p.alive),awake=living.filter(p=>p.enabled);return living.length>0&&(awake.length?awake.every(p=>r.submissions[p.actorId]):getSettings().autoAdvanceUnconscious!==false);}
     function scope(m,command){const r=room();if(command.epoch!==r.epoch||command.roundId!==r.roundId)fail('STALE_ROUND','回合已更新，请同步后重试');if(command.bindingVersion!==m.bindingVersion)fail('STALE_BINDING','角色绑定已更新，请重新同步');if(command.roomId!==undefined&&command.roomId!==r.roomId)fail('STALE_ROOM','房间已更新');}
@@ -138,7 +152,7 @@ const MultiplayerHost=(()=>{
       const r=room(),v=r.vote,controlModes=new Map(save().slots.map(s=>[s.id,s.kind]));target(v);r.status='rolling_back';cancelTimer();
       await rollback({targetRound:v.targetRound,targetRoundId:v.targetRoundId});
       // Rollback adapters may restore a snapshot containing older room metadata.
-      save().multiplayer=r;r.epoch++;r.vote=null;r.receipts=[];r.slotRequests=[];r.error=null;r.automaticStalled=false;
+      save().multiplayer=r;r.epoch++;r.preparedActions={};r.vote=null;r.receipts=[];r.slotRequests=[];r.error=null;r.automaticStalled=false;
       slots().ensure(save());
       for(const slot of [...save().slots]){
         delete slot.memberId;
@@ -159,6 +173,23 @@ const MultiplayerHost=(()=>{
       scope(m,command);const type=aliases[command.type]||command.type,p=command.payload||command;let start=null,reset=null,cancelled=null,cancelledRequestId;
       if(expire())await commit('rollback.expired');
       switch(type){
+        case 'action.prepare':{
+          if(r.status!=='executing'||r.vote)fail('BUSY','当前不能预提交');
+          validateActors();const entry=r.participants.find(x=>x.memberId===memberId&&x.actorId===m.actorId);
+          if(!entry?.alive||!entry.enabled)fail('INACTIVE_ACTOR','当前角色无法主动行动');
+          if(!(save().events||[]).some(e=>e.type==='story'&&e.round===r.round&&(!e.audience||e.audience==='public'||Array.isArray(e.audience)&&e.audience.includes(m.actorId))&&(!e.secret||Array.isArray(e.audience))))fail('NO_STORY','当前回合尚无可见故事');
+          if(p.actorId!==undefined&&p.actorId!==m.actorId)fail('FORBIDDEN','不能预提交其他角色的行动');
+          const content=p.content??'',privateContent=p.privateContent??'';
+          if(typeof content!=='string'||typeof privateContent!=='string'||content.length+privateContent.length>120000||!content.trim()&&!privateContent.trim()||p.disguise!==undefined&&typeof p.disguise!=='boolean'||p.disguise&&!privateContent.trim())fail('INVALID_ACTION','预提交内容无效');
+          const previous=r.preparedActions[m.actorId];if(previous?.status==='queued')fail('ALREADY_PREPARED','已有预提交，请先取消');
+          r.preparedActions[m.actorId]={id:command.requestId,version:(previous?.version||0)+1,status:'queued',memberId,actorId:m.actorId,bindingVersion:m.bindingVersion,epoch:r.epoch,fromRound:r.round,content,privateContent,disguise:p.disguise===true};break;
+        }
+        case 'action.prepare.cancel':{
+          const q=r.preparedActions[m.actorId];
+          if(!q||q.id!==p.preparedId||q.memberId!==memberId)fail('STALE_ACTION','预提交已更新，请同步后重试');
+          if(q.status!=='queued')fail('ALREADY_SUBMITTED','预提交已处理，请同步当前回合');
+          q.status='cancelled';q.version++;break;
+        }
         case 'action.cancel':{
           if(r.status!=='collecting'||r.vote)fail('BUSY','行动已开始结算或正在处理回退，不能取消');
           if(p.actorId!==undefined&&p.actorId!==m.actorId)fail('FORBIDDEN','不能取消其他角色的行动');
@@ -178,6 +209,7 @@ const MultiplayerHost=(()=>{
           if(p.disguise!==undefined&&typeof p.disguise!=='boolean'||p.disguise===true&&(skip||!privateContent.trim()))fail('INVALID_ACTION','伪装需要真实的私密行动');
           const previous=r.submissions[entry.actorId];
           r.submissions[entry.actorId]={actorId:entry.actorId,memberId:owner,requestId:command.requestId,content,privateContent,...p.disguise===true?{disguise:true}:{},skip,automatic:false,submissionVersion:(previous?.submissionVersion||0)+1};
+          const prepared=r.preparedActions[entry.actorId];if(prepared?.status==='queued'){prepared.status='cancelled';prepared.version++;}
           if(shouldRun())start=launch();break;
         }
         case 'round.start':host(memberId);if(save().status!=='new'||r.vote||r.status!=='collecting')fail('BUSY','不能重复开局');
@@ -238,7 +270,7 @@ const MultiplayerHost=(()=>{
         }
         default:fail('UNKNOWN_COMMAND','不支持的房主命令');
       }
-      const current=room(),receipt={ok:true,requestId:command.requestId,epoch:current.epoch,roundId:current.roundId,status:current.status,...cancelled?{cancelled,cancelledRequestId}:{}};
+      const current=room(),receipt={ok:true,requestId:command.requestId,epoch:current.epoch,roundId:current.roundId,status:current.status,...type.startsWith('action.prepare')?{preparedAction:clone(current.preparedActions[m.actorId])}:{},...cancelled?{cancelled,cancelledRequestId}:{}};
       current.receipts.push({memberId,requestId:command.requestId,fingerprint,receipt});if(current.receipts.length>512)current.receipts.splice(0,current.receipts.length-512);
       await commit(reset?'timeline.reset':'room.changed',reset||{});
       if(start)start();else if(!current.vote&&current.status==='collecting')queueMicrotask(()=>checkAutomatic().catch(()=>{}));
@@ -246,6 +278,7 @@ const MultiplayerHost=(()=>{
     });}
     async function checkAutomatic(){return transaction(async()=>{
       if(expire())await commit('rollback.expired');
+      if(!execution&&promotePrepared())await commit('action.prepared.submitted');
       if(!execution&&shouldRun()){const automatic=!room().participants.some(p=>p.alive&&p.enabled),start=launch({automatic});await commit('round.executing');start();return true;}return false;
     });}
     return {
@@ -259,7 +292,7 @@ const MultiplayerHost=(()=>{
       open:({roomId}={})=>transaction(async()=>{const r=room();if(r.status==='selecting')fail('SELECT_ACTOR','请先选择角色');if(['executing','rolling_back'].includes(r.status))fail('BUSY','请等待当前回合结束');if(!r.online){if(!r.vote&&r.status==='collecting')restoreRemote();if(roomId!==undefined&&(typeof roomId!=='string'||!/^[A-Za-z0-9_-]{1,64}$/.test(roomId)))fail('INVALID_ROOM','房间标识无效');r.online=true;r.roomId=roomId||uid();r.roundId=r.status==='interrupted'?r.roundId:uid();r.receipts=[];r.slotRequests=[];await commit('room.opened');}return clone(r);}),
       close:()=>transaction(async()=>{const r=room();if(!['selecting','collecting','ended'].includes(r.status)||r.vote)fail('BUSY','请先完成当前回合或回退决策');const own=r.submissions[r.members.host?.actorId];if(own){save().draft=own.content||'';save().privateDraft=own.privateContent||'';save().draftRound=(save().round||0)+1;save().draftVersion=(save().draftVersion||0)+1;}
         for(const [id,m]of Object.entries(r.members))if(id!=='host'){const actorId=m.actorId||m.invitationActorId;if(actorId){delete actor(actorId).memberId;slots().setMode(save(),actorId,'disabled');}delete r.members[id];}
-        r.online=false;r.roomId=null;r.roundId=uid();r.receipts=[];r.slotRequests=[];r.submissions={};delete r.suspendedRoom;refresh();await commit('room.closed');}),
+        r.online=false;r.roomId=null;r.roundId=uid();r.receipts=[];r.slotRequests=[];r.submissions={};r.preparedActions={};delete r.suspendedRoom;refresh();await commit('room.closed');}),
       addMember:memberId=>transaction(async()=>{if(!validId(memberId)||memberId==='host')fail('INVALID_MEMBER','无效成员标识');const r=room();if(!r.online)fail('ROOM_CLOSED','请先开房间');if(!Object.hasOwn(r.members,memberId))r.members[memberId]={actorId:null,bindingVersion:0,connected:true};await commit('member.joined');return clone(r.members[memberId]);}),
       reserveInvitation:(memberId,actorId)=>transaction(async()=>{boundary();const r=room();if(!r.online)fail('ROOM_CLOSED','请先开房间');if(!validId(memberId)||memberId==='host'||Object.hasOwn(r.members,memberId))fail('INVALID_MEMBER','无效成员标识');actor(actorId);
         slots().assertConfigure(save(),actorId,'player');
@@ -268,7 +301,7 @@ const MultiplayerHost=(()=>{
       joinInvitation:memberId=>transaction(async()=>{if(!room().online)fail('ROOM_CLOSED','房间已关闭');const m=member(memberId);if(!m.invitationActorId)fail('UNAUTHORIZED','邀请已失效');assignRaw(memberId,m.invitationActorId);m.connected=true;await commit('member.joined');return clone(m);}),
       cancelInvitation:(memberId,kind='disabled')=>transaction(async()=>{boundary();const m=member(memberId);if(m.actorId)fail('OCCUPIED','该槽位已有玩家加入，断线后仍保留占用');if(!m.invitationActorId||!['ai','disabled'].includes(kind))fail('INVALID_MODE','请选择关闭或 AIPC');slots().setMode(save(),m.invitationActorId,kind);delete room().members[memberId];room().receipts=room().receipts.filter(x=>x.memberId!==memberId);refresh();await commit('invitation.closed');}),
       assign:(memberId,actorId)=>transaction(async()=>{boundary();assignRaw(memberId,actorId);await commit('member.assigned');return clone(member(memberId));}),
-      release:(memberId,kind='disabled',{forget=false}={})=>transaction(async()=>{boundary();if(memberId==='host')fail('FORBIDDEN','房主请通过切换槽位选择角色');if(!['ai','disabled'].includes(kind))fail('INVALID_MODE','无人槽位仅可设为关闭或 AIPC');const m=member(memberId);if(m.actorId){delete actor(m.actorId).memberId;slots().setMode(save(),m.actorId,kind);m.actorId=null;m.bindingVersion++;if(forget)delete room().members[memberId];room().receipts=room().receipts.filter(x=>x.memberId!==memberId);room().slotRequests=room().slotRequests.filter(x=>x.memberId!==memberId);refresh();await commit('member.released');}}),
+      release:(memberId,kind='disabled',{forget=false}={})=>transaction(async()=>{boundary();if(memberId==='host')fail('FORBIDDEN','房主请通过切换槽位选择角色');if(!['ai','disabled'].includes(kind))fail('INVALID_MODE','无人槽位仅可设为关闭或 AIPC');const m=member(memberId);if(m.actorId){delete actor(m.actorId).memberId;slots().setMode(save(),m.actorId,kind);delete room().preparedActions[m.actorId];m.actorId=null;m.bindingVersion++;if(forget)delete room().members[memberId];room().receipts=room().receipts.filter(x=>x.memberId!==memberId);room().slotRequests=room().slotRequests.filter(x=>x.memberId!==memberId);refresh();await commit('member.released');}}),
       setConnected:(memberId,connected)=>transaction(async()=>{member(memberId).connected=!!connected;await commit('member.connection');}),
       handle,checkAutomatic,state:()=>clone(room()),subscribe:fn=>{listeners.add(fn);return ()=>listeners.delete(fn);},
       waitForIdle:async()=>{await queue;while(execution){await execution;await queue;}},

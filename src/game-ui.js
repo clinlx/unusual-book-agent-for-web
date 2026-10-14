@@ -54,7 +54,7 @@ const GameUI = (() => {
     const prepare=canPrepare&&!preSubmission?button('pre-submit','预提交',`class="pre-submit-button" ${outgoing.content.trim()||outgoing.privateContent.trim()?'':'disabled title="填写行动后可预提交"'}`):'';
     const primary=busy?`<div class="run-controls">${s.client?'':`<span class="run-phase" role="status" title="按本回合请求次数估算，非实际完成比例"><span class="request-progress">${esc(requestProgress(s))}</span></span>`}${prepare}${s.client?'<span>等待 AI 返回结果</span>':button('abort','中断','class="primary"')}</div>`:opening?(s.client?'<span>等待房主开始</span>':button('start','开始故事','class="primary start-story-button"')):(a.status==='interrupted'||s.room?.automaticStalled)?(resumeButtonHTML(s)||'<span class="muted">本轮已结束</span>'):preSubmission?'<span class="muted">等待自动提交</span>':`<button type="submit" class="primary" ${submission||a.status==='ended'||!flags.alive||(s.client&&(!a.actorId||!flags.enabled||s.room?.online===false||(s.network&&s.network.status!=='connected')))?'disabled':''}>${s.client&&s.room?.online===false?'房间已关闭':s.client&&!a.actorId?'请先选择角色':!flags.alive?'已死亡':!flags.enabled?'等待局势发展':submission?(submission.status==='pending'?'等待确认':'已提交'):(outgoing.content.trim()||outgoing.privateContent.trim())?'提交行动 ↗':'空过'}</button>`;
     const guide=opening?`<div class="composer-start-guide" role="status"><span aria-hidden="true">◇</span><strong>${s.client?'等待房主开始故事':'点击右下方「开始故事」'}</strong><small>开场完成后，输入框将开放。</small></div>`:'';
-    const notice=preSubmission?`<div class="pre-submit-notice" role="status"><span>${preSubmission.sending?'正在自动提交…':preSubmission.error?'预提交暂未发送，连接或行动窗口恢复后再尝试。':blocked?'已准备好自动发送，等待角色恢复行动能力。':'已准备好自动发送，等待本轮完成及可提交窗口。'}</span>${preSubmission.sending?'':button('cancel-pre-submit','取消预提交')}</div>`:'';
+    const notice=preSubmission?`<div class="pre-submit-notice" role="status"><span>${preSubmission.pending?(preSubmission.error|| (preSubmission.cancelling?'正在等待房主确认取消…':'正在等待房主确认预提交…')):preSubmission.sending?'正在自动提交…':preSubmission.error?'预提交暂未发送，连接或行动窗口恢复后再尝试。':blocked?'已准备好自动发送，等待角色恢复行动能力。':'已准备好自动发送，等待本轮完成及可提交窗口。'}</span>${preSubmission.sending||preSubmission.pending?'':button('cancel-pre-submit','取消预提交')}</div>`:'';
     return `<form id="action-form" class="composer ${opening?'composer-opening':''} ${preSubmission?'composer-prepared':''}">${collectionHTML}${guide}<textarea id="action-input" class="${hiddenSend?'private-action-input':''}" placeholder="${placeholder}" aria-label="玩家行动" ${disabled?'disabled':''}>${esc(hiddenSend?privateDraft:draft)}</textarea>${hiddenSend&&disguiseSend?`<label class="disguise-composer"><span>伪装 · 对其他玩家公开的说辞</span><textarea id="action-private-input" aria-label="伪装的公开行动" placeholder="填写对外公开的行动…" rows="2" ${disabled?'disabled':''}>${esc(draft)}</textarea></label>`:''}${notice}<div class="composer-bottom"><div class="composer-meta">${options}<small class="composer-hint">${esc(opening?'开场后可输入行动':preSubmission?'输入已锁定':resumeButtonHTML(s)?'本轮已中断，点击继续本轮':SendShortcut.hint(s.settings?.reverseSendNewline===true))} · <span id="action-count">${outgoing.content.length+outgoing.privateContent.length} 字</span></small></div><div class="composer-actions">${cancel}${primary}</div></div></form>`;
   }
   function rollbackCount(){return state.client?Math.max(0,Number(state.active?.rollbackCount)||0):Math.min(10,state.active?.snapshots?.length||0);}
@@ -1285,7 +1285,7 @@ const GameUI = (() => {
     if(name==='pre-submit')return prepareAction();
     if(name==='cancel-pre-submit'){
       const snapshot=preSubmit.current()?.snapshot;
-      if(snapshot&&preSubmit.cancel()){await GameApp.saveDraft(snapshot.draft,undefined,{privateContent:snapshot.privateDraft,...snapshot});renderedDraftOwner='';render();}return;
+      if(snapshot&&await preSubmit.cancel()){await GameApp.saveDraft(snapshot.draft,undefined,{privateContent:snapshot.privateDraft,...snapshot});renderedDraftOwner='';render();}return;
     }
     if(name==='cancel-action'){clearTimeout(draftTimer);await GameApp.saveDraft(draft,undefined,inputOptions());await GameApp.cancelAction();render();return;}
     if(name==='connection-info'){if(state.network&&state.network.status!=='connected'&&GameApp.reconnectRoom){await GameApp.reconnectRoom();connectionFailure=null;}showConnectionBubble(ConnectionStatus.describe(connectionDescription(),connectionFailure));return render();}
@@ -1403,11 +1403,12 @@ const GameUI = (() => {
     if(name==='file-more'){const r=el.getBoundingClientRect();return fileMenu(fileSelection||filePath||'/workspace',r.left,r.bottom);}
     if(name==='file-operation-dialog')return showModal('管理文件',`<form id="file-operation"><label>操作<select name="op"><option value="move">移动 / 重命名</option><option value="copy">复制</option><option value="delete">删除</option></select></label><label>原路径<input name="from" required value="${esc(filePath||'/workspace/')}" /></label><label>目标路径（删除时忽略）<input name="to" value="/workspace/" /></label><div class="modal-actions"><button class="primary" type="submit">执行</button></div></form>`);
   }
-  function prepareAction(){
+  async function prepareAction(){
     clearTimeout(draftTimer);
     const snapshot=GameInputs.draftState({draft,privateDraft,hiddenSend,disguiseSend});
-    GameApp.stageDraft(draft,undefined,inputOptions());preSubmit.prepare(snapshot);
-    return GameApp.saveDraft(draft,undefined,inputOptions());
+    GameApp.stageDraft(draft,undefined,inputOptions());
+    await GameApp.saveDraft(draft,undefined,inputOptions());
+    return preSubmit.prepare(snapshot);
   }
   async function boot() {
     if(GameApp.getState().client)autoJoinPending=BridgeTransport.invitationParameter(location.href)!==null;
@@ -1463,7 +1464,7 @@ const GameUI = (() => {
       if(e.target.id==='settings-form'){const data=new FormData(e.target),values={};for(const [k,v] of data)values[k]=['temperature','maxContextK','maxOutputTokens','maxToolLoops','httpTimeoutSeconds','maxRetries'].includes(k)?Number(v):v;values.stream=data.has('stream');values.manualDice=data.has('manualDice');values.autoAdvanceUnconscious=data.has('autoAdvanceUnconscious');values.reverseSendNewline=data.has('reverseSendNewline');const previousSource=state.settings?.worldListSource||'';await GameApp.updateSettings(values);const sourceChanged=previousSource!==(state.settings?.worldListSource||'');modalRoot.innerHTML='';if(sourceChanged)reloadCatalog();toast('设置已保存');}
       if(e.target.id==='file-operation'){const data=new FormData(e.target),op=data.get('op'),from=data.get('from'),to=data.get('to');if(op==='delete'&&!await appConfirm('删除 '+from+' 及其内容？',{title:'删除文件',confirmLabel:'删除',danger:true}))return;await GameApp.fileOperation(op,{path:from,from,to});if(filePath===from){filePath='';fileDraft=fileOriginal='';}modalRoot.innerHTML='';render();}
     });});
-    try {await GameApp.init();state=GameApp.getState();preSubmit=GamePreSubmit.create({getState:()=>GameApp.getState(),getFlags:()=>GameData.actorState(GameApp.player().info),send:(...args)=>GameApp.send(...args),onChange:reason=>{if(reason==='sent')renderedDraftOwner='';render();},onError:error=>toast('预提交尚未发送：'+error.message)});GameApp.subscribe(next=>{state=next||GameApp.getState();preSubmit.tick();if(!renderTimer)renderTimer=setTimeout(()=>{renderTimer=null;render();},50);});render();if(!state.client)reloadCatalog();} catch(error){root.innerHTML=`<main class="save-home"><h1>启动未完成</h1><p>${esc(error.message)}</p><button onclick="location.reload()">重新载入</button></main>`;return;} finally {document.getElementById('boot')?.remove();}
+    try {await GameApp.init();state=GameApp.getState();preSubmit=GameApp.preSubmit||GamePreSubmit.create({getState:()=>GameApp.getState(),getFlags:()=>GameData.actorState(GameApp.player().info),send:(...args)=>GameApp.send(...args),onChange:reason=>{if(reason==='sent')renderedDraftOwner='';render();},onError:error=>toast('预提交尚未发送：'+error.message)});GameApp.subscribe(next=>{state=next||GameApp.getState();preSubmit.tick();if(!renderTimer)renderTimer=setTimeout(()=>{renderTimer=null;render();},50);});render();if(!state.client)reloadCatalog();} catch(error){root.innerHTML=`<main class="save-home"><h1>启动未完成</h1><p>${esc(error.message)}</p><button onclick="location.reload()">重新载入</button></main>`;return;} finally {document.getElementById('boot')?.remove();}
     if(state.client){
       const joinLink=()=>{const value=BridgeTransport.invitationParameter(location.href);if(value!==null)return joinWithResult(value);};
       window.addEventListener('hashchange',joinLink);await joinLink();return;

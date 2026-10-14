@@ -9,6 +9,14 @@ const GameApp=(()=>{
   function inputState(value){return {inputHistory:value.inputHistory.map(r=>({...r,rolledBack:r.status==='retracted'})),draft:value.draft,privateDraft:value.privateDraft,hiddenSend:value.hiddenSend??!!value.privateDraft,disguiseSend:value.disguiseSend??!!(value.privateDraft&&value.draft),draftRound:value.draftRound,draftVersion:value.draftVersion};}
   function refreshInputs(identity){if(sameScope(identity,scope()))Object.assign(S.active,inputState(local.load(identity)));}
   function store(){if(!scope())return;const a=S.active;local.save(scope(),{epoch:S.room?.epoch||0,draft:a.draft||'',privateDraft:a.privateDraft||'',hiddenSend:!!a.hiddenSend,disguiseSend:!!a.disguiseSend,draftRound:a.draftRound,draftVersion:a.draftVersion||0});}
+  const preSubmit=GamePreSubmit.createRemote({getState:()=>S,getFlags:()=>GameData.actorState(S.active?.info||{}),command:(...args)=>command(...args),sync:()=>sync(),storage:localStorage,onChange:()=>emit(),onError:error=>{S.error=error.message;emit();},onCancelled:(q,snapshot)=>{const identity=scope();if(!identity)return;const current=local.load(identity);if(GameInputs.shouldRestore(current)){local.save(identity,{...snapshot,draftVersion:current.draftVersion+1});refreshInputs(identity);}},onAccepted:(q,snapshot)=>{
+    const identity=scope();if(!identity)return;
+    const old=local.load(identity),prior=old.inputHistory.find(r=>r.roundId===q.roundId);
+    if(prior?.requestId===q.id&&['accepted','cancelled','retracted'].includes(prior.status))return;
+    local.record(identity,{round:q.round,roundId:q.roundId,epoch:q.epoch,requestId:q.id,status:'accepted',text:q.content,privateContent:q.privateContent,...snapshot,draftState:snapshot});
+    if(old.draft===snapshot.draft&&old.privateDraft===snapshot.privateDraft)local.save(identity,{draft:'',privateDraft:'',draftRound:S.active.round+1,draftVersion:old.draftVersion+1});
+    refreshInputs(identity);
+  }});
   async function sync(){if(transport)await transport.sendToHost(memberId,{type:'sync.request',payload:cache.request()});}
   async function receive(packet){
     if(packet.type==='room.closed'){
@@ -39,10 +47,11 @@ const GameApp=(()=>{
       if(next.scope.epoch>inputs.epoch)inputs=local.rollback(identity,{round:view.round,epoch:next.scope.epoch});
       const draftRound=GameInputs.targetRound(view);
       if(inputs.draftRound!==draftRound){
+        const prepared=view.room?.preparedAction?.status==='queued'||!!preSubmit.current();
         const advancing=same&&before?.scope.epoch===next.scope.epoch&&draftRound>inputs.draftRound;
         const submitted=inputs.inputHistory.find(r=>r.round===inputs.draftRound&&['pending','accepted'].includes(r.status)),sent=submitted?.draftState;
         const untouched=sent&&inputs.draft===sent.draft&&inputs.privateDraft===sent.privateDraft;
-        if(advancing||!inputs.inputHistory.some(r=>r.status==='pending'&&r.round===inputs.draftRound))inputs=local.save(identity,{...advancing&&!untouched?{}:{draft:'',privateDraft:''},draftRound,draftVersion:inputs.draftVersion+1});
+        if(advancing||!inputs.inputHistory.some(r=>r.status==='pending'&&r.round===inputs.draftRound))inputs=local.save(identity,{...prepared||advancing&&!untouched?{}:{draft:'',privateDraft:''},draftRound,draftVersion:inputs.draftVersion+1});
       }
     }catch(error){S.storageWarning=error.message;inputs=same?previous:{inputHistory:[],draft:'',privateDraft:'',draftRound:view.round+1,draftVersion:0};}
     S.active={...view,...inputState(inputs),cache:{Game_World_Time:view.events.at(-1)?.worldTime||''},snapshots:[],room:view.room};
@@ -50,7 +59,7 @@ const GameApp=(()=>{
     S.room=view.room;S.running=view.room?.status==='executing';
     const feedback=GameInputs.currentFeedback(S);
     if(!feedback||feedback.status==='accepted'&&S.room.submitted||feedback.status==='cancelled'&&!S.room.submitted)S.actionFeedback=null;
-    S.error=null;emit();
+    S.error=null;preSubmit.tick();emit();
     if(transport)await transport.sendToHost(memberId,{type:'sync.ack',payload:cache.request()});
   }
   async function command(type,payload={},options={}){
@@ -121,10 +130,10 @@ const GameApp=(()=>{
   async function reconnectRoom(){if(!bridgeSession)throw Error('请重新粘贴邀请链接加入房间');await bridgeSession.reconnect();}
   return {getState:()=>S,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},init:async()=>{try{S.settings=JSON.parse(localStorage.getItem('trpg-client-settings')||'{}');}catch(_){}},
     connect:async(t,id)=>{stopNetwork();S.network=null;await attach(t,id);},joinRoom,reconnectRoom,receive,sync,
-    send:(text,privateContent,options)=>submitInput(text,privateContent,options),cancelAction,profile:async actorId=>(await command('profile.request',{actorId})).profile,inventory:async actorId=>(await command('inventory.request',{actorId})).inventory,skip:(options={})=>submitInput('','',{draftState:GameInputs.draftState(S.active||{}),...options},true),requestRollback:()=>command('rollback.request',{targetRound:S.active.rollbackTargetRound??Math.max(0,S.active.round-1)}),roomCommand:command,
+    preSubmit,send:(text,privateContent,options)=>submitInput(text,privateContent,options),cancelAction,profile:async actorId=>(await command('profile.request',{actorId})).profile,inventory:async actorId=>(await command('inventory.request',{actorId})).inventory,skip:(options={})=>submitInput('','',{draftState:GameInputs.draftState(S.active||{}),...options},true),requestRollback:()=>command('rollback.request',{targetRound:S.active.rollbackTargetRound??Math.max(0,S.active.round-1)}),roomCommand:command,
     player:()=>({info:S.active?.info||{},items:S.active?.items||[],name:S.active?.playerName}),exportView:()=>cache.getState()?.view,
     stageDraft,saveDraft:async(...args)=>stageDraft(...args),
     updateSettings:async values=>{const bridgeUrl=values.bridgeUrl===undefined?S.settings.bridgeUrl:BridgeTransport.validateServerUrl(values.bridgeUrl);S.settings={...S.settings,bridgeUrl,reverseSendNewline:values.reverseSendNewline===true};localStorage.setItem('trpg-client-settings',JSON.stringify(S.settings));emit();},
-    setMode:()=>{},returnHome:()=>{S.home=true;emit();},returnToGame:()=>{if(S.active){S.home=false;emit();}},closeSave:()=>{stopNetwork();S.joining=null;S.active=null;S.home=false;S.room=null;S.network=null;emit();}
+    setMode:()=>{},returnHome:()=>{S.home=true;emit();},returnToGame:()=>{if(S.active){S.home=false;emit();}},closeSave:()=>{stopNetwork();S.joining=null;S.active=null;S.home=false;S.room=null;S.network=null;preSubmit.tick();emit();}
   };
 })();

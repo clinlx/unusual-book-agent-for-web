@@ -49,3 +49,36 @@ test('pre-submit does not reveal another player private-only story',()=>{
  const f=fixture();f.state.active.activeRound.published=0;f.state.active.events=[{type:'story',round:3,audience:['b'],private:true}];assert.equal(Pre.canPrepare(f.state,f.flags),false);
  f.state.active.events[0].audience=['a'];assert.equal(Pre.canPrepare(f.state,f.flags),true);
 });
+
+function remoteFixture(){
+ const f=fixture(true);Object.assign(f.state.room,{memberId:'guest',bindingVersion:1,roomId:'room'});f.state.network={status:'connected'};
+ const calls=[],accepted=[],cancelled=[],entries=new Map();
+ const options={getState:()=>f.state,getFlags:()=>f.flags,storage:{getItem:k=>entries.get(k)||null,setItem:(k,v)=>entries.set(k,v)},sync:async()=>{},onAccepted:(q,s)=>accepted.push({q,s}),onCancelled:(q,s)=>cancelled.push({q,s}),command:(type,payload,scope)=>new Promise((resolve,reject)=>calls.push({type,payload,scope,resolve,reject}))};
+ const queue=Pre.createRemote(options);
+ const reply=(call,status='queued',version=1)=>({id:call.scope.requestId,status,version,epoch:0,fromRound:3,...call.payload});
+ return {...f,queue,calls,accepted,cancelled,options,reply};
+}
+test('remote preparation and cancellation wait for acknowledgement and guard repeated clicks',async()=>{
+ const f=remoteFixture(),work=f.queue.prepare({...draft,disguiseSend:false}),call=f.calls[0];
+ assert.equal(f.queue.current().pending,true);assert.throws(()=>f.queue.prepare(draft),/确认/);assert.equal(f.queue.cancel(),false);f.queue.tick();assert.equal(f.calls.length,1);
+ assert.equal(call.payload.content,'');assert.equal(JSON.stringify(call.payload).includes(draft.draft),false);
+ call.resolve({preparedAction:f.reply(call)});assert.equal(await work,true);assert.equal(f.queue.current().pending,undefined);assert.equal(f.queue.current().snapshot.draft,draft.draft);
+ const cancel=f.queue.cancel();assert.equal(f.queue.current().cancelling,true);assert.equal(f.queue.cancel(),false);assert.equal(f.calls.length,2);
+ f.calls[1].resolve({preparedAction:{...f.reply(call),status:'cancelled',version:2}});await cancel;assert.equal(f.queue.current(),null);assert.equal(f.cancelled.length,1);
+});
+test('lost acknowledgement recovers from host state and never locally submits or overwrites newer status',async()=>{
+ const f=remoteFixture(),work=f.queue.prepare(draft),call=f.calls[0],q=f.reply(call);
+ call.reject(Error('connection lost'));assert.equal(await work,false);assert.equal(f.queue.current().pending,true);
+ f.state.room.preparedAction=q;f.queue.tick();assert.equal(f.queue.current().pending,undefined);
+ const fresh=Pre.createRemote(f.options);fresh.tick();assert.deepEqual(fresh.current().snapshot,draft);
+ f.finish();f.state.room.preparedAction={...q,status:'submitted',version:2,round:4,roundId:'r4'};fresh.tick();fresh.tick();assert.equal(fresh.current(),null);assert.equal(f.accepted.length,1);assert.equal(f.calls.length,1);
+ const reloaded=Pre.createRemote(f.options);reloaded.tick();assert.equal(f.accepted.length,1,'reloading must not reinsert an already consumed historical submission');
+ f.state.active=null;f.queue.tick();
+});
+test('a submitted sync wins over a delayed queued acknowledgement and an epoch change discards late replies',async()=>{
+ const f=remoteFixture(),work=f.queue.prepare(draft),call=f.calls[0],q=f.reply(call);
+ f.state.room.preparedAction={...q,status:'submitted',version:2,round:4,roundId:'r4'};f.queue.tick();
+ call.resolve({preparedAction:q});await work;assert.equal(f.queue.current(),null);assert.equal(f.accepted.length,1);
+ f.state.room.preparedAction=null;f.state.room.epoch++;const next=f.queue.prepare(draft),late=f.calls[1];
+ f.state.room.epoch++;f.queue.tick();late.resolve({preparedAction:f.reply(late)});await next;assert.equal(f.queue.current(),null);
+});

@@ -6,7 +6,7 @@ function setup(t){
  const save={id:'game',name:'世界',slots:['a','b'].map(id=>({id,path:'/workspace/Player-'+id,kind:'player'})),tree,round:1,status:'waiting',events:[{type:'story',round:1,content:'start'}]};
  const room={roomId:'room',roundId:'r2',round:2,epoch:0,status:'collecting',members:{guest:{actorId:'a',bindingVersion:1}}},host=Sync.createHost({getSave:()=>save,getRoom:()=>room});
  const entries=new Map(),storage={getItem:k=>entries.get(k)??null,setItem:(k,v)=>entries.set(k,v)};
- const ctx=vm.createContext({MultiplayerSync:Sync,GameLocalInputs:Local,GameInputs:Inputs,localStorage:storage,crypto:globalThis.crypto,setTimeout,clearTimeout});
+ const ctx=vm.createContext({GamePreSubmit:require('../../src/game-pre-submit'),GameData:require('../../src/game-data'),MultiplayerSync:Sync,GameLocalInputs:Local,GameInputs:Inputs,localStorage:storage,crypto:globalThis.crypto,setTimeout,clearTimeout});
  vm.runInContext(fs.readFileSync(require.resolve('../../src/client-app'),'utf8'),ctx);const app=vm.runInContext('GameApp',ctx);t.after(()=>app.closeSave());
  let receiver,action;let syncs=0;const transport={onClient(id,fn){receiver=fn;return ()=>{};},async sendToHost(id,command){if(command.type==='sync.request'){syncs++;return receiver(await host.sync(id,command.payload));}if(command.type==='sync.ack')return;if(action)return action(command);}};
  return {ctx,app,save,room,host,storage,entries,transport,get syncs(){return syncs;},setAction:fn=>{action=fn;},receive:packet=>receiver(packet),scope:{gameId:'game',memberId:'guest',actorId:'a'}};
@@ -59,6 +59,25 @@ test('private-only submission caches its unsent cover and modes for retraction a
  for(const [key,value]of Object.entries(draftState))assert.equal(f.app.getState().active[key],value);
  f.room.epoch++;await f.receive(await f.host.sync('guest'));
  for(const [key,value]of Object.entries(draftState))assert.equal(f.app.getState().active[key],value);
+});
+
+test('host-prepared acceptance records local-only cover once and retraction restores its modes',async t=>{
+ const f=setup(t);f.room.status='executing';f.save.status='running';f.save.events.push({type:'story',round:2,content:'本轮故事'});await f.app.connect(f.transport,'guest');
+ const draft={draft:'保留但未发送的伪装',privateDraft:'下一轮秘密行动',hiddenSend:true,disguiseSend:false};
+ await f.app.saveDraft(draft.draft,undefined,{privateContent:draft.privateDraft,hiddenSend:true,disguiseSend:false});
+ f.setAction(async c=>{
+  assert.equal(c.type,'action.prepare');assert.equal(c.payload.content,'');
+  f.room.preparedActions={a:{id:c.requestId,version:1,status:'queued',memberId:'guest',bindingVersion:1,epoch:0,fromRound:2,...c.payload}};
+  await f.receive({type:'command.result',requestId:c.requestId,ok:true,preparedAction:f.room.preparedActions.a});
+ });
+ await f.app.preSubmit.prepare(draft);assert.equal(f.app.preSubmit.current().snapshot.draft,draft.draft);
+ f.save.round=2;f.save.status='waiting';f.room.status='collecting';f.room.round=3;f.room.roundId='r3';
+ Object.assign(f.room.preparedActions.a,{status:'submitted',version:2,round:3,roundId:'r3'});f.room.submissions={a:{actorId:'a',memberId:'guest',requestId:f.room.preparedActions.a.id,content:'',privateContent:draft.privateDraft}};
+ await f.receive(await f.host.sync('guest'));assert.equal(f.app.preSubmit.current(),null);assert.equal(f.app.getState().active.draft,'');assert.equal(f.app.getState().active.inputHistory.length,1);
+ await f.app.connect(f.transport,'guest');assert.equal(f.app.getState().active.inputHistory.length,1);
+ f.setAction(async c=>{assert.equal(c.type,'action.cancel');delete f.room.submissions.a;await f.receive({type:'command.result',requestId:c.requestId,ok:true,cancelled:{content:'',privateContent:draft.privateDraft},cancelledRequestId:f.room.preparedActions.a.id});});
+ await f.app.cancelAction();for(const [key,value]of Object.entries(draft))assert.equal(f.app.getState().active[key],value);
+ await f.app.connect(f.transport,'guest');assert.equal(f.app.getState().active.inputHistory[0].status,'cancelled');assert.equal(f.app.getState().active.draft,draft.draft);
 });
 
 test('skipping after retracting an action uses the new skip identity for a later retraction',async t=>{
