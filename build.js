@@ -25,13 +25,15 @@ const obfuscated=JavaScriptObfuscator.obfuscate(Build.scripts(order),{
   selfDefending:false,debugProtection:false,sourceMap:false,seed:20260920
 }).getObfuscatedCode();
 
+const gameFavicon=Build.svgDataUri('assets/icons/game.svg',{framed:true});
+const gameIdentity='const BUNDLED_GAME_ICON = '+safeJSON(read('assets/icons/game.svg'))+';\nconst BUNDLED_GAME_FAVICON = '+safeJSON(gameFavicon)+';\nconst BUNDLED_GAME_STYLES = '+safeJSON(read('src/game.css'))+';\n';
 const dice3d=read('node_modules/@3d-dice/dice-box-threejs/dist/dice-box-threejs.umd.js');
-const scripts=dice3d+'\n;const BUNDLED_GAME_ICON = '+safeJSON(read('assets/icons/game.svg'))+';\nconst BUNDLED_PROMPTS = '+safeJSON(prompts)+';\nconst BUNDLED_RULE_BOOKS = '+safeJSON(ruleBooks)+';\n'+obfuscated;
-const html=Build.compose('src/template.html','src/game.css',scripts).replace('/*__FAVICON__*/',Build.svgDataUri('assets/icons/game.svg'));
+const scripts=dice3d+'\n;'+gameIdentity+'const BUNDLED_PROMPTS = '+safeJSON(prompts)+';\nconst BUNDLED_RULE_BOOKS = '+safeJSON(ruleBooks)+';\n'+obfuscated;
+const html=Build.compose('src/template.html','src/game.css',scripts).replace('/*__FAVICON__*/',gameFavicon);
 fs.mkdirSync(path.join(root,'dist'),{recursive:true});
 fs.writeFileSync(path.join(root,'dist','index.html'),html);
 const clientOrder=['vendor/room-bridge.js','src/connection-recovery.js','src/bridge-transport.js','src/connection-status.js','vendor/marked.min.js','src/diff.js','src/md.js','src/shared/back-navigation.js','src/shared/send-shortcut.js','src/shared/dropdown.js','src/game-data.js','src/game-input-history.js','src/game-pre-submit.js','src/game-local-inputs.js','src/game-presentation.js','src/multiplayer-sync.js','src/client-app.js','src/game-ui.js'];
-const clientHtml=Build.compose('src/template.html','src/game.css',dice3d+'\n;const BUNDLED_GAME_ICON = '+safeJSON(read('assets/icons/game.svg'))+';\n'+Build.scripts(clientOrder)).replace('异闻手记 · 单人跑团','异闻手记 · 联机玩家').replace('/*__FAVICON__*/',Build.svgDataUri('assets/icons/game.svg'));
+const clientHtml=Build.compose('src/template.html','src/game.css',dice3d+'\n;'+gameIdentity+Build.scripts(clientOrder)).replace('异闻手记 · 单人跑团','异闻手记 · 联机玩家').replace('/*__FAVICON__*/',gameFavicon);
 fs.writeFileSync(path.join(root,'dist','client.html'),clientHtml);
 
 fs.copyFileSync(path.join(root,'assets/robots.txt'),path.join(root,'dist/robots.txt'));

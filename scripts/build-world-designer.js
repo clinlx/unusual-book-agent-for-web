@@ -34,7 +34,7 @@ function buildWorldDesigner() {
     + 'const DOCUMENT_ASSETS = ' + safeJSON(bundleDocuments()) + ';\n';
   const settings = 'const WORLD_DESIGNER_STANDALONE = true;\n';
   const html = compose('src/world-designer/template.html', 'src/world-designer/styles.css', prefix + settings + source)
-    .replace('/*__FAVICON__*/', svgDataUri('assets/icons/designer.svg'));
+    .replace('/*__FAVICON__*/', svgDataUri('assets/icons/designer.svg', { framed: true, inset: 17 }));
   fs.writeFileSync(path.join(root, 'dist/designer.html'), html);
   // Only remove the former generated designer artifacts, never source skills or other dist files.
   const dist = path.resolve(root, 'dist');

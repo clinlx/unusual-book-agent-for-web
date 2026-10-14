@@ -24,5 +24,12 @@ function compose(template, styles, source) {
   return read(template).replace('/*__STYLES__*/', () => read(styles))
     .replace('/*__SCRIPTS__*/', () => source.replace(/<\/script/gi, '<\\/script'));
 }
-const svgDataUri = file => 'data:image/svg+xml,' + encodeURIComponent(read(file).trim());
+function svgDataUri(file, { framed = false, inset = 0 } = {}) {
+  let svg = read(file).trim();
+  if (framed) {
+    const icon = svg.replace('<svg ', `<svg x="${inset}" y="${inset}" width="${110 - inset * 2}" height="${112 - inset * 2}" `);
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 110 112"><rect x="4" y="6" width="102" height="102" rx="22" fill="#062B35" stroke="#A68C5644" stroke-width="1"/>' + icon + '</svg>';
+  }
+  return 'data:image/svg+xml,' + encodeURIComponent(svg);
+}
 module.exports = { root, read, safeJSON, scripts, compose, svgDataUri };

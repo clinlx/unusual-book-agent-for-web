@@ -15,6 +15,10 @@ test('default build emits index.html and leaves the manually managed catalog unt
     assert.match(output,/const BUNDLED_GAME_ICON = /,page+' includes the shared application icon');
     assert.equal(JSON.parse(output.match(/const BUNDLED_GAME_ICON = (.*);/)[1]),fs.readFileSync(path.join(root,'assets/icons/game.svg'),'utf8'));
     assert.doesNotMatch(output,/\/\*__FAVICON__\*\//,page+' includes its standalone browser icon');
+    const favicon=output.match(/<link[^>]*rel="icon"[^>]*href="([^"]+)"/)[1];
+    assert.match(decodeURIComponent(favicon),/<rect[^>]*rx=/);
+    assert.equal(JSON.parse(output.match(/const BUNDLED_GAME_STYLES = (.*);/)[1]),fs.readFileSync(path.join(root,'src/game.css'),'utf8'));
+    assert.equal(JSON.parse(output.match(/const BUNDLED_GAME_FAVICON = (.*);/)[1]),favicon);
   }
   assert.doesNotMatch(html,/BUNDLED_MODULES/);
   assert.deepEqual(fs.existsSync(catalogPath)?fs.readFileSync(catalogPath):null,catalogBefore);
@@ -41,6 +45,8 @@ test('default build emits index.html and leaves the manually managed catalog unt
   const registry=require('../src/game-prompts').create(prompts,books);
   for(const {id} of registry.list())assert.equal(prompts[id],fs.readFileSync(path.join(root,'assets/prompts',id),'utf8'),id);
   const designer=fs.readFileSync(path.join(root,'dist/designer.html'),'utf8');
+  assert.match(decodeURIComponent(designer.match(/<link[^>]*rel="icon"[^>]*href="([^"]+)"/)[1]),/<rect[^>]*rx=/);
+  assert.equal(JSON.parse(designer.match(/const BUNDLED_DESIGNER_ICON = (.*);/)[1]),fs.readFileSync(path.join(root,'assets/icons/designer.svg'),'utf8'));
   const skills=JSON.parse(designer.match(/const BUNDLED_SKILLS = (.*);/)[1]);
   const normalize=text=>text.replace(/^\uFEFF/,'').replace(/\r\n?/g,'\n');
   for(const [id,text] of Object.entries(skills)){

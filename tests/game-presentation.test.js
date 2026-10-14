@@ -52,7 +52,7 @@ test('archive names other actors and distinguishes own, other and private action
   {type:'player',actorId:'q',content:'OTHER_ACTION',privateContent:'DO_NOT_EXPORT'},
   {type:'story',private:true,content:'AUTHORIZED_SAFE_PRIVATE'},
  ]});
- a.match(html,/<article class="player player-self"/);a.match(html,/<article class="player player-other"[^>]*><header>秋的行动/);
+ a.match(html,/<article class="player player-self player-event"/);a.match(html,/<article class="player player-other player-event"[^>]*><header>秋的行动/);
  a.match(html,/\.player-other\{[^}]*background:#cbd9dd/);a.match(html,/\.private-dice[^}]*#e5dcea/);
  a.match(html,/OWN_PRIVATE|AUTHORIZED_SAFE_PRIVATE/);a.doesNotMatch(html,/DO_NOT_EXPORT/);
 });
@@ -67,4 +67,17 @@ test('offline replay archive includes independent panels, native tabs and strips
  const html=P.historyHTML(save('雨夜'),undefined,{info:{姓名:'青',状态:{HP:9,MAXHP:12,MP:4,MAXMP:8,SAN:60},'.秘密':'HIDDEN'},items:[{名称:'钥匙',剧情台本:'SPOILER'}]});
  for(const id of ['archive-items','archive-story','archive-status','archive-tab-items','archive-tab-story','archive-tab-status','archive-vitals','replay-next','replay-prev'])a.ok(html.includes('id="'+id+'"'),id);
  a.match(html,/data-mode="replay"/);a.match(html,/data-mode="overview"/);a.doesNotMatch(html,/HIDDEN|SPOILER/);
+});
+
+
+test('archive embeds the shared game identity and stylesheet without external resources',()=>{
+ const fs=require('node:fs'),path=require('node:path'),html=P.historyHTML(save('离线书页'));
+ const icon=fs.readFileSync(path.join(__dirname,'../assets/icons/game.svg'),'utf8');
+ const css=fs.readFileSync(path.join(__dirname,'../src/game.css'),'utf8');
+ a.ok(html.includes(icon),'page logo uses the canonical transparent SVG');
+ a.ok(html.includes(css),'export uses the actual gameplay stylesheet');
+ const favicon=html.match(/<link rel="icon"[^>]*href="([^"]+)"/);
+ a.ok(favicon,'offline archive has a favicon');
+ a.match(decodeURIComponent(favicon[1]),/<rect[^>]*rx=/,'favicon has a rounded frame');
+ a.match(html,/img-src data:/,'allow only embedded favicon images');
 });

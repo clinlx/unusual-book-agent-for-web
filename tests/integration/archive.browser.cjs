@@ -138,3 +138,81 @@ test('replay continuation hint appears at the bottom, advances once and hides at
     assert.equal(await hint.isHidden(),true,'no continuation prompt after the final node');
   }finally{await context.close();}
 });
+
+
+test('export skin matches built gameplay and client, with offline branded icons and responsive panels',async t=>{
+  const root=path.resolve(__dirname,'../..');
+  const view={name:'雨夜车站',actorId:'p',slots:[{id:'p',name:'青'},{id:'q',name:'秋'}],events:[
+    {type:'story',round:1,worldTime:'五月的夜晚',content:'雨水敲着车站的窗。站务员抬起灯，示意你们进屋。'},
+    {type:'player',round:1,actorId:'p',content:'我去问问下一班车的时间。'},
+    {type:'player',round:1,actorId:'q',content:'我留在门边等你。'},
+    {type:'story',round:1,private:true,targetPlayer:'p',content:'你在站牌背面看到一行铅笔字。'},
+    {type:'round_end',round:1},
+    {type:'story',round:2,content:'灯光在雨里晃了一下。'},
+  ]};
+  const html=Presentation.historyHTML(view,undefined,{info:{姓名:'青',状态:{HP:9,MAXHP:12}},items:[{名称:'钥匙',数量:1}]});
+  const file=path.join(root,'tests/artifacts/archive-style-'+randomUUID()+'.html');
+  fs.writeFileSync(file,html);t.after(()=>fs.rmSync(file,{force:true}));
+  const context=await browser.newContext({viewport:{width:1440,height:960}});
+  await context.route('**/modules.json',route=>route.fulfill({contentType:'application/json',body:'[]'}));
+  await context.route('**/files/**',route=>route.abort());
+  await context.route(/^https?:/,route=>route.abort());
+  t.after(()=>context.close());
+  context.setDefaultTimeout(5000);
+  const archive=await context.newPage();await archive.goto(pathToFileURL(file).href);
+  await archive.locator('[data-mode=overview]').click();
+  const errors=[];archive.on('console',message=>{if(message.type()==='error')errors.push(message.text())});
+  const pick=(el,props)=>Object.fromEntries(props.map(prop=>[prop,getComputedStyle(el)[prop]]));
+  const props=['backgroundColor','backgroundImage','color','fontFamily','fontSize','lineHeight','letterSpacing','borderLeftColor','borderLeftWidth','borderRadius'];
+  const selectors=['body','.story-paper','.panel','.story:not(.private-story)','.player-self','.player-other','.story.private-story','.info-row','.change-tag.added'];
+  // Inspect the compiled stylesheet, so build-time omissions cannot silently pass.
+  const live=await context.newPage();
+  for(const name of ['index','client']){
+    const built=fs.readFileSync(path.join(root,'dist',name+'.html'),'utf8');
+    const css=built.match(/<style>([\s\S]*?)<\/style>/)[1];
+    await live.setContent('<style>'+css+'</style><div class="story-paper"></div><div class="panel"></div><article class="story"></article><article class="player-action player-self"></article><article class="player-action player-other"></article><article class="story private-story"></article><div class="info-row"></div><span class="change-tag added"></span>');
+    await archive.evaluate(()=>{document.querySelector('#status-content').insertAdjacentHTML('beforeend','<span class="change-tag added">新增</span>')});
+    for(const selector of selectors){
+      const expected=await live.locator(selector).first().evaluate(pick,props);
+      const actual=await archive.locator(selector).first().evaluate(pick,props);
+      assert.deepEqual(actual,expected,name+' '+selector);
+    }
+    await live.goto(pathToFileURL(path.join(root,'dist',name+'.html')).href);
+    const exported=await live.evaluate(v=>GamePresentation.historyHTML(v),view);
+    assert.ok(exported.includes(fs.readFileSync(path.join(root,'assets/icons/game.svg'),'utf8')));
+    assert.ok(exported.includes(css));
+    const favicon=await live.locator('link[rel="icon"]').getAttribute('href');
+    assert.equal(await archive.locator('link[rel="icon"]').getAttribute('href'),favicon);
+  }
+  assert.equal(await archive.locator('.archive-brand svg rect').count(),0,'no page-logo background');
+  await archive.locator('#status-content>.change-tag').evaluateAll(nodes=>nodes.forEach(node=>node.remove()));
+  await archive.screenshot({path:path.join(root,'tests/artifacts/archive-style-desktop.png')});
+  for(const width of [1100,960,769,768,390,320]){
+    await archive.setViewportSize({width,height:900});
+    assert.equal(await archive.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'no horizontal overflow at '+width);
+    const box=await archive.locator('#replay-next').boundingBox();assert.ok(box.x>=0&&box.x+box.width<=width);
+    for(const selector of ['#archive-story','#archive-items','#archive-status'])assert.equal(await archive.locator(selector).isVisible(),width>768||selector==='#archive-story');
+  }
+  await archive.setViewportSize({width:390,height:844});
+  await archive.screenshot({path:path.join(root,'tests/artifacts/archive-style-mobile.png')});
+  assert.deepEqual(errors,[]);
+});
+
+
+test('built game, client and designer load local UI dependencies without CDN requests',async t=>{
+  const context=await browser.newContext();context.setDefaultTimeout(5000);t.after(()=>context.close());
+  await context.route('**/modules.json',route=>route.fulfill({contentType:'application/json',body:'[]'}));
+  await context.route('**/files/**',route=>route.abort());
+  await context.route(/^https?:/,route=>route.abort());
+  for(const name of ['index','client','designer']){
+    const page=await context.newPage(),network=[];
+    page.on('request',request=>{if(/^https?:/.test(request.url()))network.push(request.url())});
+    await page.goto(pathToFileURL(path.resolve(__dirname,'../../dist',name+'.html')).href);
+    const external=await page.evaluate(()=>[...document.querySelectorAll('script[src],link[rel=stylesheet],link[rel=icon]')].map(el=>el.src||el.href).filter(url=>/^https?:/.test(url)));
+    assert.deepEqual(external,[],name+' has no remote scripts, styles or icons');
+    assert.deepEqual(network,[],name+' does not fetch remote startup dependencies');
+    const styles=await page.locator('style').allTextContents();
+    assert.ok(styles.every(css=>!/@import|url\(\s*["']?https?:/i.test(css)),name+' has no remote CSS assets or fonts');
+    await page.close();
+  }
+});
