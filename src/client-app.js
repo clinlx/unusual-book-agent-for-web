@@ -107,7 +107,7 @@ const GameApp=(()=>{
   function stopNetwork(){joinGeneration++;const previous=bridgeSession;bridgeSession=null;previous?.close();disconnect();}
   async function joinRoom(value){
     stopNetwork();S.home=false;S.active=null;S.room=null;const generation=joinGeneration;
-    S.joining={phase:'validate',message:'正在验证邀请…'};S.network={status:'connecting',message:'正在验证邀请'};S.error=null;emit();
+    S.joinFailure=null;S.joining={phase:'validate',message:'正在验证邀请…'};S.network={status:'connecting',message:'正在验证邀请'};S.error=null;emit();
     try{
       const invitation=BridgeTransport.parseInvitation(value);S.joining={phase:'connect',message:'正在连接房间…'};emit();
       const session=await BridgeTransport.createClient({invitation,onState:async info=>{
@@ -126,15 +126,15 @@ const GameApp=(()=>{
         const timer=setTimeout(()=>{finish();reject(Error('房主未返回可用角色，请确认房间仍开放且槽位有效'));},15000);listeners.add(check);check();
       });
       if(generation===joinGeneration){S.joining=null;emit();}
-    }catch(error){if(generation===joinGeneration){stopNetwork();S.joining=null;S.active=null;S.room=null;S.network={status:'disconnected',message:error.message,code:error.code};S.error=error.message;emit();}throw error;}
+    }catch(error){if(generation===joinGeneration){stopNetwork();S.joining=null;S.active=null;S.room=null;S.network={status:'disconnected',message:error.message,code:error.code};S.error=error.message;S.joinFailure={message:error.message,code:error.code};emit();}throw error;}
   }
   async function reconnectRoom(){if(!bridgeSession)throw Error('请重新粘贴邀请链接加入房间');await bridgeSession.reconnect();}
   return {getState:()=>S,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},init:async()=>{try{S.settings={reverseSendNewline:JSON.parse(localStorage.getItem('trpg-client-settings')||'{}')?.reverseSendNewline===true};}catch(_){}},
-    connect:async(t,id)=>{stopNetwork();S.network=null;await attach(t,id);},joinRoom,reconnectRoom,receive,sync,
+    connect:async(t,id)=>{stopNetwork();S.joinFailure=null;S.network=null;await attach(t,id);},joinRoom,reconnectRoom,receive,sync,
     preSubmit,send:(text,privateContent,options)=>submitInput(text,privateContent,options),cancelAction,profile:async actorId=>(await command('profile.request',{actorId})).profile,inventory:async actorId=>(await command('inventory.request',{actorId})).inventory,skip:(options={})=>submitInput('','',{draftState:GameInputs.draftState(S.active||{}),...options},true),requestRollback:()=>command('rollback.request',{targetRound:S.active.rollbackTargetRound??Math.max(0,S.active.round-1)}),roomCommand:command,
     player:()=>({info:S.active?.info||{},items:S.active?.items||[],name:S.active?.playerName}),exportView:()=>cache.getState()?.view,setSpectatorView:async view=>{await command('spectator.view',{view});await sync();},
     stageDraft,saveDraft:async(...args)=>stageDraft(...args),
     updateSettings:async values=>{S.settings={reverseSendNewline:values.reverseSendNewline===true};localStorage.setItem('trpg-client-settings',JSON.stringify(S.settings));emit();},
-    setMode:()=>{},returnHome:()=>{S.home=true;emit();},returnToGame:()=>{if(S.active){S.home=false;emit();}},closeSave:()=>{stopNetwork();S.joining=null;S.active=null;S.home=false;S.room=null;S.network=null;preSubmit.tick();emit();}
+    setMode:()=>{},returnHome:()=>{S.home=true;emit();},returnToGame:()=>{if(S.active){S.home=false;emit();}},closeSave:()=>{stopNetwork();S.joinFailure=null;S.joining=null;S.active=null;S.home=false;S.room=null;S.network=null;preSubmit.tick();emit();}
   };
 })();

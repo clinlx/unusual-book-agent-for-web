@@ -33,6 +33,14 @@ const MultiplayerSync=(()=>{
     const abnormal=!flags.enabled||vitals.hp?.value===0||/昏迷|失去意识|昏厥|中毒|麻痹|眩晕|疯狂|濒死|unconscious|incapacitated/i.test(status);
     return {name:String(card.name||slot.id),gender:String(Data.get(card.info,'性别')||''),...flags,condition:!flags.alive?'死亡':abnormal?'异常':vitals.hp&&vitals.hp.value<vitals.hp.max?'受伤':'正常',vitals,itemCount};
   }
+  function roundChanges(save,slot,{omniscient=false,room}={}){
+    const result={info:false,items:false},baseline=save.snapshots?.at(-1);
+    if(!['waiting','ended'].includes(save.status)||save.activeRound&&!save.activeRound.complete||['executing','interrupted','rolling_back'].includes(room?.status)||!baseline?.tree||baseline.round!==save.round-1)return result;
+    const oldSlot=baseline.slots?.find(s=>s.id===slot.id)||slot,previous={...save,tree:baseline.tree};
+    // Compare only what this perspective may inspect, including dereferenced item files.
+    for(const section of ['info','items'])try{result[section]=canonical(roleCard(previous,oldSlot,omniscient,section)[section])!==canonical(roleCard(save,slot,omniscient,section)[section]);}catch(_){}
+    return result;
+  }
   function detailAccess(save,actorId,{room=save.multiplayer,memberId='host'}={}){
     const viewer=members(room).find(([id])=>id===memberId)?.[1],slot=save.slots?.find(s=>s.id===actorId);
     if(!viewer||!(viewer.actorId||viewer.role==='spectator')||!slot||['ai','disabled','kpc'].includes(slot.kind)||viewer.role!=='spectator'&&!members(room).some(([,m])=>m.actorId===actorId))throw Object.assign(Error('角色资料不可访问'),{code:'PROFILE_UNAVAILABLE'});
@@ -122,7 +130,7 @@ const MultiplayerSync=(()=>{
     const publicSlots=slots.map(s=>{
       const card=summary(save,s,{omniscient:perspective==='all'});
       const binding=people.find(([,m])=>m.actorId===s.id);
-      return {id:s.id,...card,kind:s.kind,occupied:!!binding,connected:binding?.[1].connected===true||binding?.[1].online===true,submitted:!!room?.submissions?.[s.id]};
+      return {id:s.id,...card,...spectator?{changes:roundChanges(save,s,{omniscient:perspective==='all',room})}:{},kind:s.kind,occupied:!!binding,connected:binding?.[1].connected===true||binding?.[1].online===true,submitted:!!room?.submissions?.[s.id]};
     });
     const roundStates=new Map();
     for(const dir of Object.values(Data.node(save,'过往回合历史记忆')?.children||{})){

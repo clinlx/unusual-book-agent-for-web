@@ -223,3 +223,11 @@ test('failure sending the initial sync closes the created Bridge session and det
  const f=setup(t);let closed=false,detached=false;f.ctx.BridgeTransport={parseInvitation:value=>value,async createClient({onState}){onState({status:'connected'});return {memberId:'guest',close(){closed=true;},transport:{onClient(){return()=>{detached=true;};},async sendToHost(){throw Error('initial sync failed');}}};}};
  await assert.rejects(f.app.joinRoom({}),/initial sync failed/);assert.equal(closed,true);assert.equal(detached,true);assert.equal(f.app.getState().network.status,'disconnected');
 });
+
+
+test('failed join exposes a retry state, clears it during retry, and enters the room after recovery',async t=>{
+ const f=setup(t);let attempts=0;const invitation={roomId:'room'};
+ f.ctx.BridgeTransport={parseInvitation:x=>x,async createClient(){if(++attempts===1)throw Object.assign(Error('房间暂时不可用'),{code:'RoomNotFound'});assert.equal(f.app.getState().joinFailure,null);return {transport:f.transport,memberId:'guest',close(){}};}};
+ await assert.rejects(f.app.joinRoom(invitation),/房间暂时不可用/);assert.equal(f.app.getState().joinFailure.code,'RoomNotFound');assert.equal(f.app.getState().active,null);
+ await f.app.joinRoom(invitation);assert.equal(attempts,2);assert.equal(f.app.getState().joinFailure,null);assert.equal(f.app.getState().joining,null);assert.equal(f.app.getState().active.actorId,'a');
+});

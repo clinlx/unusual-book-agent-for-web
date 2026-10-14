@@ -57,11 +57,21 @@ test('connection lamp follows four states; nearby bubbles expire, preserve typin
  await set({status:'closed',code:'HostDisconnected',message:'房主已关闭房间'});await page.clock.runFor(70);assert.equal(await page.locator('#connection-lamp').getAttribute('data-status'),'purple');assert.match(await page.locator('.connection-bubble').innerText(),/房主/);
  assert.deepEqual(sockets,[]);assert.deepEqual(errors,[]);
 });
-test('invalid invitation errors open a safe result dialog on home without a lamp or server connection',async t=>{
+test('failed invitations stay on a safe retry page and only show the key form after explicit editing',async t=>{
  const context=await browser.newContext();t.after(()=>context.close());const page=await context.newPage(),sockets=[];page.on('websocket',s=>sockets.push(s.url()));await page.goto(origin+'/client.html');
- await page.locator('[name="invitation"]').fill('<img src=x onerror=alert(1)>');await page.locator('#join-room-form button').click();await page.locator('[role="alertdialog"]').waitFor();
- assert.equal(await page.locator('#connection-lamp').count(),0);assert.match(await page.locator('[role="alertdialog"]').innerText(),/加入失败|格式无效/);assert.equal(await page.locator('[role="alertdialog"] img').count(),0);assert.deepEqual(sockets,[]);await page.getByRole('button',{name:'我知道了',exact:true}).click();assert.equal(await page.locator('[name="invitation"]').inputValue(),'<img src=x onerror=alert(1)>');
+ await page.locator('[name="invitation"]').fill('<img src=x onerror=alert(1)>');await page.locator('#join-room-form button').click();await page.locator('.join-failure').waitFor();
+ assert.equal(await page.locator('#join-room-form,[role="alertdialog"],.join-failure img').count(),0);assert.match(await page.locator('.join-failure').innerText(),/加入房间失败|格式无效/);assert.deepEqual(sockets,[]);
+ await page.locator('[data-action="retry-join"]').click();await page.locator('.join-failure').waitFor();assert.equal(await page.locator('#join-room-form').count(),0);
+ await page.locator('[data-action="edit-join"]').click();await page.locator('[name="invitation"]').waitFor();assert.equal(await page.locator('[name="invitation"]').inputValue(),'<img src=x onerror=alert(1)>');
 });
+test('unavailable room retry retains the original invitation and shows progress while reconnecting',async t=>{
+ const context=await browser.newContext({viewport:{width:390,height:844}});t.after(()=>context.close());const page=await context.newPage();await page.goto(origin+'/client.html');await page.locator('#join-room-form').waitFor();
+ await page.evaluate(()=>{window.joinRequests=[];BridgeTransport.createClient=async({invitation})=>{window.joinRequests.push(invitation);await new Promise(r=>setTimeout(r,150));throw Object.assign(Error('RoomNotFound'),{code:'RoomNotFound'});};const key=BridgeTransport.encodeInvitation({version:1,url:'wss://relay.invalid',roomId:crypto.randomUUID(),memberId:'guest',token:'A'.repeat(43)+'.'+'A'.repeat(43)});location.hash='join='+key;});
+ await page.locator('.join-failure').waitFor();assert.match(await page.locator('.join-failure').innerText(),/房间不存在、房主断开连接|浏览器进入休眠/);assert.equal(await page.locator('#join-room-form').count(),0);
+ await page.locator('[data-action="retry-join"]').click();await page.locator('.join-progress').waitFor();assert.equal(await page.locator('[data-action="retry-join"]').count(),0);await page.locator('.join-failure').waitFor();
+ const attempts=await page.evaluate(()=>window.joinRequests);assert.equal(attempts.length,2);assert.deepEqual(attempts[0],attempts[1]);assert.equal(await page.locator('#join-room-form').count(),0);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:'tests/artifacts/join-failure-390.png'});
+});
+
 test('clients see private pending dice in purple but cannot roll them or submit unconscious actions',async t=>{
  const context=await browser.newContext();t.after(()=>context.close());const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto(origin+'/client.html');await page.locator('#join-room-form').waitFor();
  await page.evaluate(async()=>{const s=GameApp.getState();s.room={online:true,status:'collecting',members:[]};s.active={id:'view',name:'测试',actorId:'a',round:1,status:'waiting',slots:[{id:'a',name:'甲'},{id:'b',name:'乙'}],info:{姓名:'甲',Alive:true,Enabled:false},items:[],events:[{id:'pending',type:'dice',private:true,pending:true,roller:'甲 (Player-a)',diceArgs:{dice_dict:{侦查:'1d100'},related_attr:'侦查'}},{id:'other',type:'player',actorId:'b',content:'乙开门'},{id:'private',type:'story',private:true,content:'只给甲的正文'}]};await GameApp.updateSettings({});});
