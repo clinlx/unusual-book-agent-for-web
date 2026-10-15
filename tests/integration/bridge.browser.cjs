@@ -204,7 +204,7 @@ test('real Bridge sockets preserve host authority, private views, fragmented syn
     const files=['a','b'].flatMap(id=>[{name:`Player-${id}/基础信息.json`,text:JSON.stringify({姓名:id==='a'?'甲':'乙',职业:'公开职业-'+id,密码:'不公开密码',当前位置:'不公开位置',Alive:true,Enabled:true,'.秘密':'不公开人物-'+id})},{name:`Player-${id}/背包.json`,text:'[]'}]);
     files.push({name:'模组.md',text:'两名旅人在车站会合。'});await GameApp.importSave(new File([ZIP.makeZip(files)],'Bridge真实联机.zip'));await GameApp.configureSlots('a',{b:'ai'});
   },bridge.url);
-  await host.locator('.connection-placeholder').waitFor();assert.deepEqual(hostSockets,[],'默认多角色存档仍离线');assert.equal(await host.locator('#connection-lamp').count(),0);assert.equal(await host.locator('.connection-placeholder').count(),1);
+  await host.locator('.topbar [data-action="room-panel"]').waitFor();assert.deepEqual(hostSockets,[],'默认多角色存档仍离线');assert.equal(await host.locator('#connection-lamp,.connection-placeholder').count(),0);
   await host.evaluate(()=>GameApp.start());await waitHost(host,1);
   await closeModal(host);await host.locator('[data-action="rollback"]').click();
   await host.locator('[role="alertdialog"]').waitFor();assert.equal(await host.locator('[data-action="host-rollback"][data-decision="vote"]').count(),0,'单人模式不显示投票');
@@ -465,7 +465,7 @@ test('real Bridge spectators retain authorization across reconnects and lose rev
     const s=GameApp.getState().active;s.status='waiting';s.events=[{type:'story',content:'公开故事',audience:'public'},{type:'story',content:'甲私密故事',audience:['a'],private:true}];
     await GameApp.configureSpectators([{id:'s_'+ 'a'.repeat(32),permission:'all'}]);await GameApp.connectRoom();return GameApp.getState().savedInvites[0];
   },bridge.url);
-  await watch.goto(invite.link);await watch.locator('#spectator-view').waitFor();assert.equal(await watch.locator('#action-form').count(),0);assert.match(await watch.locator('#history').innerText(),/甲私密故事/);
+  await watch.goto(invite.link);await watch.locator('.character-roster').waitFor();await watch.locator('[data-action="room-panel"]').click();await watch.locator('#spectator-view').waitFor();assert.equal(await watch.locator('#action-form').count(),0);assert.match(await watch.locator('#history').innerText(),/甲私密故事/);
   await watch.locator('#spectator-view').selectOption('a');await watch.waitForFunction(()=>GameApp.getState().active?.spectatedActorId==='a');
   await watch.evaluate(()=>GameApp.reconnectRoom());await watch.waitForFunction(()=>GameApp.getState().network.status==='connected'&&GameApp.getState().active?.spectatedActorId==='a');
   assert.equal(await watch.evaluate(async()=> (await GameApp.profile('a')).info.姓名),'a');
