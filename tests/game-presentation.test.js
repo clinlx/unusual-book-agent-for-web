@@ -10,7 +10,7 @@ test('secondary resource follows sole changed resource, preserves both changes',
 test('diff matches named array entries across reorders and preserves deletions',()=>{a.equal(typeof P.diff,'function');const d=P.diff([{名称:'钥匙',余量:'2个'},{名称:'书'}],[{名称:'书'},{名称:'钥匙',余量:'1个'}]);a.equal(d.children[0].status,'same');a.equal(d.children[1].children.find(x=>x.label==='余量').status,'decreased');const deleted=P.diff([{名称:'书'}],[]);a.equal(deleted.children[0].status,'deleted');});
 
 test('inventory changes use colored tags distinct from ordinary text in panels and exports',()=>{
- const old=[{名称:'钥匙',余量:2}],next=[{名称:'钥匙',余量:1},{名称:'书',信息:'新增只是书上的文字'}];
+ const old=[{名称:'钥匙',余量:2}],next=[{名称:'钥匙',余量:0},{名称:'书',信息:'新增只是书上的文字'}];
  const html=P.fields(next,old,'inventory');
  a.match(html,/class="change-tag added">新增<\/span>/);
  a.match(html,/class="change-tag decreased">减少<\/span>/);
@@ -18,6 +18,18 @@ test('inventory changes use colored tags distinct from ordinary text in panels a
  a.doesNotMatch(html,/<small> 新增/);
  const archive=P.historyHTML(save('变化标签'),undefined,{info:{姓名:'青'},items:next});
  a.match(archive,/\.change-tag/);
+});
+test('player fields hide only default visibility and unitless single amounts without changing data',()=>{
+ for(const value of ['可见','true','是',true])a.equal(P.fields({可见性:value}),'');
+ for(const value of [1,'1']){a.equal(P.fields({余量:value}),'');a.equal(P.fields({Amount:value}),'');}
+ a.equal(P.fields({Visibility:true}),'');a.equal(P.fields({Stealth:'可见'}),'');
+ for(const value of ['不可见','需要STR>15','可见（照明时）',false,'false',1])a.match(P.fields({可见性:value}),/info-row/);
+ for(const value of [0,2,-1,1.5,'1枚','1次','1ml','1/7','01','1.0',' 1 '])a.match(P.fields({余量:value}),/info-row/);
+ a.match(P.fields({等级:1,状态:true}),/等级/);a.match(P.fields({等级:1,状态:true}),/状态/);
+ const current=[{名称:'钥匙',可见性:'可见',余量:1}],before=[{名称:'钥匙',可见性:'不可见',余量:2}],copy=structuredClone(current);
+ const html=P.fields(current,before,'inventory');a.doesNotMatch(html,/<span>可见性<\/span>|<span>余量<\/span>/);a.deepEqual(current,copy);
+ const exported=P.historyHTML(save('默认物品字段'),undefined,{info:{姓名:'青'},items:current});
+ a.doesNotMatch(exported,/<span>可见性<\/span>|<span>余量<\/span>/);
 });
 test('reader cache is per save, flags stale data, recovers and can invalidate',()=>{a.equal(typeof P.createReader,'function');const read=P.createReader(s=>{if(s.bad)throw Error('坏 JSON');return {info:{姓名:s.name},items:[]};}),s={name:'A'},other={name:'B',bad:true};a.equal(read(s).stale,false);s.bad=true;a.equal(read(s).info.姓名,'A');a.equal(read(s).stale,true);a.equal(read(other).info,undefined);s.bad=false;s.name='C';a.equal(read(s).info.姓名,'C');read.clear(s);s.bad=true;a.equal(read(s).info,undefined);});
 test('replay archive masks secret dice, excludes model internals and escapes user HTML',()=>{
