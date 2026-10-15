@@ -31,7 +31,3 @@
 这些内容优先作为运行信息记录。只有它们明确描述世界规则时，才转为 game-world-builder 规则。
 
 例外：HTML 编写的开局引导页面（含输入框、选项、按钮的车卡/开局选择界面）不是普通运行噪声，要转写为 `模组.md` 的车卡指南，见 `references/field-mapping.md`。
-
-## 本项目的浏览器适配
-
-以本技能 SKILL.md 的 parse_tavern_card 流程为准，不运行 Python。当前只解析 PNG 与 JSON。所有原字段、世界书设置、禁用条目与扩展均保留在 raw-card.json；分类、内容标记和 must_land 仅供复核，不是过滤依据。未知脚本不执行、不声称已转换；纯平台格式补丁无需搬运。

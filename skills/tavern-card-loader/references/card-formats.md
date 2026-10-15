@@ -47,7 +47,3 @@ SillyTavern V2 常见结构：
 - `position` 与 `insertion_order`：注入位置和顺序。
 
 世界书经常比 `description` 更接近世界构建材料，解析时不能忽略。
-
-## 本项目的浏览器适配
-
-以本技能 SKILL.md 的 parse_tavern_card 流程为准，不运行 Python。当前只解析 PNG 与 JSON。所有原字段、世界书设置、禁用条目与扩展均保留在 raw-card.json；分类、内容标记和 must_land 仅供复核，不是过滤依据。未知脚本不执行、不声称已转换；纯平台格式补丁无需搬运。

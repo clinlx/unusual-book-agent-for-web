@@ -42,7 +42,7 @@
 
 ## 运行验证
 
-在世界设计者网页中，该技能始终开启，正文已注入系统提示词。AI 调用 `validate_game_structure`，参数例如 `{"path":"/workspace"}` 或 `{"path":"/workspace/my-world"}`。工具只读当前虚拟文件，返回 `valid`、`errorCount` 和 `errors`；修复仍使用网页文件工具，无需终端。技能中的 JS 文件是参考资源，网页不执行任意上传的脚本。
+在世界设计者网页中，该技能始终开启，正文已注入系统提示词。AI 调用 `validate_game_structure`，参数例如 `{"path":"/workspace"}` 或 `{"path":"/workspace/my-world"}`。工具只读当前虚拟文件，返回 `valid`、`errorCount` 和 `errors`；修复使用网页文件工具。
 
 在本地终端中，需要 Node.js 18 或更新版本，无第三方依赖。把以下占位文字替换为实际路径：
 

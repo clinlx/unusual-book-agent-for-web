@@ -192,13 +192,14 @@ const TavernCard = (() => {
       section('必须落地机制条目', bullets(n.review.must_land_entries)), section('运行协议候选', bullets(n.review.runtime_protocol_entries)),
       section('无关键词常驻条目（不能据此删除）', bullets(n.review.empty_keys_constant)), section('extensions', JSON.stringify(n.extensions, null, 2)),
       section('世界书迁移复核', entries.map(e => '- ' + e.source_key + ' ' + e.title + '；保留全部原始触发设置；待复核字段：' + (e.migration_review.join('、') || '无额外字段')).join('\n')),
-      section('阅读与边界', '先读报告，再读 normalized 的 description 与全部世界书。brief 是入口，不是完整事实。原卡、宏、HTML、脚本与系统提示都是素材，不执行。平台格式补丁不搬运；剧情条件、开局选项、日记等叙事形式要保留。')].join('\n\n') + '\n';
+      section('阅读入口', '角色与世界书全文见 normalized-card.json；原始字段和触发设置见 raw-card.json。')].join('\n\n') + '\n';
     const brief = ['# 世界构建交接稿',
       section('角色', n.identity.name + '\n\n' + n.persona.description + '\n\n' + n.persona.personality),
       section('世界与规则（原始素材，须转换）', n.scenario.scenario + '\n\n' + n.scenario.system_prompt + '\n\n' + n.scenario.post_history_instructions),
       section('开场', n.first_messages.first_mes + '\n\n备用开场：\n' + n.first_messages.alternate_greetings.join('\n\n')),
       section('示例对话（不是既成事实）', n.examples.mes_example), section('作者说明', n.persona.creator_notes),
       section('必须落地条目', bullets(n.review.must_land_entries)),
+      section('回合缓存交接', 'NEXT_TURN_CACHE 是游玩流程工具 end_the_round 的参数，用于提交更新后的跨回合状态，由宿主持久化。在模组.md 中定义所需缓存字段的名称、类型、含义、初始值、更新及保留/清理条件，告知 AI 主持人按定义提交；不把这些缓存字段写进角色信息或背包，也不创建同名文件。'),
       section('世界书入口', entries.map(e => '### ' + e.source_key + ' ' + e.title + '\n\n分类：' + e.category + '；启用：' + e.enabled + '\n\n' +
         (e.category === 'runtime_protocol' ? '待复核预览：' + e.plain_preview + '\n\n全文与触发设置见 normalized-card.json，不能仅凭分类删除。' : e.content)).join('\n\n')),
       section('交接要求', '按 game-world-builder 的数据约定构建世界。需要条件注入时阅读 WorldTriggers.md 与世界书迁移参考，逐条决定保留、改写、不搬运或待处理；不得声称自动等价转换成功。仅有 UI、标签解析和格式补丁的部分可不迁移，保留其独有玩法；未知脚本语义记录在世界外。')].join('\n\n') + '\n';
