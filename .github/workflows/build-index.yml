@@ -1,4 +1,5 @@
-name: Build pages
+name: 手动构建网页（下载产物）
+run-name: 构建网页 · ${{ github.ref_name }}
 
 on:
   workflow_dispatch:
@@ -8,32 +9,33 @@ permissions:
 
 jobs:
   build:
-    name: Build game and world designer
+    name: 构建并打包三个页面
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
+      - name: 配置 Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies
+      - name: 安装依赖
         run: npm ci
 
-      - name: Run tests
+      - name: 运行测试
         run: npm test
 
-      - name: Build pages
+      - name: 构建网页
         run: npm run build
 
-      - name: Verify artifact
-        run: test -s dist/index.html && test -s dist/designer.html && test -s dist/client.html
+      - name: 检查产物
+        run: test -s dist/index.html && test -s dist/designer.html && test -s dist/client.html && test -s dist/robots.txt
 
-      - name: Upload pages and page resources
+      - name: 上传可下载产物
+        id: pages
         uses: actions/upload-artifact@v4
         with:
           name: book-agent-pages
@@ -44,3 +46,14 @@ jobs:
             dist/robots.txt
           if-no-files-found: error
           retention-days: 30
+
+      - name: 显示产物下载入口
+        env:
+          ARTIFACT_URL: ${{ steps.pages.outputs.artifact-url }}
+        run: |
+          {
+            printf '## 网页构建完成\n\n'
+            printf '[下载网页产物 ZIP](%s)\n\n' "$ARTIFACT_URL"
+            printf '包含：index.html、designer.html、client.html、robots.txt。\n\n'
+            printf '解压到同一目录即可使用或部署。产物保留 30 天；也可在本次运行的 Artifacts 区域下载。\n'
+          } >> "$GITHUB_STEP_SUMMARY"
