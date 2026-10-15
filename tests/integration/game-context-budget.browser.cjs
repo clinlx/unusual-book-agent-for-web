@@ -38,6 +38,23 @@ const call=(id,name,args)=>({id,type:'function',function:{name,arguments:JSON.st
 const readCalls=()=>[call('write','write_file',{path:'/workspace/proof.txt',content:'已完成写入'}),call('read','read_file',{path:'/workspace/large.txt',limit:120000})];
 const finishCalls=()=>[call('story','append_story',{content:'雨停了，旅程继续。',one_line_summary_of_content:'继续旅程'}),call('end','end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}})];
 
+test('malformed tool arguments recover and show a service warning in play mode',async t=>{
+  const page=await open(t),bodies=[],errors=[];page.on('pageerror',e=>errors.push(e.message));
+  await prepare(page);
+  await page.route('https://**/*',async route=>{
+    const body=route.request().postDataJSON();bodies.push(body);
+    const tool_calls=bodies.length===1?[{id:'bad',type:'function',function:{name:'write_file',arguments:'{"path":"/workspace/bad.txt","content":"unfinished'}}]:finishCalls();
+    await route.fulfill({contentType:'application/json',body:JSON.stringify({choices:[{message:{tool_calls}}]})});
+  });
+  await page.evaluate(()=>GameApp.start());
+  await page.waitForFunction(()=>GameApp.getState().active.status==='waiting');
+  assert.equal(bodies.length,2);
+  assert.equal(bodies[1].messages.find(m=>m.tool_calls?.some(c=>c.id==='bad')).tool_calls.find(c=>c.id==='bad').function.arguments,'{}');
+  assert.match(await page.locator('#history [role="status"]').innerText(),/可能.*模型.*服务/);
+  assert.doesNotMatch(await page.locator('#history [role="status"]').innerText(),/bad.txt|unfinished/);
+  assert.deepEqual(errors,[]);
+});
+
 for(const restored of [false,true])test(restored?'saved oversized rounds resume after reload without changing settings or repeating writes':'oversized tool results automatically recover before the next HTTP request',async t=>{
   const page=await open(t),errors=[],bodies=[];page.on('pageerror',e=>errors.push(e.message));
   await page.route('https://**/*',async route=>{

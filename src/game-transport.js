@@ -3,6 +3,7 @@ const GameTransport=(()=>{
   const sse=typeof module!=='undefined'&&module.exports?require('./sse.js'):SSE;
   const apiUrl=typeof module!=='undefined'&&module.exports?require('./shared/api-url.js'):ApiUrl;
   const outputLimit=typeof module!=='undefined'&&module.exports?require('./shared/output-limit.js'):OutputLimit;
+  const toolArguments=typeof module!=='undefined'&&module.exports?require('./shared/tool-arguments.js'):ToolArguments;
   const core=typeof module!=='undefined'&&module.exports?require('./game-core.js'):GameCore;
   const tiers=new Map();
   const object=x=>!!x&&typeof x==='object'&&!Array.isArray(x);
@@ -75,6 +76,7 @@ const GameTransport=(()=>{
           if(topP!==null)body.top_p=topP;if(frequencyPenalty!==null)body.frequency_penalty=frequencyPenalty;if(presencePenalty!==null)body.presence_penalty=presencePenalty;if(seed!==null)body.seed=seed;
           if(tier===0){if(deepseek){body.thinking={type:effort==='none'?'disabled':'enabled'};if(effort!=='none')body.reasoning_effort=effort==='max'?'max':'high';}else body.reasoning_effort=effort;}
           body=mergeBody(body,customBody(settings));
+          body.messages=toolArguments.project(body.messages);
           outputCap=outputReservation(body);
           assertBudget(settings,body);
           const requestStreams=!!body.stream;

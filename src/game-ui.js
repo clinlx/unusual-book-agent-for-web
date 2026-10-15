@@ -204,6 +204,7 @@ const GameUI = (() => {
     if (e.type === 'story') return `<article class="story ${isPrivateEvent(e)?'private-story':''}"><header class="story-meta">${privacyTag(e)}${esc(typeof GamePresentation!=='undefined'?GamePresentation.metadata(e):'第 '+e.round+' 回合')}</header>${markdown(e.content)}</article>`;
     if (e.type === 'player') return `<article class="player-action ${actionIdentity(e).kind}"><header>${esc(actionIdentity(e).name)}${e.skip?' · 空过':''}${mode === 'debug' ? ' · player_action' : ''}<small class="event-meta">${esc(meta)}</small></header><div>${esc(content).replace(/\n/g,'<br>')}</div></article>`;
     if (e.type === 'note')return `<article class="story note"><header>注释 <small class="event-meta">${esc(meta)}</small></header>${markdown(content)}</article>`;
+    if (e.type === 'warning')return `<article class="error-event" role="status"><header>恢复提示</header><p>${esc(e.content)}</p></article>`;
     if (e.type === 'dice'&&e.secret&&mode!=='debug') return `<div class="secret-dice-notice ${isPrivateEvent(e)?'private-dice':''}" role="status"><span aria-hidden="true">⚄</span> ${privacyTag(e)} [AI 进行了一次暗骰]</div>`;
     if (e.type === 'dice') return diceHTML(e,mode,details,meta);
     if (e.type === 'tool') return `<article class="tool-event"><header><span class="tool-mark">ƒ</span> ${esc(e.name)} <small>${e.success === false ? '失败' : '工具调用'}</small></header>${details('参数',e.args)}${details('结果',e.result)}${e.fileChanges?.length?details('文件修改记录',e.fileChanges):''}</article>`;

@@ -8,6 +8,7 @@ const Agent = (() => {
   const _CardTools = (typeof module !== 'undefined') ? require('./card-tools.js') : CardTools;
   const _ApiUrl = (typeof module !== 'undefined') ? require('../shared/api-url.js') : ApiUrl;
   const _OutputLimit = (typeof module !== 'undefined') ? require('../shared/output-limit.js') : OutputLimit;
+  const _Arguments = (typeof module !== 'undefined') ? require('../shared/tool-arguments.js') : ToolArguments;
   const _FileWriteValidation = (typeof module !== 'undefined') ? require('../shared/file-write-validation.js') : FileWriteValidation;
 
   const WRITE_TOOLS = new Set(['write_file', 'apply_patch', 'delete', 'move', 'copy']);
@@ -353,18 +354,26 @@ const Agent = (() => {
     const requestOnly = [];
     const newMessages = [];
     let hadWrite = false;
+    const warned = new Set(h.warnedToolCallIds || []);
+    const warn = async () => {
+      const ids = msgs.flatMap(m => m.role === 'assistant' ? (m.tool_calls || []).filter(_Arguments.invalid).map(c => c.id) : []).filter(id => !warned.has(id));
+      if (!ids.length) return;
+      ids.forEach(id => warned.add(id));
+      if (h.onWarning) await h.onWarning(_Arguments.NOTICE, ids);
+    };
     // 中止检查点：仅靠 fetch 的 signal 不够——工具循环里可能连续多次调用工具，
     // 每次请求之间也要能停下，否则用户点了中止仍会继续跑完剩余工具。
     const abortErr = () => Object.assign(new Error('已中止'), { name: 'AbortError' });
     const checkAbort = () => { if (h.signal && h.signal.aborted) throw abortErr(); };
     for (let loop = 0; loop < ctx.config.maxToolLoops; loop++) {
       checkAbort();
+      if (_Arguments.hasInvalid(msgs)) await warn();
       if (h.prepareRequest) {
         const prepared = await waitWithAbort(h.prepareRequest(msgs, requestOnly.slice()), h.signal);
         msgs.splice(0, msgs.length, ...prepared);
         checkAbort();
       }
-      const resp = await waitWithAbort(transport(msgs), h.signal);
+      const resp = await waitWithAbort(transport(_Arguments.project(msgs)), h.signal);
       checkAbort();
       const asst = { role: 'assistant', content: resp.content || '' };
       // 思考内容用 API 的规范字段名挂回消息。DeepSeek 思考模式的硬性要求：
@@ -384,16 +393,15 @@ const Agent = (() => {
         if (h.onToolStart) h.onToolStart(tc);
         let out;
         try {
-          const args = JSON.parse(tc.function.arguments || '{}');
-          if (!args || typeof args !== 'object' || Array.isArray(args))
-            throw new Error('参数必须是 JSON 对象');
+          const args = _Arguments.parse(tc.function?.arguments);
           out = executeTool(ctx, tc.function.name, args);
         } catch (e) {
           // 参数串本身就不是合法 JSON（多为超长内容被截断，或转义写坏）。
           // 把长度报给模型：它能据此判断是不是太长了，改用分次写入。
-          const raw = tc.function.arguments || '';
+          const raw = tc.function?.arguments || '';
           out = { isWrite: false, result: '错误: 参数解析失败 (' + e.message + ')，收到 '
-            + raw.length + ' 字符。若因内容过长被截断，请改为分多次调用（先写一部分，再用 apply_patch 续写）。' };
+            + String(raw).length + ' 字符。' + _Arguments.HINT + '本次调用未执行，请重新生成合法参数。若因内容过长被截断，请改为分多次调用（先写一部分，再用 apply_patch 续写）。' };
+          await warn();
         }
         // ask_user 返回 pending（Promise），需等用户作答后才有结果
         if (out.pending) {

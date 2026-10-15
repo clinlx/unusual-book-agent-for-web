@@ -42,6 +42,20 @@ async function manualCompress(page) {
   await page.locator('.overlay .foot .primary').click();
   await page.waitForFunction(() => !__UI_STATE__.running);
 }
+
+test('malformed tool arguments recover with a visible service warning and intact local history',async t=>{
+  const raw='{"path":"/workspace/bad.txt","content":"unfinished';
+  const {page,requests}=await setup(t,(_body,all)=>all.length===1?{tool_calls:[{id:'bad',type:'function',function:{name:'write_file',arguments:raw}}]}:{content:'已恢复'});
+  await page.locator('#chatInput').fill('继续工作');await page.locator('#sendBtn').click();
+  await page.waitForFunction(()=>!__UI_STATE__.running);
+  assert.equal(requests.length,2);
+  const sent=requests[1].messages.find(m=>m.tool_calls);
+  assert.equal(sent.tool_calls[0].function.arguments,'{}');
+  assert.match(await page.locator('.sys-error').innerText(),/可能.*模型.*服务/);
+  const actual=await page.evaluate(()=>__UI_STATE__.sessions.find(s=>s.id===__UI_STATE__.sessionId).messages.find(m=>m.tool_calls).tool_calls[0].function.arguments);
+  assert.equal(actual,raw);
+  assert.equal(await page.evaluate(()=>VFS.resolve(__UI_STATE__.tree,['workspace','bad.txt'])),null);
+});
 async function state(page) {
   return page.evaluate(() => {
     const sess = __UI_STATE__.sessions.find(s => s.id === __UI_STATE__.sessionId);

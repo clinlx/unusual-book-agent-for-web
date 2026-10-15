@@ -2610,6 +2610,11 @@
           // 工具开始执行就先画一张占位卡片：用户能立刻看到「在做什么」，
           // 而不是盯着一个笼统的「处理中」等到结果出来才知道。
           onToolStart: tc => { S.activeTool = tc; renderActiveTool(); },
+          warnedToolCallIds: sess.argumentWarnings || [],
+          onWarning: (message, ids) => {
+            sess.argumentWarnings = [...new Set([...(sess.argumentWarnings || []), ...ids])];
+            return pushSystemError(sess, message);
+          },
           onToolEnd: (tc, res) => {
             S.activeTool = null;
             // 记录本轮读过的 /tmp 文件，用于刷新其 TTL

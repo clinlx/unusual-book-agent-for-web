@@ -5,6 +5,7 @@ const GameCore = (() => {
   const data = typeof module !== 'undefined' && module.exports ? require('./game-data.js') : GameData;
   const history = typeof module !== 'undefined' && module.exports ? require('./game-history.js') : GameHistory;
   const recovery = typeof module !== 'undefined' && module.exports ? require('./game-context-recovery.js') : GameContextRecovery;
+  const toolArguments = typeof module !== 'undefined' && module.exports ? require('./shared/tool-arguments.js') : ToolArguments;
   const inputs = typeof module !== 'undefined' && module.exports ? require('./game-input-history.js') : GameInputs;
   const slots = typeof module !== 'undefined' && module.exports ? require('./game-slots.js') : GameSlots;
   const worldTriggers = typeof module !== 'undefined' && module.exports ? require('./game-world-triggers.js') : GameWorldTriggers;
@@ -237,7 +238,7 @@ const GameCore = (() => {
     if(e.type==='dice')return diceEventAccess(s,e,id).visible;
     if(e.type==='player'&&e.actorId!==id&&e.privateContent&&!String(e.content||'').trim()&&!e.skip)return false;
     if(e.audience!==undefined&&e.audience!=='public'&&(!Array.isArray(e.audience)||!e.audience.includes(id)))return false;
-    return !e.secret&&['player','story','round_end','note'].includes(e.type);
+    return !e.secret&&(['player','story','round_end','note'].includes(e.type)||e.type==='warning'&&e.code==='INVALID_TOOL_ARGUMENTS');
   }).map(e=>{const x=copy(e),id=s.actorId||s.playerPath?.split('/').pop().replace(/^Player-/,'');if(x.actorId!==id){delete x.privateContent;delete x.disguise;}
     if(x.type==='dice'){const {visible,...access}=diceEventAccess(s,e,id);Object.assign(x,access);if(x.secret){delete x.data;delete x.diceArgs;delete x.content;delete x.description;delete x.relatedAttr;}}return x;
   });
@@ -620,7 +621,7 @@ const GameCore = (() => {
       });const sent=[...head,...msgs];
       if(triggerMessage){const message={...triggerMessage};protectedMessages.add(message);sent.push(message);}
       if(opts.transformContext)for(const m of sent){m.content=opts.transformContext(m.content);if(m.tool_calls)for(const tc of m.tool_calls)tc.function.arguments=opts.transformContext(tc.function.arguments);}
-      return sent;
+      return toolArguments.project(sent);
     }
     let sent=build();
     if(estimate(sent)>cap){compact=true;sent=build();}
@@ -671,6 +672,16 @@ const GameCore = (() => {
     const abort=()=>{if(opts.signal?.aborted)throw Object.assign(Error('已中止本回合'),{name:'AbortError'});};
     const step=async()=>{if(opts.onStep)await opts.onStep(s);};
     s.status='running';s.error=null;
+    const warnedArguments=new Set(s.events.filter(e=>e.code==='INVALID_TOOL_ARGUMENTS').flatMap(e=>e.callIds||[]));
+    const warnArguments=()=>{
+      const ids=s.messages.flatMap(m=>m.role==='assistant'?(m.tool_calls||[]).filter(toolArguments.invalid).map(c=>c.id):[]).filter(id=>!warnedArguments.has(id));
+      if(!ids.length)return;
+      ids.forEach(id=>warnedArguments.add(id));
+      const previous=s.events.find(e=>e.round===s.activeRound.number&&e.code==='INVALID_TOOL_ARGUMENTS');
+      if(previous)previous.callIds.push(...ids);
+      else emit(s,'warning',{code:'INVALID_TOOL_ARGUMENTS',callIds:ids,content:toolArguments.NOTICE});
+    };
+    if(toolArguments.hasInvalid(s.messages))warnArguments();
     async function completeBatch(message){
       let storyInBatch=false;
       for(const tc of message.tool_calls||[]){
@@ -681,7 +692,7 @@ const GameCore = (() => {
         }
         abort();let a,out;
         try{
-          a=JSON.parse(tc.function.arguments||'{}');
+          a=toolArguments.parse(tc.function?.arguments);
           if(tc.function.name==='roll_dice'&&opts.manualDice===true&&dicePlayerRelated(s,a)&&!diceSecret(a)){
             const identity=diceIdentity(s,a),request=diceRequest(a);
             if(request.specs.some(spec=>spec.n)){
@@ -693,7 +704,13 @@ const GameCore = (() => {
           }
           out=execute(s,tc.function.name,a,tc.id,opts);
         }
-        catch(e){const rawError=e.message||String(e),suggestion=toolFailureSuggestion(tc.function.name,a,rawError);out={ok:false,error:'工具参数解析失败：'+rawError,raw_error:rawError,...(suggestion?{suggestion}:{})};emit(s,'tool',{name:tc.function.name,args:a??tc.function.arguments,result:{error:out.error,raw_error:rawError,...(suggestion?{suggestion}:{})},success:false,callId:tc.id});}
+        catch(e){
+          const rawError=e.message||String(e),name=tc.function?.name,suggestion=toolFailureSuggestion(name,a,rawError);
+          const invalid=e.code==='INVALID_TOOL_ARGUMENTS';
+          out={ok:false,error:'工具参数解析失败：'+rawError+(invalid?'。'+toolArguments.HINT+'本次调用未执行，请重新生成合法参数。':''),raw_error:rawError,...(suggestion?{suggestion}:{})};
+          if(invalid)warnArguments();
+          emit(s,'tool',{name,args:a??tc.function?.arguments,result:{error:out.error,raw_error:rawError,...(suggestion?{suggestion}:{})},success:false,callId:tc.id});
+        }
         if(out.ok&&tc.function.name==='append_story')storyInBatch=true;
         s.messages.push({role:'tool',tool_call_id:tc.id,content:JSON.stringify(out),round:s.activeRound.number});await step();
         if(message.origin==='preset-opening'&&!out.ok)throw Error('预设开场执行失败：'+out.error);

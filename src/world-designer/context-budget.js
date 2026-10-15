@@ -2,6 +2,7 @@
 const ContextBudget = (() => {
   const T = typeof module !== 'undefined' ? require('./tokens.js') : Tokens;
   const O = typeof module !== 'undefined' ? require('../shared/output-limit.js') : OutputLimit;
+  const A = typeof module !== 'undefined' ? require('../shared/tool-arguments.js') : ToolArguments;
   const HINT = '手动点击压缩按钮或者在设置中切换上下文处理方式';
   const PRESETS = Object.freeze([128, 256, 512, 1024]);
   function mode(settings) {
@@ -17,10 +18,10 @@ const ContextBudget = (() => {
   const requestLimit = (settings, used) => Math.min(limit(settings, used), Number(settings.maxContextK) * 1000 - outputTokens(settings));
   const local = new Set(['attachments', 'change', 'displayOnly', 'displayContent', 'stashPath', 'fullLength', 'at', 'hint', 'count', 'summary', 'msgId', 'goalPush', 'goalSet', 'goalText', 'reasoning', 'validationReport']);
   function project(messages) {
-    return T.pruneReasoning(T.sanitizeMessages(messages.filter(m => !m.displayOnly && m.role !== 'system-error').map(m => {
+    return A.project(T.pruneReasoning(T.sanitizeMessages(messages.filter(m => !m.displayOnly && m.role !== 'system-error').map(m => {
       if (m.role === 'compressed') return { role: 'assistant', content: '[早前对话摘要]\n' + m.summary };
       return Object.fromEntries(Object.entries(m).filter(([k]) => !local.has(k)));
-    })));
+    }))));
   }
   function cost(messages, tools = []) {
     const clean = project(messages);
