@@ -1,7 +1,7 @@
 'use strict';
 const GameApp=(()=>{
   const defaults={baseUrl:'https://api.deepseek.com/v1',apiKey:'',model:'deepseek-flash',stream:true,temperature:0.7,topP:'',frequencyPenalty:'',presencePenalty:'',seed:'',customRequestBody:'',maxContextK:240,maxOutputTokens:16384,
-    reasoningEffort:'high',maxToolLoops:60,httpTimeoutSeconds:180,maxRetries:2,worldListSource:'',bridgeUrl:'wss://mc.birdry.cn:8443/',manualDice:false,autoAdvanceUnconscious:true,reverseSendNewline:false,promptOverrides:{}};
+    reasoningEffort:'high',maxToolLoops:60,httpTimeoutSeconds:180,maxRetries:2,worldListSource:'',bridgeUrl:'wss://mc.birdry.cn:8443/',manualDice:false,openingPreload:true,autoAdvanceUnconscious:true,reverseSendNewline:false,promptOverrides:{}};
   const S={saves:[],active:null,home:false,switching:false,settings:{...defaults},mode:'play',running:false,importing:null,stream:{content:'',reasoning:'',tools:[],story:'',storyPublished:0},error:null,storageWarning:null,usage:null};
   const db=GameStore.create();const listeners=new Set();let controller=null,initialized=false,storage=null,lease=null;
   let hostSession=null,syncHost=null,roomTransport=null,transportStop=null,publishedSave=null,localInputOwner='',bridgeSession=null,bridgeGeneration=0,invitationQueue=Promise.resolve(),savedRoom=null,bridgeClosing=Promise.resolve();
@@ -385,7 +385,7 @@ const GameApp=(()=>{
       
       const latest=await db.getSave(s.id);if(latest&&latest.updatedAt>s.updatedAt)throw Error('存档已在其他页面更新，请重新打开后继续');
       if(kind!=='resume'&&pendingBatch(s))throw Error('上一轮尚有工具记录需要恢复，请先继续本回合');
-      if(kind!=='resume')GameCore.beginRound(s,text,kind==='start',Prompts.roundPrompt(kind==='start',overrides),{skip:kind==='skip',openPlayerSlots:S.openPlayerSlots,slotPrompts:Prompts.slotControl(overrides),presetFollowup:Prompts.flows(overrides).flow_preset_followup,...roundOptions});
+      if(kind!=='resume')GameCore.beginRound(s,text,kind==='start',Prompts.roundPrompt(kind==='start',overrides),{skip:kind==='skip',openingPreload:settings.openingPreload!==false,openPlayerSlots:S.openPlayerSlots,slotPrompts:Prompts.slotControl(overrides),presetFollowup:Prompts.flows(overrides).flow_preset_followup,...roundOptions});
       else if(!s.activeRound)throw Error('没有可继续的回合');
       if(!s.activeRound.promptSnapshot||Object.keys(s.activeRound.promptSnapshot.overrides||{}).length)s.activeRound.promptSnapshot={overrides,system:system(overrides)};
       if(!Number.isFinite(s.activeRound.requestCount))s.activeRound.requestCount=s.messages.filter(m=>m.round===s.activeRound.number&&m.role==='assistant').length;
@@ -407,7 +407,7 @@ const GameApp=(()=>{
           if(currentRequest)currentRequest.response.tools=structuredClone(t);emit();}});
       const transport=async messages=>{if(!settings.apiKey.trim())throw Error('请先在设置中填写 API Key');if(roundOptions.isCurrent&&!roundOptions.isCurrent())throw Error('回合已失效');currentRequest=null;clearStream();emit();try{const response=await raw(messages);if(roundOptions.isCurrent&&!roundOptions.isCurrent())throw Error('回合已失效');if(currentRequest){currentRequest.status='completed';currentRequest.response=structuredClone(response);}return response;}catch(e){if(currentRequest){currentRequest.status='interrupted';currentRequest.error=e.message;}throw e;}};
       const flows=Prompts.flows(snapshot.overrides);
-      await GameCore.run(s,transport,{signal:controller.signal,system:snapshot.system,manualDice:settings.manualDice===true,
+      await GameCore.run(s,transport,{signal:controller.signal,system:snapshot.system,manualDice:settings.manualDice===true,openingPreload:settings.openingPreload!==false,
         cap:GameTransport.inputBudget(settings,defs),maxToolLoops:settings.maxToolLoops,multiplayerPrompts:Prompts.multiplayer(snapshot.overrides),
         
         
@@ -463,7 +463,7 @@ const GameApp=(()=>{
     if(next.customRequestBody){let extra;try{extra=JSON.parse(next.customRequestBody);}catch(e){throw Error('自定义请求包体不是有效 JSON：'+e.message);}if(!extra||typeof extra!=='object'||Array.isArray(extra))throw Error('自定义请求包体必须是 JSON 对象');}
     if(next.worldListSource)GameCatalog.source(next.worldListSource);next.bridgeUrl=BridgeTransport.validateServerUrl(next.bridgeUrl);
     if(!['none','low','high','xhigh','max'].includes(next.reasoningEffort))throw Error('思考强度无效');
-    next.stream=!!next.stream;next.manualDice=!!next.manualDice;next.autoAdvanceUnconscious=next.autoAdvanceUnconscious!==false;await db.putSettings(next);S.settings=next;emit();hostSession?.checkAutomatic().catch(()=>{});
+    next.stream=!!next.stream;next.manualDice=!!next.manualDice;next.openingPreload=next.openingPreload!==false;next.autoAdvanceUnconscious=next.autoAdvanceUnconscious!==false;await db.putSettings(next);S.settings=next;emit();hostSession?.checkAutomatic().catch(()=>{});
   }
   async function resolveManualDice(rolls){
     idle();const s=active();peerCheck(s);GameCore.resolveManualDice(s,rolls);await persist();emit();return s;

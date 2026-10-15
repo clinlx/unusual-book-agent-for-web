@@ -5,7 +5,7 @@ test('preset story starts without API credentials, survives reload and defers in
  const dist=path.resolve(__dirname,'../../dist'),server=http.createServer((req,res)=>{const file=path.resolve(dist,'.'+req.url.split('?')[0]);if(!file.startsWith(dist+path.sep))return res.writeHead(404).end();fs.readFile(file,(error,data)=>{if(error)return res.writeHead(404).end();res.setHeader('Content-Type','text/html; charset=utf-8');res.end(data);});});
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));let browser;
  try{
-  browser=await chromium.launch({channel:'msedge',headless:true});const page=await browser.newPage(),bodies=[],errors=[];page.on('pageerror',error=>errors.push(error.message));page.setDefaultTimeout(8000);
+  browser=await chromium.launch({channel:process.env.BROWSER_CHANNEL||'msedge',headless:true});const page=await browser.newPage(),bodies=[],errors=[];page.on('pageerror',error=>errors.push(error.message));page.setDefaultTimeout(8000);
   await page.route('**/modules.json',r=>r.fulfill({json:[]}));await page.route('**/files/**',r=>r.abort());
   await page.route('https://**/*',async route=>{
    if(!route.request().url().startsWith('https://preset.invalid/'))return route.abort();bodies.push(route.request().postDataJSON());
@@ -24,7 +24,7 @@ test('preset story starts without API credentials, survives reload and defers in
   await page.evaluate(()=>GameApp.updateSettings({baseUrl:'https://preset.invalid/v1',apiKey:'test',stream:false}));
   await page.evaluate(()=>GameApp.send('调查站台'));await page.waitForFunction(()=>GameApp.getState().active?.round===2&&!GameApp.getState().running);
   await page.locator('#history').getByText('你们沿着站台向前走。',{exact:true}).waitFor();assert.equal(bodies.length,1);const messages=bodies[0].messages;
-  assert.equal(messages.filter(m=>m.role==='system').length,1);assert.ok(!messages[0].content.includes('秘密测试内部开场'));assert.ok(messages.some(m=>m.role==='user'&&m.content.includes('秘密测试内部开场')));assert.ok(messages.some(m=>m.content.includes('擅长医学')));assert.ok(messages.some(m=>m.content.includes('不要重复发布')));assert.ok(messages.some(m=>m.role==='tool'&&m.content.includes('测试额外规则')));
+  assert.equal(messages.filter(m=>m.role==='system').length,1);assert.ok(!messages[0].content.includes('秘密测试内部开场'));assert.ok(messages.some(m=>m.role==='user'&&m.content.includes('秘密测试内部开场')));assert.ok(messages.some(m=>m.content.includes('擅长医学')));assert.ok(messages.some(m=>m.content.includes('不要重复发布')));assert.ok(messages.some(m=>m.role==='user'&&m.content.startsWith('[开局预读资料]\n')&&m.content.includes('测试额外规则')));assert.ok(messages.some(m=>m.role==='user'&&m.content.startsWith('[预设开场执行记录]\n')&&m.content.includes('雨停了')));assert.ok(!messages.some(m=>m.tool_calls||m.role==='tool'));
   assert.equal(await page.locator('#history').getByText('雨停了，站台上只剩你们。',{exact:true}).count(),1);assert.doesNotMatch(await page.locator('#history').innerText(),/秘密测试内部开场|模组秘密背景|测试额外规则/);assert.deepEqual(errors,[]);
  }finally{await browser?.close();await new Promise(resolve=>server.close(resolve));}
 });

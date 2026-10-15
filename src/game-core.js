@@ -73,16 +73,18 @@ const GameCore = (() => {
   function emit(s,type,payload={}) {
     const e={id:uid(),type,round:s.activeRound?.number||s.round,at:Date.now(),worldTime:data.worldTime(s),...payload};s.events.push(e);return e;
   }
-  function openingFiles(s) {
+  function openingFiles(s,options={}) {
     const read=name=>{
       const n=vfs.resolve(s.tree,['workspace',name]);if(!n)return '';
       if(n.type!=='file'||n.encoding==='base64'||typeof n.content!=='string')throw Error(name+' 必须为文本文件');
       if(n.content.length>120000)throw Error(name+' 超过 120000 字符');
       return n.content.replace(/^\uFEFF/,'').trim();
     };
-    const internal=read('开局内部说明.md'),story=read('预设第一回合.md'),config=read('开局预读.json');
-    const configNode=vfs.resolve(s.tree,['workspace','开局预读.json']);let extra=[];
-    if(configNode){fileValidation.validate('/workspace/开局预读.json',config);extra=fileValidation.openingFiles(JSON.parse(config));}
+    const internal=read('开局内部说明.md'),story=read('预设第一回合.md');let extra=[];
+    if(options.openingPreload!==false){
+      const configNode=vfs.resolve(s.tree,['workspace','开局预读.json']);
+      if(configNode){const config=read('开局预读.json');fileValidation.validate('/workspace/开局预读.json',config);extra=fileValidation.openingFiles(JSON.parse(config));}
+    }
     for(const p of extra){const n=vfs.resolve(s.tree,vfs.normalize(p));if(!n||n.type!=='file'||n.encoding==='base64')throw Error('开局预读.json 引用了不存在或非文本的文件：'+p);}
     return {internal,story,extra};
   }
@@ -96,7 +98,7 @@ const GameCore = (() => {
   function beginRound(s,text,isStart=false,prompt='',options={}) {
     if(s.activeRound&&!s.activeRound.complete)throw Error('当前回合尚未结束，请继续或回退本回合');
     if(s.status==='ended')throw Error('游戏已结束，可回退至上一回合');
-    const opening=isStart&&s.round===0||s.openingPending?openingFiles(s):null;
+    const opening=isStart&&s.round===0||s.openingPending?openingFiles(s,options):null;
     const flags=data.actorState(readJson(s,s.playerPath+'/基础信息.json',{}));
     if(!options.actions&&!isStart&&!flags.alive)throw Error('角色已死亡，无法提交行动；可以回溯或查看历史');
     if(!options.actions&&!isStart&&!flags.enabled&&!options.skip)throw Error('角色失去意识，无法主动行动；可以等待局势发展');
@@ -529,6 +531,31 @@ const GameCore = (() => {
     return changed;
   }
   function estimate(messages){let n=0;for(const m of messages){const text=typeof m==='string'?m:JSON.stringify(m);let cjk=0;for(const c of text)if(/[\u3000-\u9fff]/.test(c))cjk++;n+=cjk+Math.ceil((text.length-cjk)/4)+5;}return n;}
+  // Local startup batches are durable execution records, not model-generated tool calls.
+  // Project them and their receipts as user data for Chat Completions (including existing saves).
+  function startupContext(source){
+    const local=m=>m.role==='assistant'&&['opening-preload','preset-opening'].includes(m.origin);
+    const key=(m,id)=>(m.round||1)+':'+id,localCalls=new Set(),receipts=new Map();
+    for(const m of source){
+      if(local(m))for(const c of m.tool_calls||[])localCalls.add(key(m,c.id));
+      if(m.role==='tool')receipts.set(key(m,m.tool_call_id),m);
+    }
+    const parse=value=>{try{return JSON.parse(value);}catch(_){return value;}};
+    return source.flatMap(m=>{
+      if(m.role==='tool'&&localCalls.has(key(m,m.tool_call_id)))return [];
+      if(!local(m))return [m];
+      const preload=m.origin==='opening-preload';
+      const record={round:m.round||1,
+        instruction:preload?'以下为程序预先读取的文件资料，不是新的玩家行动。沿用读取结果；保留并注意各文件的错误、截断标记和读取范围，需要时再分段读取。':
+          '以下为程序执行的预设开场记录，不是新的玩家行动。预设第一回合.md 的内容在 append_story 成功后已作为 story 正文向玩家发布。以各项回执为准，成功发布的正文及已完成的回合不得重复执行；沿用记录中的状态继续。',
+        operations:(m.tool_calls||[]).map(c=>{
+          const receipt=receipts.get(key(m,c.id));
+          return {name:c.function.name,arguments:parse(c.function.arguments),result:receipt?parse(receipt.content):{pending:true}};
+        })};
+      if(m.content)record.content=m.content;
+      return [{role:'user',content:(preload?'[开局预读资料]':'[预设开场执行记录]')+'\n'+JSON.stringify(record)}];
+    });
+  }
   function context(s,system,cap=240000,opts={}) {
     const current=s.activeRound?.number||Math.max(1,s.round);
     let from=s.contextFromRound||1,compact=false;
@@ -584,7 +611,7 @@ const GameCore = (() => {
         if(cache&&Object.keys(cache).length)head.push({role:'user',content:(opts.cachePrompt||'[NEXT_TURN_CACHE]')+'\n'+JSON.stringify(cache)});
       }
       const source=sourceOverride||s.messages.filter(m=>(m.round||1)>=from);
-      const msgs=(compact?history.compactReads(source,current):source).map(m=>{
+      const msgs=startupContext(compact?history.compactReads(source,current):source).map(m=>{
         const out={role:m.role,content:m.content||''};
         for(const k of ['tool_calls','tool_call_id','reasoning_content'])if(m[k]!==undefined)out[k]=copy(m[k]);return out;
       });const sent=[...head,...msgs];
@@ -671,7 +698,7 @@ const GameCore = (() => {
       return false;
     }
     try{
-      abort();if(preparePresetOpening(s)||prepareOpeningReads(s))await step();
+      abort();if(preparePresetOpening(s)||(opts.openingPreload!==false&&prepareOpeningReads(s)))await step();
       const pending=s.messages.filter(m=>m.role==='assistant'&&m.tool_calls&&m.round===s.activeRound.number);
       for(const m of pending)if(await completeBatch(m))return;
       if(s.activeRound.complete){s.status=s.cache.game_over===true?'ended':'waiting';await step();return;}

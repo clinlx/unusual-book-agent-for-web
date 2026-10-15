@@ -21,6 +21,17 @@ test('preset opening finishes round one through real tools without an AI request
 test('internal notes and extra reads work independently without skipping AI; old opening samples do not skip',async()=>{
  for(const options of ['note','reads','old']){const s=setup();if(options==='note')write(s,'开局内部说明.md','秘密');if(options==='reads'){write(s,'世界规则.md','规则');write(s,'开局预读.json',JSON.stringify({version:1,files:['世界规则.md','/workspace/世界规则.md','模组.md']}));}if(options==='old')write(s,'开场原文.txt','旧开场');Core.beginRound(s,'',true,'开局');await assert.rejects(Core.run(s,stop),/test-stop/);assert.equal(s.round,0);assert.equal(readPaths(s).filter(p=>p.endsWith('世界规则.md')).length,options==='reads'?1:0);}
 });
+
+test('disabled preload keeps both markdown files and tells AI the preset is already story text',async()=>{
+ const s=setup();write(s,'预设第一回合.md','已发布的预设正文');write(s,'开局内部说明.md','隐藏的内部说明');write(s,'开局预读.json','{');
+ Core.beginRound(s,'',true,'初始化流程',{openingPreload:false});await Core.run(s,()=>assert.fail('preset must not request AI'),{openingPreload:false});
+ assert.equal(s.round,1);assert.equal(s.events.filter(e=>e.type==='story').length,1);
+ Core.beginRound(s,'调查',false,'推进流程',{openingPreload:false});let sent;
+ await assert.rejects(Core.run(s,async messages=>{sent=messages;return stop();},{openingPreload:false}),/test-stop/);
+ assert.equal(readPaths(s).length,0);assert.ok(sent.some(m=>m.content==='[开局内部说明]\n隐藏的内部说明'));
+ const record=sent.find(m=>m.content.startsWith('[预设开场执行记录]\n'));assert.equal(record.role,'user');assert.match(record.content,/已作为 story 正文向玩家发布/);assert.match(record.content,/已发布的预设正文/);
+ assert.ok(!sent.some(m=>m.tool_calls||m.role==='tool'||m.content.startsWith('[开局预读资料]')));
+});
 test('invalid opening configuration fails before changing save state',()=>{
  for(const value of ['{','{"version":2,"files":[]}','{"version":1,"files":["../secret"]}','{"version":1,"files":["https://example.com/a"]}','{"version":1,"files":["/.reference/a"]}','{"version":1,"files":[3]}']){const s=setup();write(s,'开局预读.json',value);assert.throws(()=>Core.beginRound(s,'',true,'开局'),/开局预读/);assert.equal(s.status,'new');assert.equal(s.snapshots.length,0);}
 });
@@ -39,7 +50,10 @@ test('preset preparation survives full save export/import and extra reads use cu
  Core.beginRound(s,'',true,'初始化要求');await Core.run(s,()=>assert.fail('AI'));
  const zip=Import.exportSave(s),restored=await Import.importSave({name:'save.zip',arrayBuffer:async()=>zip.arrayBuffer()});
  assert.equal(restored.openingPending.prompt,'初始化要求');write(restored,'规则.md','新规则');Core.beginRound(restored,'行动',false,'推进');let sent;
- await assert.rejects(Core.run(restored,async m=>{sent=m;return stop();}),/test-stop/);assert.ok(sent.some(m=>m.role==='tool'&&m.content.includes('新规则')));assert.ok(!sent.some(m=>m.role==='tool'&&m.content.includes('旧规则')));
+ await assert.rejects(Core.run(restored,async m=>{sent=m;return stop();}),/test-stop/);assert.ok(sent.some(m=>m.role==='user'&&m.content.startsWith('[开局预读资料]\n')&&m.content.includes('新规则')));assert.ok(!sent.some(m=>m.content.includes('旧规则')));
+ const preset=sent.find(m=>m.content.startsWith('[预设开场执行记录]\n'));assert.equal(preset.role,'user');
+ const record=JSON.parse(preset.content.split('\n').slice(1).join('\n'));assert.equal(record.operations[0].arguments.content,'公开开场');assert.equal(record.operations[0].result.ok,true);assert.equal(record.operations[1].arguments.NEXT_TURN_CACHE.Story_Phase,'游戏前准备');
+ assert.ok(!sent.some(m=>m.tool_calls||m.role==='tool'));
 });
 test('failed preset tool can be repaired and resumed without requesting AI or duplicating story',async()=>{
  const s=setup();write(s,'预设第一回合.md','公开开场');write(s,'AIPC-p2/基础信息.json','{');Core.beginRound(s,'',true,'准备');

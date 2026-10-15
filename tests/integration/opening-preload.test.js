@@ -19,7 +19,9 @@ test('opening preload supplies real bounded tool results before the first model 
  const paths=JSON.parse(calls(s)[0].function.arguments).paths;
  assert.equal(paths.length,7);assert.ok(paths.includes('/workspace/模组.md'));assert.ok(!paths.some(p=>/DISABLE|故事.txt/.test(p)));
  assert.equal(results(s).find(r=>r.path==='/workspace/模组.md').content,'模组开局信息');
- const assistant=sent.find(m=>m.tool_calls?.some(c=>c.id===calls(s)[0].id));assert.ok(assistant);assert.ok(sent.some(m=>m.role==='tool'&&m.tool_call_id===calls(s)[0].id));
+ const preload=sent.find(m=>m.content.startsWith('[开局预读资料]\n'));assert.equal(preload.role,'user');
+ const record=JSON.parse(preload.content.split('\n').slice(1).join('\n'));assert.deepEqual(record.operations[0].arguments,JSON.parse(calls(s)[0].function.arguments));assert.deepEqual(record.operations[0].result,JSON.parse(s.messages.find(m=>m.tool_call_id===calls(s)[0].id).content));
+ assert.ok(!sent.some(m=>m.tool_calls||m.role==='tool'));
  const profile='/workspace/AIPC-p3/基础信息.json';assert.equal(Core.execute(s,'apply_patch',{path:profile,old_str:'10',new_str:'11'}).ok,true);
  assert.equal(s.events.filter(e=>['story','player'].includes(e.type)).length,0);
  const count=s.messages.length;await assert.rejects(Core.run(s,stop),/test-stop/);assert.equal(s.messages.length,count,'resume must not append another preload');assert.equal(calls(s).length,1);
@@ -36,9 +38,23 @@ test('preload falls back to story, preserves per-file errors, and leaves large f
  Core.beginRound(s,'',true,'开局');await assert.rejects(Core.run(s,stop),/test-stop/);
  const all=results(s),story=all.find(r=>r.path==='/workspace/故事.txt');assert.equal(story.truncated,true);assert.equal(story.totalLength,100000);assert.ok(all.reduce((n,r)=>n+(r.content?.length||0),0)<=64000);assert.ok(all.find(r=>r.path.endsWith('Player-p2/背包.json')).error);
  assert.ok(all.find(r=>r.path.endsWith('AIPC-p3/基础信息.json')).content);
+ const message=Core.context(s,'').find(m=>m.content.startsWith('[开局预读资料]\n')),record=JSON.parse(message.content.split('\n').slice(1).join('\n'));
+ assert.deepEqual(record.operations[0].result.result,all);
 });
 test('ordinary rounds and already-running opening sessions do not receive a new preload',async()=>{
  for(const kind of ['ordinary','existing']){const s=setup();Core.beginRound(s,'行动',kind==='existing','流程');if(kind==='existing')s.messages.push({role:'assistant',content:'已经开始处理',round:1});await assert.rejects(Core.run(s,stop),/test-stop/);assert.equal(calls(s).length,0);}
+});
+
+test('disabling preload skips automatic reads and ignores opening read configuration',async()=>{
+ for(const config of ['{','{"version":1,"files":["missing.md"]}']){
+  const s=setup();VFS.writeFile(s.tree,'/workspace/开局预读.json',config);VFS.writeFile(s.tree,'/workspace/开局内部说明.md','仍然生效的内部说明');
+  Core.beginRound(s,'',true,'开局',{openingPreload:false});let sent;
+  await assert.rejects(Core.run(s,async messages=>{sent=messages;return stop();},{openingPreload:false}),/test-stop/);
+  assert.equal(calls(s).length,0);assert.equal(results(s).length,0);assert.deepEqual(s.activeRound.openingExtraReads,[]);
+  assert.ok(sent.some(m=>m.role==='user'&&m.content==='[开局内部说明]\n仍然生效的内部说明'));
+  assert.ok(!sent.some(m=>m.content.startsWith('[开局预读资料]')));
+  assert.equal(Core.execute(s,'write_file',{path:'/workspace/Player-pc/基础信息.json',content:'{}'}).ok,false,'disabled preload must not authorize writes');
+ }
 });
 
 
@@ -54,4 +70,39 @@ test('rollback to a fresh save preloads the current files again without keeping 
  const before=calls(s)[0].id;Core.rollback(s);assert.equal(calls(s).length,0);
  VFS.writeFile(s.tree,'/workspace/模组.md','修订后的模组');Core.beginRound(s,'',true,'开局');await assert.rejects(Core.run(s,stop),/test-stop/);
  assert.notEqual(calls(s)[0].id,before);assert.equal(results(s).find(r=>r.path==='/workspace/模组.md').content,'修订后的模组');
+});
+
+test('restored startup records project without mutating history and preserve model tool reasoning',async()=>{
+ const s=setup();Core.beginRound(s,'',true,'开局');await assert.rejects(Core.run(s,stop),/test-stop/);
+ const restored=JSON.parse(JSON.stringify(s)),localId=calls(restored)[0].id;
+ // Providers can reuse a local call ID in a later round; only the local receipt is projected.
+ restored.messages.push({role:'assistant',content:'检查文件',round:2,reasoning_content:'模型真实思考',tool_calls:[{id:localId,type:'function',function:{name:'read_file',arguments:'{"path":"/workspace/模组.md"}'}}]},
+  {role:'tool',round:2,tool_call_id:localId,content:'{"ok":true,"result":{"content":"真实调用回执"}}'});
+ const before=structuredClone(restored),sent=Core.context(restored,'固定规则');
+ assert.deepEqual(restored,before);assert.deepEqual(Core.context(restored,'固定规则'),sent);
+ assert.equal(sent.filter(m=>m.tool_calls).length,1);assert.equal(sent.find(m=>m.tool_calls).reasoning_content,'模型真实思考');
+ assert.equal(sent.filter(m=>m.role==='tool').length,1);assert.match(sent.find(m=>m.role==='tool').content,/真实调用回执/);
+});
+
+test('DeepSeek-shaped streaming and non-streaming requests accept preload data and replay real reasoning',async()=>{
+ const Transport=require('../../src/game-transport');
+ for(const stream of [false,true]){
+  const s=setup();Core.beginRound(s,'',true,'开局');let requests=0;
+  const tool=(id,name,args)=>({id,type:'function',function:{name,arguments:JSON.stringify(args)}});
+  const transport=Transport.create({baseUrl:'https://api.deepseek.com',model:'deepseek-reasoner',stream,reasoningEffort:'high'},[{type:'function',function:{name:'read_file'}}],{
+   fetch:async(_url,init)=>{
+    const body=JSON.parse(init.body);requests++;assert.equal(body.thinking.type,'enabled');
+    assert.ok(body.messages.some(m=>m.role==='user'&&m.content.startsWith('[开局预读资料]\n')));
+    for(const m of body.messages.filter(m=>m.tool_calls))assert.equal(m.reasoning_content,'保留模型思考');
+    if(requests===1)assert.ok(!body.messages.some(m=>m.tool_calls||m.role==='tool'));
+    else {assert.equal(requests,2);assert.equal(body.messages.find(m=>m.role==='tool').tool_call_id,'model-read');}
+    const message={content:'',reasoning_content:'保留模型思考',tool_calls:requests===1?[tool('model-read','read_file',{path:'/workspace/模组.md'})]:[
+     tool('story','append_story',{content:'开场正文',one_line_summary_of_content:'开场'}),tool('end','end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}})]};
+    return stream?new Response('data: '+JSON.stringify({choices:[{delta:{...message,tool_calls:message.tool_calls.map((c,index)=>({...c,index}))},finish_reason:'tool_calls'}]})+'\n\ndata: [DONE]\n\n'):
+     new Response(JSON.stringify({choices:[{message,finish_reason:'tool_calls'}]}));
+   }
+  });
+  await Core.run(s,transport);assert.equal(requests,2);assert.equal(s.status,'waiting');
+  assert.equal(s.events.filter(e=>e.type==='story').length,1);
+ }
 });
