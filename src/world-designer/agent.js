@@ -7,6 +7,7 @@ const Agent = (() => {
   const _BuilderTools = (typeof module !== 'undefined') ? require('./builder-tools.js') : BuilderTools;
   const _CardTools = (typeof module !== 'undefined') ? require('./card-tools.js') : CardTools;
   const _ApiUrl = (typeof module !== 'undefined') ? require('../shared/api-url.js') : ApiUrl;
+  const _OutputLimit = (typeof module !== 'undefined') ? require('../shared/output-limit.js') : OutputLimit;
   const _FileWriteValidation = (typeof module !== 'undefined') ? require('../shared/file-write-validation.js') : FileWriteValidation;
 
   const WRITE_TOOLS = new Set(['write_file', 'apply_patch', 'delete', 'move', 'copy']);
@@ -473,6 +474,7 @@ const Agent = (() => {
       const base = _ApiUrl.root(settings.baseUrl);
       const tierKey = base + '|' + settings.model;
       let tier = _thinkTiers.get(tierKey) || 0;
+      const outputLimit = _Budget.outputTokens(settings);
       let resp;
       for (;;) {
         const body = {
@@ -483,7 +485,7 @@ const Agent = (() => {
         };
         applyThinkingFields(body, settings.reasoningEffort, tier);
         if (toolDefs && toolDefs.length) body.tools = toolDefs; // 空 tools（压缩场景）不设该字段
-        if (settings.maxOutputTokens) body.max_tokens = settings.maxOutputTokens;
+        body.max_tokens = outputLimit;
         const cap = Number(settings.maxContextK) * 1000;
         if (cap > 0) _Budget.fitConfigured(body.messages, settings, toolDefs || []);
         const imageCount = body.messages.reduce((n, m) => n + (Array.isArray(m.content)
@@ -509,12 +511,14 @@ const Agent = (() => {
       _thinkTiers.set(tierKey, tier);
       if (!settings.stream) {
         const json = await waitWithAbort(resp.json(), callbacks && callbacks.signal);
+        _OutputLimit.assertComplete(json.choices?.[0]?.finish_reason, json.usage, outputLimit);
         const m = json.choices[0].message;
         // 非流式：思考与正文在同一条 message 里一并返回
         return { content: m.content || '', reasoning: _SSE.readReasoning(m), tool_calls: m.tool_calls || [] };
       }
       const parser = _SSE.createParser();
       const acc = _SSE.createAccumulator();
+      let finishReason = null, usage;
       const reader = resp.body.getReader();
       const dec = new TextDecoder();
       const sig = callbacks && callbacks.signal;
@@ -529,12 +533,13 @@ const Agent = (() => {
           }
           const { done, value } = await waitWithAbort(reader.read(), sig);
           if (sig?.aborted) throw abortError();
-          if (done) break;
-          for (const data of parser.push(dec.decode(value, { stream: true }))) {
+          for (const data of parser.push(done ? dec.decode() + '\n\n' : dec.decode(value, { stream: true }))) {
             try {
               const json = JSON.parse(data);
               acc.add(json);
               const delta = json.choices && json.choices[0] && json.choices[0].delta;
+              finishReason = json.choices?.[0]?.finish_reason || finishReason;
+              if (json.usage) usage = json.usage;
               const think = _SSE.readReasoning(delta);
               if (think && callbacks && callbacks.onReasoningDelta) callbacks.onReasoningDelta(think);
               if (delta && delta.content && callbacks && callbacks.onDelta) callbacks.onDelta(delta.content);
@@ -544,7 +549,9 @@ const Agent = (() => {
                 callbacks.onToolDelta(acc.partial());
             } catch (_) { /* 忽略无法解析的分片 */ }
           }
+          if (done) break;
         }
+        _OutputLimit.assertComplete(finishReason, usage, outputLimit);
         return acc.result();
       } finally {
         sig?.removeEventListener('abort', cancelReader);

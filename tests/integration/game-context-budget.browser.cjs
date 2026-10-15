@@ -18,15 +18,22 @@ async function open(t){
   const page=await context.newPage();page.setDefaultTimeout(10000);
   await page.goto(origin+'/index.html');await page.locator('[data-action="import"]').waitFor();return page;
 }
-async function prepare(page){return page.evaluate(async()=>{
-  const blob=ZIP.makeZip([{name:'Player-p/基础信息.json',text:'{"姓名":"玩家"}'},{name:'Player-p/背包.json',text:'[]'},
-    {name:'large.txt',text:'文'.repeat(120000)}]);
-  await GameApp.importSave(new File([blob],'上下文回归.zip'));
-  const input=GameCore.estimate(GameApp.currentContext()),tools=GameCore.estimate(GameTools.build(Prompts,{}));
-  const maxContextK=Math.ceil((input+tools+1024+6000)/1000);
-  await GameApp.updateSettings({baseUrl:'https://game-context.invalid/v1',apiKey:'test-only',model:'test',stream:false,maxOutputTokens:1024,maxContextK});
-  return maxContextK;
-});}
+async function prepare(page){
+  await page.evaluate(async()=>{
+    const blob=ZIP.makeZip([{name:'Player-p/基础信息.json',text:'{"姓名":"玩家"}'},{name:'Player-p/背包.json',text:'[]'},
+      {name:'large.txt',text:'文'.repeat(120000)}]);
+    await GameApp.importSave(new File([blob],'上下文回归.zip'));
+  });
+  await page.locator('[data-action="slot-choose"][data-actor="p"]').click();
+  await page.locator('[data-action="slot-confirm"]').click();
+  await page.locator('#modal-root .modal-backdrop').waitFor({state:'hidden'});
+  return page.evaluate(async()=>{
+    const input=GameCore.estimate(GameApp.currentContext()),tools=GameCore.estimate(GameTools.build(Prompts,{}));
+    const maxContextK=Math.ceil((input+tools+1024+6000)/1000);
+    await GameApp.updateSettings({baseUrl:'https://game-context.invalid/v1',apiKey:'test-only',model:'test',stream:false,maxOutputTokens:1024,maxContextK});
+    return maxContextK;
+  });
+}
 const call=(id,name,args)=>({id,type:'function',function:{name,arguments:JSON.stringify(args)}});
 const readCalls=()=>[call('write','write_file',{path:'/workspace/proof.txt',content:'已完成写入'}),call('read','read_file',{path:'/workspace/large.txt',limit:120000})];
 const finishCalls=()=>[call('story','append_story',{content:'雨停了，旅程继续。',one_line_summary_of_content:'继续旅程'}),call('end','end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}})];

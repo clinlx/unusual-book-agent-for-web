@@ -31,9 +31,9 @@ test('HTTP budget enforces preset reserve while allowing the same custom limit',
   let requests=0;
   t.mock.method(globalThis,'fetch',async()=>{requests++;return {ok:true,json:async()=>({choices:[{message:{content:'完成'}}]})};});
   const messages=[{role:'user',content:'文'.repeat(240001)}];
-  await assert.rejects(Agent.createHttpTransport({baseUrl:'https://test.invalid/v1',maxContextK:256,contextLimitMode:'preset'},[],{})(messages),e=>e.code==='CONTEXT_LIMIT');
+  await assert.rejects(Agent.createHttpTransport({baseUrl:'https://test.invalid/v1',maxContextK:256,maxOutputTokens:100,contextLimitMode:'preset'},[],{})(messages),e=>e.code==='CONTEXT_LIMIT');
   assert.equal(requests,0);
-  await Agent.createHttpTransport({baseUrl:'https://test.invalid/v1',maxContextK:256,contextLimitMode:'custom'},[],{})(messages);
+  await Agent.createHttpTransport({baseUrl:'https://test.invalid/v1',maxContextK:256,maxOutputTokens:100,contextLimitMode:'custom'},[],{})(messages);
   assert.equal(requests,1);
 });
 
@@ -95,7 +95,7 @@ test('request preflight runs again after a tool result and stops before the over
 test('HTTP boundary strips file diffs and refuses oversized input before fetch',async t=>{
   const bodies=[];
   t.mock.method(globalThis,'fetch',async(_url,opts)=>{bodies.push(JSON.parse(opts.body));return {ok:true,json:async()=>({choices:[{message:{content:'完成'}}]})};});
-  const transport=Agent.createHttpTransport({baseUrl:'https://test.invalid/v1',maxContextK:1,stream:false},[],{});
+  const transport=Agent.createHttpTransport({baseUrl:'https://test.invalid/v1',maxContextK:1,maxOutputTokens:100,stream:false},[],{});
   await transport([{role:'user',content:'测试'},{role:'assistant',tool_calls:[{id:'a',function:{name:'write_file',arguments:'{}'}}]},
     {role:'tool',tool_call_id:'a',content:'成功',change:{before:'旧'.repeat(10000),after:'新'.repeat(10000)}}]);
   assert.equal(bodies[0].messages[2].change,undefined);
@@ -116,4 +116,17 @@ test('provider context overflow includes recovery guidance even when local estim
   const transport=Agent.createHttpTransport({baseUrl:'https://test.invalid/v1',maxContextK:128},[],{});
   await assert.rejects(transport([{role:'user',content:'请求'}]),error=>error.code==='CONTEXT_LIMIT'&&error.message.includes(Budget.HINT));
   assert.equal(Budget.isLimitError(new Error('429 Tokens per minute limit exceeded')),false);
+});
+
+test('request budget reserves the configured output once without stacking the preset reserve',async t=>{
+  const bodies=[];
+  t.mock.method(globalThis,'fetch',async(_url,init)=>{bodies.push(JSON.parse(init.body));return {ok:true,json:async()=>({choices:[{message:{content:'完成'}}]})};});
+  const request=Agent.createHttpTransport({baseUrl:'https://test.invalid/v1',maxContextK:128,maxOutputTokens:32768,contextLimitMode:'preset'},[],{});
+  await request([{role:'user',content:'文'.repeat(95000)}]);
+  await assert.rejects(request([{role:'user',content:'文'.repeat(96000)}]),e=>e.code==='CONTEXT_LIMIT');
+  assert.equal(bodies.length,1);assert.equal(bodies[0].max_tokens,32768);
+  const custom=Agent.createHttpTransport({baseUrl:'https://test.invalid/v1',maxContextK:32,maxOutputTokens:16384,contextLimitMode:'custom'},[],{});
+  await custom([{role:'user',content:'文'.repeat(15000)}]);
+  await assert.rejects(custom([{role:'user',content:'文'.repeat(16000)}]),e=>e.code==='CONTEXT_LIMIT');
+  assert.equal(bodies.length,2);
 });

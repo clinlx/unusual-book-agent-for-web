@@ -1,6 +1,7 @@
 'use strict';
 const ContextBudget = (() => {
   const T = typeof module !== 'undefined' ? require('./tokens.js') : Tokens;
+  const O = typeof module !== 'undefined' ? require('../shared/output-limit.js') : OutputLimit;
   const HINT = '手动点击压缩按钮或者在设置中切换上下文处理方式';
   const PRESETS = Object.freeze([128, 256, 512, 1024]);
   function mode(settings) {
@@ -11,6 +12,9 @@ const ContextBudget = (() => {
   }
   const occupied = (settings, used) => used + reserve(settings, used);
   const limit = (settings, used) => Number(settings.maxContextK) * 1000 - reserve(settings, used);
+  const outputTokens = settings => O.tokens(settings.maxOutputTokens);
+  const requestCost = (settings, used) => Math.max(occupied(settings, used), used + outputTokens(settings));
+  const requestLimit = (settings, used) => Math.min(limit(settings, used), Number(settings.maxContextK) * 1000 - outputTokens(settings));
   const local = new Set(['attachments', 'change', 'displayOnly', 'displayContent', 'stashPath', 'fullLength', 'at', 'hint', 'count', 'summary', 'msgId', 'goalPush', 'goalSet', 'goalText', 'reasoning', 'validationReport']);
   function project(messages) {
     return T.pruneReasoning(T.sanitizeMessages(messages.filter(m => !m.displayOnly && m.role !== 'system-error').map(m => {
@@ -44,15 +48,15 @@ const ContextBudget = (() => {
       out.mark, ...out.keepRecent.map(m => m.role === 'compressed' ? { ...m, displayOnly: true } : m)];
   }
   function fitConfigured(messages, settings, tools = [], overflow = 'disabled') {
-    try { return fit(messages, limit(settings, cost(messages, tools)), tools, overflow); }
+    try { return fit(messages, requestLimit(settings, cost(messages, tools)), tools, overflow); }
     catch (error) {
-      if (error.code === 'CONTEXT_LIMIT') throw limitError(occupied(settings, error.used), Number(settings.maxContextK) * 1000);
+      if (error.code === 'CONTEXT_LIMIT') throw limitError(requestCost(settings, error.used), Number(settings.maxContextK) * 1000);
       throw error;
     }
   }
   function requireReduction(before, after, tools = []) {
     if (cost(after, tools) >= cost(before, tools)) throw new Error('压缩未减少上下文，已保留原始记录，请重试压缩或在设置中切换上下文处理方式');
   }
-  return { HINT, PRESETS, mode, occupied, limit, project, cost, fit, fitConfigured, fold, requireReduction, limitError, isLimitError };
+  return { HINT, PRESETS, mode, occupied, limit, outputTokens, requestCost, requestLimit, project, cost, fit, fitConfigured, fold, requireReduction, limitError, isLimitError };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = ContextBudget;

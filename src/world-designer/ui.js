@@ -1391,7 +1391,9 @@
     if (sess.contextInterrupted && !(S.running && S.runningSession === sess.id)) {
       box.append(el('div', { class: 'error-card' },
         el('div', { text: sess.contextInterrupted.message }),
-        el('button', { text: '压缩上下文', disabled: S.continuing || sess.contextInterrupted.compressed, onclick: ctxMenu }),
+        sess.contextInterrupted.kind === 'output'
+          ? el('button', { text: '调整最大输出', disabled: S.continuing, onclick: openSettings })
+          : el('button', { text: '压缩上下文', disabled: S.continuing || sess.contextInterrupted.compressed, onclick: ctxMenu }),
         el('button', { class: 'primary', text: '继续', disabled: S.continuing, onclick: () => continueInterrupted(sess) })));
     } else if (S.lastError && S.lastError.sessionId === sess.id) {
       box.append(el('div', { class: 'error-card' },
@@ -2383,7 +2385,7 @@
     const capTokens = S.settings.maxContextK * 1000;
     const initialTools = Agent.toolDefinitions(cur.allSkills(), { imageSending: S.settings.imageSending });
     const draftMessage = { role: 'user', content: text, msgId: 'pending-input', attachments: images };
-    const draftCost = () => ContextBudget.occupied(S.settings, ContextBudget.cost(resume ? requestMessages(sess, resumeRecord.userMsgId)
+    const draftCost = () => ContextBudget.requestCost(S.settings, ContextBudget.cost(resume ? requestMessages(sess, resumeRecord.userMsgId)
       : requestMessages({ ...sess, messages: [...sess.messages, draftMessage] }, draftMessage.msgId), initialTools));
     if (draftCost() > capTokens) {
       if (S.settings.contextOverflow === 'compress') {
@@ -2577,13 +2579,13 @@
               }
               return messages;
             };
-            if (S.settings.contextOverflow === 'compress' && ContextBudget.occupied(S.settings, ContextBudget.cost(assemble(), toolDefs)) > capTokens) {
+            if (S.settings.contextOverflow === 'compress' && ContextBudget.requestCost(S.settings, ContextBudget.cost(assemble(), toolDefs)) > capTokens) {
               try {
                 await performCompression(sess, { signal: S.abort.signal, preserveUserId: activeId,
                   reserveTokens: ContextBudget.cost(requestOnly), toolDefs });
               } catch (error) {
-                if (error.name === 'AbortError') throw error;
-                const stopped = ContextBudget.limitError(ContextBudget.occupied(S.settings, ContextBudget.cost(assemble(), toolDefs)), capTokens);
+                if (error.name === 'AbortError' || error.code === 'OUTPUT_LIMIT') throw error;
+                const stopped = ContextBudget.limitError(ContextBudget.requestCost(S.settings, ContextBudget.cost(assemble(), toolDefs)), capTokens);
                 stopped.message = '自动压缩失败：' + error.message + '\n' + stopped.message;
                 throw stopped;
               }
@@ -2650,11 +2652,13 @@
         await saveSession(sess);
       } else {
         // 挂到状态上由 renderChat 渲染，否则 finally 的 renderChat() 会清掉直接 append 的卡片
-        if (ContextBudget.isLimitError(e) || resume) {
+        if (ContextBudget.isLimitError(e) || e.code === 'OUTPUT_LIMIT' || resume) {
           sess.contextInterrupted = { userMsgId: [...sess.messages].reverse().find(m => m.role === 'user' && !m.displayOnly)?.msgId || sentUserId,
-            message: e.message, at: Date.now() };
+            message: e.message, kind: e.code === 'OUTPUT_LIMIT' ? 'output' : 'context', at: Date.now() };
         }
-        S.lastError = ContextBudget.isLimitError(e) || resume
+        S.lastError = e.code === 'OUTPUT_LIMIT'
+          ? { sessionId: sess.id, message: e.message, actionLabel: '调整最大输出', retry: openSettings }
+          : ContextBudget.isLimitError(e) || resume
           ? { sessionId: sess.id, message: e.message.includes(ContextBudget.HINT) ? e.message : e.message + '\n' + ContextBudget.HINT,
             actionLabel: '压缩上下文', retry: () => ctxMenu() }
           : { sessionId: sess.id, message: e.message, retry: () => {
@@ -3111,18 +3115,18 @@
   async function performCompression(sess, { interactive = false, signal, preserveUserId, reserveTokens = 0, toolDefs } = {}) {
     await ensureFullHistory(sess);
     toolDefs = toolDefs || Agent.toolDefinitions(cur.allSkills(), { imageSending: S.settings.imageSending });
-    const cap = ContextBudget.limit(S.settings, ContextBudget.cost(requestMessages(sess), toolDefs));
+    const cap = ContextBudget.requestLimit(S.settings, ContextBudget.cost(requestMessages(sess), toolDefs));
     const fixed = ContextBudget.cost(requestMessages({ ...sess, messages: [] }), toolDefs);
     const available = cap - fixed - reserveTokens - 64;
     if (available < 512) throw ContextBudget.limitError(fixed + reserveTokens, cap);
     const summaryBudget = Math.min(3000, Math.floor(available * 0.2));
-    const transport = Agent.createHttpTransport({ ...S.settings, stream: false, maxOutputTokens: summaryBudget }, [], { signal });
+    const transport = Agent.createHttpTransport({ ...S.settings, stream: false }, [], { signal });
     const compressible = sess.messages.filter(m => m.role !== 'system-error' && !m.displayOnly);
     const out = await Compress.run(compressible, {
       retainedBudgetTokens: available - summaryBudget,
       preserveUserId,
       inputBudgetTokens: Math.floor(cap * COMPRESS_CONFIG.inputBudgetRatio),
-      requestBudgetTokens: cap - summaryBudget - 64,
+      requestBudgetTokens: cap - 64,
       summaryBudgetTokens: summaryBudget,
       maxWords: Math.min(COMPRESS_CONFIG.maxWords, summaryBudget),
       fileTree: VFS.overview(S.tree).slice(0, Math.floor(cap * 0.05)),
@@ -3136,7 +3140,7 @@
     sess.messages = candidate;
     if (sess.contextInterrupted) {
       sess.contextInterrupted.compressed = true;
-      if (ContextBudget.occupied(S.settings, ContextBudget.cost(requestMessages(sess), toolDefs)) <= S.settings.maxContextK * 1000)
+      if (sess.contextInterrupted.kind !== 'output' && ContextBudget.requestCost(S.settings, ContextBudget.cost(requestMessages(sess), toolDefs)) <= S.settings.maxContextK * 1000)
         sess.contextInterrupted.message = '本轮已中断，可点击继续执行。';
     }
     markSessionDirty(sess);
@@ -3158,7 +3162,7 @@
     try {
       return await performCompression(sess, { interactive, signal: S.abort.signal, reserveTokens });
     } catch (e) {
-      const full = ContextBudget.occupied(S.settings, ContextBudget.cost(requestMessages(sess), Agent.toolDefinitions(cur.allSkills(), { imageSending: S.settings.imageSending }))) >= S.settings.maxContextK * 1000;
+      const full = ContextBudget.requestCost(S.settings, ContextBudget.cost(requestMessages(sess), Agent.toolDefinitions(cur.allSkills(), { imageSending: S.settings.imageSending }))) >= S.settings.maxContextK * 1000;
       toast(e.name === 'AbortError' ? '压缩已中止' : '压缩失败: ' + e.message + (full && !e.message.includes(ContextBudget.HINT) ? '\n' + ContextBudget.HINT : ''));
       return false;
     } finally {
@@ -5266,11 +5270,13 @@
     const effortWrap = el('div', { class: 'effort-wrap' }, effortRow, effortTicks);
 
     const temp = el('input', { value: String(s.temperature), type: 'number', step: '0.1', min: '0', max: '2' });
+    const maxOutput = el('input', { value: String(ContextBudget.outputTokens(s)), type: 'number', step: '1', min: '1', 'aria-label': '最大输出 tokens' });
     const stream = el('select', {}, el('option', { value: '1', text: '开启' }), el('option', { value: '0', text: '关闭' }));
     stream.value = s.stream ? '1' : '0';
     const apiHelp = el('div', { id: 'api-options-help', class: 'api-options-help', hidden: true },
       el('p', { text: 'API 地址可填写基础地址（如 https://api.example.com/v1），也可填写完整的 /chat/completions 地址。模型请求、测试连接和模型列表都会自动处理路径。' }),
       el('p', { text: '温度控制输出的随机性，数值越低越稳定；思考强度控制模型推理投入，是否支持以及实际效果取决于服务商和模型。' }),
+      el('p', { text: '最大输出默认 16384 tokens，普通对话与上下文压缩共用此设置。它限制单次模型输出；部分模型的思考也占用该额度。摘要篇幅由压缩提示词单独控制。' }),
       el('p', { text: '流式输出会逐步接收正文、思考过程和工具调用；视觉模型设为“是”时可发送图片，需要接口与模型支持图片输入。' }),
       el('p', { text: '测试连接会使用当前表单中的地址、API Key 和模型发送一条简短消息。参数修改后请点击“保存”。' }));
     const apiHelpButton = el('button', { class: 'help-btn settings-info-button', type: 'button', text: 'i',
@@ -5418,6 +5424,7 @@
       apiHeading, apiHelp,
       field('API Base URL', baseUrlWrap), field('API Key', apiKey), field('模型', modelWrap),
       field('温度', temp), field('思考强度', effortWrap), field('流式输出', stream),
+      field('最大输出 tokens', maxOutput),
       field('视觉模型', imageSending),
       el('div', { class: 'row' }, el('label', { text: '' }), el('div', { style: 'flex:1;min-width:0' }, testBtn, testResult)),
       el('div', { class: 'section' }, el('h3', { text: '上下文' }),
@@ -5455,11 +5462,16 @@
             maxK = validateCustomContextK(ctxCustom.value);
             if (maxK === null) { toast('自定义上限无效：需为 1–10000 的整数（单位 k）'); return; }
           } else maxK = Number(ctxSel.value);
+          let maxOutputTokens;
+          try { maxOutputTokens = OutputLimit.tokens(maxOutput.value); }
+          catch (error) { toast(error.message); return; }
+          if (maxOutputTokens >= maxK * 1000) { toast('最大输出必须小于最大上下文，为输入保留空间'); return; }
           S.settings = {
             baseUrl: baseUrl.value.trim() || DEFAULT_SETTINGS.baseUrl,
             apiKey: apiKey.value.trim(),
             model: model.value.trim() || DEFAULT_SETTINGS.model,
             temperature: Number(temp.value) || 0.7,
+            maxOutputTokens,
             stream: stream.value === '1',
             imageSending: imageSending.value === '1',
             reverseSendNewline: reverseSendNewline.checked,

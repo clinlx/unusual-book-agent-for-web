@@ -42,6 +42,30 @@ async function openSettings(page, name) {
   }
 }
 
+test('designer maximum output defaults to 16k, validates input and persists custom values',async()=>{
+  const context=await browser.newContext();
+  try{
+    const page=await context.newPage();await page.route('https://**/*',route=>route.abort());
+    await openSettings(page,'designer');
+    const input=page.getByRole('spinbutton',{name:'最大输出 tokens',exact:true});
+    assert.equal(await input.count(),1);assert.equal(await input.inputValue(),'16384');
+    for(const invalid of ['0','-1','1.5']){
+      await input.fill(invalid);await page.getByRole('button',{name:'保存',exact:true}).click();
+      assert.equal(await input.isVisible(),true);
+      assert.equal(await page.evaluate(()=>__UI_STATE__.settings.maxOutputTokens),16384);
+    }
+    await input.fill('32768');await page.getByRole('button',{name:'保存',exact:true}).click();
+    await page.getByRole('button',{name:'保存',exact:true}).waitFor({state:'hidden'});
+    await page.reload();await readyDesigner(page);
+    assert.equal(await page.evaluate(()=>__UI_STATE__.settings.maxOutputTokens),32768);
+    await page.getByRole('button',{name:'设置',exact:true}).click();
+    assert.equal(await input.inputValue(),'32768');
+    await page.evaluate(async()=>{const value={...__UI_STATE__.settings};delete value.maxOutputTokens;await DB.put('config',{id:'settings',value});});
+    await page.reload();await readyDesigner(page);
+    assert.equal(await page.evaluate(()=>__UI_STATE__.settings.maxOutputTokens),16384);
+  }finally{await context.close();}
+});
+
 for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 }]) {
   for (const name of ['game', 'designer']) {
     test(name + ' request help is visible immediately and toggles with mouse and keyboard at width ' + viewport.width, async () => {

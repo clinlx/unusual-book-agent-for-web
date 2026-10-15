@@ -29,11 +29,11 @@ async function setup(t, handler) {
     if (!route.request().url().startsWith('https://context.invalid/')) return route.abort();
     const body = route.request().postDataJSON(); requests.push(body);
     const message = await handler(body, requests);
-    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ choices: [{ message }] }) });
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(message.choices ? message : { choices: [{ message }] }) });
   });
   await page.goto(origin + '/designer.html'); await ready(page);
   await page.evaluate(() => Object.assign(__UI_STATE__.settings, {
-    baseUrl: 'https://context.invalid/v1', apiKey: 'test-only', model: 'test', stream: false, maxContextK: 32, contextOverflow: 'disabled',
+    baseUrl: 'https://context.invalid/v1', apiKey: 'test-only', model: 'test', stream: false, maxContextK: 32, maxOutputTokens: 1024, contextOverflow: 'disabled',
   }));
   return { page, requests };
 }
@@ -51,6 +51,63 @@ async function state(page) {
       api: messages, error: __UI_STATE__.lastError && { message: __UI_STATE__.lastError.message, action: __UI_STATE__.lastError.actionLabel } };
   });
 }
+
+for(const maxOutputTokens of [16384,32768])test('compression and ordinary requests share the '+maxOutputTokens+' output allowance',async t=>{
+  const {page,requests}=await setup(t,()=>({content:'世界已经整理，等待后续任务。'}));
+  await page.evaluate(maxOutputTokens=>{
+    Object.assign(__UI_STATE__.settings,{maxContextK:128,maxOutputTokens});
+    const sess=__UI_STATE__.sessions.find(s=>s.id===__UI_STATE__.sessionId);
+    sess.messages=[{role:'user',content:'整理世界',msgId:'u'},{role:'assistant',content:'文'.repeat(150000)}];
+    sess.__dirtyAll=true;__UI__.renderAll();
+  },maxOutputTokens);
+  await manualCompress(page);
+  assert.ok(requests.length>0);assert.ok(requests.every(b=>!b.tools));
+  for(const body of requests){
+    assert.equal(body.max_tokens,maxOutputTokens);
+    assert.ok(await page.evaluate(b=>ContextBudget.cost(b.messages)+b.max_tokens<=128000,body));
+  }
+  assert.equal((await state(page)).raw.filter(m=>m.role==='compressed'&&!m.displayOnly).length,1);
+  await page.locator('#chatInput').fill('继续');await page.locator('#sendBtn').click();
+  await page.waitForFunction(()=>!__UI_STATE__.running);
+  assert.ok(requests.at(-1).tools);assert.equal(requests.at(-1).max_tokens,maxOutputTokens);
+});
+
+test('truncated compression is reported as an output error and preserves the original history',async t=>{
+  const {page}=await setup(t,()=>({content:'无关'}));
+  await page.route('https://context.invalid/**',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({choices:[{message:{content:'尚未完成的摘要'},finish_reason:'length'}]})}));
+  await page.evaluate(()=>{
+    const sess=__UI_STATE__.sessions.find(s=>s.id===__UI_STATE__.sessionId);
+    sess.messages=[{role:'user',content:'整理世界',msgId:'u'},{role:'assistant',content:'文'.repeat(60000)}];
+    sess.__dirtyAll=true;__UI__.renderAll();
+  });
+  const original=await state(page);await manualCompress(page);
+  assert.deepEqual((await state(page)).raw,original.raw);
+  assert.match(await page.locator('.toast').last().innerText(),/最大输出/);
+});
+
+test('output exhaustion offers settings and resumes without replaying completed tools',async t=>{
+  const {page,requests}=await setup(t,(_body,requests)=>{
+    if(requests.length===1)return {tool_calls:[{id:'saved',type:'function',function:{name:'write_file',arguments:'{"path":"/workspace/saved.md","content":"已经完成的写入"}'}}]};
+    if(requests.length===2)return {choices:[{message:{content:'截断回复不应保存'},finish_reason:'length'}]};
+    return {content:'已继续完成。'};
+  });
+  await page.locator('#chatInput').fill('完成任务');await page.locator('#sendBtn').click();
+  await page.waitForFunction(()=>!__UI_STATE__.running);
+  const action=page.locator('#chatScroll').getByRole('button',{name:'调整最大输出',exact:true});
+  assert.equal(await action.count(),1);
+  assert.equal((await state(page)).raw.some(m=>m.content==='截断回复不应保存'),false);
+  await action.click();await page.getByRole('spinbutton',{name:'最大输出 tokens',exact:true}).fill('2048');
+  await page.getByRole('button',{name:'保存',exact:true}).click();
+  await page.locator('#chatScroll').getByRole('button',{name:'继续',exact:true}).click();
+  await page.waitForFunction(()=>!__UI_STATE__.running);
+  assert.equal(requests.length,3);assert.equal(requests[2].max_tokens,2048);
+  assert.ok(requests[2].messages.some(m=>m.tool_call_id==='saved'));
+  const result=await state(page);
+  assert.equal(result.raw.filter(m=>m.role==='user').length,1);
+  assert.equal(result.raw.filter(m=>m.role==='tool').length,1);
+  assert.equal(result.raw.at(-1).content,'已继续完成。');
+  assert.equal(await page.evaluate(()=>VFS.readFile(__UI_STATE__.tree,'/workspace/saved.md').content),'已经完成的写入');
+});
 
 test('designer starts at 256k, removes the 240k preset, and preserves a saved context limit', async t => {
   const { page } = await setup(t, () => ({ content: '完成' }));

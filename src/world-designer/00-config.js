@@ -334,6 +334,7 @@ const DEFAULT_SETTINGS = {
   model: 'deepseek-flash',
   imageSending: true,
   temperature: 0.7,
+  maxOutputTokens: 16384,
   stream: true,
   // 上下文超限时的处理方式：
   //   disabled  拒绝发送，提示用户手动处理
