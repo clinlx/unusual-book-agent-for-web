@@ -5223,7 +5223,9 @@
     // 默认展开：折叠态看不出可以点开，用户容易以为这里没内容
     agentSection.append(collapsible('系统提示词', agentBody, undefined, true));
 
-    const reverseSendNewline = el('input', { type: 'checkbox', checked: s.reverseSendNewline === true, 'aria-label': '反转发送与换行' });
+    const reverseSendNewline = el('input', { type: 'checkbox', id: 'settingsReverseSendNewline', checked: s.reverseSendNewline === true, 'aria-label': '反转发送与换行' });
+    const reverseSendRow = field('反转发送与换行', reverseSendNewline);
+    reverseSendRow.querySelector('label').htmlFor = reverseSendNewline.id;
     const changeScope = el('select', {},
       el('option', { value: 'last', text: '仅最后一轮的改动' }),
       el('option', { value: 'accumulate', text: '累积到我处理为止' }));
@@ -5343,7 +5345,7 @@
       if (rep && rep.available) {
         const from = rep.origin === 'bundled' ? '本页内置资源' : '世界设计者专属资源目录';
         skillList.append(el('div', { class: 'hint' },
-          el('span', { text: '本页的四个技能来自' + from + '，与异闻手记独立。世界构建技能常驻，其余技能可自由开关。' })));
+          el('span', { text: '本页的 ' + all.length + ' 个技能来自' + from + '，与异闻手记独立。世界构建技能常驻，其余技能可自由开关。' })));
         for (const err of rep.errors)
           skillList.append(el('div', { class: 'skill-load-err', text: '✕ ' + err }));
       } else {
@@ -5394,7 +5396,7 @@
           actions));
       }
       skillList.append(el('div', { style: 'display:flex;gap:8px;margin-top:8px;flex-wrap:wrap' },
-        el('button', { text: '↻ 重新加载技能', title: '重新读取世界设计者的四个技能', onclick: async () => {
+        el('button', { text: '↻ 重新加载技能', title: '重新读取世界设计者的内置技能', onclick: async () => {
           await reloadExternalSkills();
           renderSkillList();
           toast(S.skillLoad && S.skillLoad.available
@@ -5424,7 +5426,7 @@
         field('满上下文处理', overflow, ['contextOverflow', 'disabled', 'sliding', 'truncate', 'compress']),
         field('最大上下文', ctxSel), field('', ctxCustom)),
       el('div', { class: 'section' }, el('h3', { text: '界面' }),
-        field('反转发送与换行', reverseSendNewline),
+        reverseSendRow,
         el('div', { class: 'hint', text: '默认 Ctrl / ⌘ + Enter 发送、Enter 换行；开启后 Enter 发送、Ctrl / ⌘ + Enter 换行。' }),
         field('编辑器打开位置', editorPos),
         el('div', { class: 'hint', text: '窄屏（手机）始终在「文件」标签内打开，不受此项影响。' }),

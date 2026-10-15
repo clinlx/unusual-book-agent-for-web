@@ -146,6 +146,16 @@ for (const name of ['game', 'designer']) {
       if (name === 'game') await page.locator('[data-settings-section="game"] > summary').click();
       const checkbox = name === 'game' ? page.locator('[name="reverseSendNewline"]') : page.getByRole('checkbox', { name: '反转发送与换行' });
       assert.equal(await checkbox.isChecked(), false);
+      if (name === 'designer') {
+        await checkbox.evaluate(el => Promise.all(el.closest('.modal').getAnimations().map(animation => animation.finished)));
+        const appearance = await checkbox.evaluate(el => ({ appearance: getComputedStyle(el).appearance,
+          width: el.getBoundingClientRect().width, height: el.getBoundingClientRect().height }));
+        assert.equal(appearance.appearance, 'auto', 'native checkbox must retain its visible checkmark');
+        assert.equal(appearance.width, 18); assert.equal(appearance.height, 18);
+        await page.locator('label[for="settingsReverseSendNewline"]').click();
+        assert.equal(await checkbox.isChecked(), true, 'clicking the setting label toggles the checkbox');
+        await checkbox.press('Space'); assert.equal(await checkbox.isChecked(), false);
+      }
       const explanation = await page.locator(name === 'game' ? '#settings-form' : '.modal').innerText();
       assert.match(explanation, /默认.*发送.*换行.*开启后.*发送.*换行/);
       if (name === 'game') assert.equal(await page.locator('[data-action="prompts"]').count(), 0);
