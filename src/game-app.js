@@ -112,6 +112,7 @@ const GameApp=(()=>{
     saveLocalInputs();await persist();emit();return result;
   }
   async function configureSlots(actorId,modes={}){idle();const s=active();peerCheck(s);if(hostSession?.state().status!=='selecting')throw Error('房主只能在首次进入存档时选择角色，之后不能切换');saveLocalInputs();
+    GameSlots.assertHumanPlayer(s,{actorId,modes});
     if(hostSession?.state().status==='selecting'){
       if(actorId==='$spectator'){
         await hostSession.initialize(actorId);for(const slot of [...s.slots])GameSlots.setMode(s,slot.id,modes[slot.id]==='ai'?'ai':'disabled');
@@ -139,6 +140,7 @@ const GameApp=(()=>{
       if(actorId===s.actorId)throw Error('房主角色已锁定，不能更改控制方式');
       if(r.status!=='collecting'||r.vote||Object.keys(r.submissions).length)throw Error('请在回合边界处理角色槽位');
       const before=savedRoom,openSlots=(S.openPlayerSlots||[]).filter(id=>id!==actorId);if(kind==='player')openSlots.push(actorId);
+      GameSlots.assertHumanPlayer(s,{modes:{...GameSlots.controlModes(s,openSlots),[actorId]:kind}});
       const next={version:1,saveId:s.id,...savedRoom,openSlots,invites:(savedRoom?.invites||[]).filter(i=>i.actorId!==actorId||kind==='player')};
       await saveRoomRecord(next);
       try{if(kind!=='player')await roomCommand('slot.mode',{actorId,kind});}
@@ -184,6 +186,7 @@ const GameApp=(()=>{
     idle();peerCheck(active());if(domain!==hostSession)throw Error('存档已经切换');if(!['player','ai','disabled'].includes(kind))throw Error('请选择玩家、AIPC 或关闭');
     const slot=active().slots.find(x=>x.id===actorId&&x.kind!=='kpc');if(!slot)throw Error('世界需要有空白角色槽位');
     GameSlots.assertConfigure(active(),actorId,kind,{openPlayerSlots:S.openPlayerSlots});
+    GameSlots.assertHumanPlayer(active(),{modes:{...GameSlots.controlModes(active(),S.openPlayerSlots),[actorId]:kind}});
     const cached=savedRoom?.invites.find(i=>i.actorId===actorId),occupied=Object.entries(domain.state().members).find(([,m])=>m.actorId===actorId),existing=S.network?.invites?.find(x=>x.actorId===actorId);
     if(occupied){
       if(occupied[0]==='host')throw Error('房主角色已锁定，不能更改控制方式');

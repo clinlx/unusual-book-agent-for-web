@@ -54,6 +54,31 @@ test('host can initially spectate without occupying a player and reopening prese
  await f.app.connectRoom();assert.equal(f.app.getState().savedInvites[0].actorId,'a');
 });
 
+test('initial spectator configuration rejects NPC-only and closed rosters before changing the save',async t=>{
+ const f=setup(t);await f.app.init();await f.app.openSave(f.save.id);const before=structuredClone(f.app.getState().active);
+ for(const modes of [{a:'ai',b:'ai'},{a:'disabled',b:'disabled'},{missing:'player',a:'ai',b:'disabled'}]){
+  await assert.rejects(f.app.configureSlots('$spectator',modes),/至少.*真人玩家/);
+  assert.deepEqual(structuredClone(f.app.getState().active),before);assert.equal(f.app.multiplayerState().status,'selecting');
+ }
+ await f.app.configureSlots('a',{b:'ai'});assert.equal(f.app.getState().active.actorId,'a');
+});
+test('offline room saves cannot remove the last player slot but can replace it with another',async t=>{
+ const f=setup(t);await f.app.init();await f.app.openSave(f.save.id);await f.app.configureSlots('$spectator',{a:'player',b:'ai'});
+ const before=structuredClone(f.app.getState().active);
+ for(const kind of ['ai','disabled']){await assert.rejects(f.app.configureInvitationSlot('a',kind),/至少.*真人玩家/);assert.deepEqual(structuredClone(f.app.getState().active),before);assert.deepEqual(Array.from(f.app.getState().openPlayerSlots),['a']);}
+ await f.app.configureInvitationSlot('b','player');await f.app.configureInvitationSlot('a','ai');assert.deepEqual(Array.from(f.app.getState().openPlayerSlots),['b']);
+ assert.equal(f.app.getState().active.slots.find(s=>s.id==='a').kind,'ai');
+});
+test('mid-game conversion of the final remote player to NPC preserves their binding and invitation',async t=>{
+ const f=setup(t);await f.app.init();await f.app.openSave(f.save.id);await f.app.configureSlots('$spectator',{a:'player',b:'ai'});await f.app.connectRoom();
+ const invitation=f.app.getState().savedInvites.find(i=>i.actorId==='a');await f.options.onMember({type:'joined',memberId:invitation.memberId});
+ f.app.getState().active.round=3;f.app.getState().active.status='waiting';
+ const before=structuredClone(f.app.getState().active),invites=structuredClone(f.app.getState().savedInvites);
+ await assert.rejects(f.app.configureInvitationSlot('a','ai'),/至少.*真人玩家/);
+ assert.deepEqual(structuredClone(f.app.getState().active),before);assert.deepEqual(structuredClone(f.app.getState().savedInvites),invites);assert.deepEqual(f.revoked,[]);assert.equal(f.app.multiplayerState().members[invitation.memberId].connected,true);
+ await f.app.configureInvitationSlot('b','player');await f.app.configureInvitationSlot('a','ai');assert.equal(f.app.getState().active.slots.find(s=>s.id==='a').kind,'ai');
+ assert.ok(f.revoked.includes(invitation.memberId));
+});
 test('offline configured player slots cannot be silently omitted when starting a game',async t=>{
  const f=await ready(t);f.app.getState().active.status='new';await f.app.configureInvitationSlot('b','player');
  await assert.rejects(f.app.start(),/开放给玩家.*没有玩家加入/);assert.equal(f.calls,0);assert.equal(f.app.getState().active.activeRound,null);

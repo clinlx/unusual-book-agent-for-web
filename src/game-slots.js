@@ -3,6 +3,10 @@ const GameSlots=(()=>{
   const prefixes={player:'Player',ai:'AIPC',disabled:'DISABLE',kpc:'KPC'};
   const clone=value=>JSON.parse(JSON.stringify(value));
   const LOCK_MESSAGE='已锁定，关闭的角色槽位需要在第二回合开始前进行配置开启。';
+  const HUMAN_PLAYER_MESSAGE='游戏必须至少有一名真人玩家。房主观战时，请至少将一个角色槽位开放给玩家，并等待客户端加入后开始游戏。';
+  function assertHumanPlayer(save,{actorId=save.actorId,modes=controlModes(save)}={}){
+    if(!ensure(save).some(slot=>slot.id===actorId||modes[slot.id]==='player'))throw Error(HUMAN_PLAYER_MESSAGE);
+  }
   const INTERNAL_HEADER='[角色控制·内部指令]';
   const started=save=>(save.round||0)>1||(save.activeRound?.number||0)>1;
   const canConfigureNPCCards=save=>save?.status==='new'&&!(save.round>0)&&!save.activeRound;
@@ -125,6 +129,6 @@ const GameSlots=(()=>{
     for(const slot of slots)if(slot.id===id)change(next,id,'player');else if(!slot.memberId)change(next,slot.id,modes[slot.id]==='ai'?'ai':'disabled');
     next.actorId=id;next.playerPath=next.slots.find(s=>s.id===id).path;next.slotsConfigured=true;commit(save,next);return save.slots;
   }
-  return {scan,ensure,select,setMode,controlModes,initializeControlState,locked,assertConfigure,roundInstruction,playerContext,canConfigureNPCCards,npcRequirementKey,npcRequirements,configurationLocked:started,LOCK_MESSAGE};
+  return {scan,ensure,select,setMode,controlModes,initializeControlState,locked,assertConfigure,assertHumanPlayer,roundInstruction,playerContext,canConfigureNPCCards,npcRequirementKey,npcRequirements,configurationLocked:started,LOCK_MESSAGE,HUMAN_PLAYER_MESSAGE};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=GameSlots;

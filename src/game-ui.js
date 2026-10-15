@@ -669,9 +669,11 @@ const GameUI = (() => {
   }
   async function saveRoomChanges(){
     if(roomSaving)return false;
+    const modes=new Map(pendingRoomModes());
+    GameSlots.assertHumanPlayer(state.active,{modes:Object.fromEntries(slotRows().map(slot=>[slot.id,modes.get(slot.id)||appliedSlotMode(slot)]))});
     roomSaving=true;roomModal();
     try{
-      for(const [id,kind]of pendingRoomModes())if(!await applyRoomSlot(id,kind))return false;
+      for(const [id,kind]of [...modes].sort((a,b)=>(b[1]==='player')-(a[1]==='player')))if(!await applyRoomSlot(id,kind))return false;
       for(const [key,value]of pendingNPCRequirements()){await GameApp.configureNPCCards(key,value);if(roomSlotDraft.requirements[key]===value)delete roomSlotDraft.requirements[key];}
       if(pendingSpectators()){await GameApp.configureSpectators(roomSlotDraft.spectators);roomSlotDraft.spectators=null;}
       for(const id of pendingRotations()){await GameApp.rotateInvitation(id);delete roomSlotDraft.rotations[id];}
@@ -1363,7 +1365,7 @@ const GameUI = (() => {
     }
     if(name==='slot-confirm'){
       if(state.active?.slotsConfigured!==false||slotSelection?.saveId!==state.active.id||!slotSelection.actorId)return;
-      captureSlotModes();el.disabled=true;
+      captureSlotModes();GameSlots.assertHumanPlayer(state.active,{actorId:slotSelection.actorId,modes:slotSelection.modes});el.disabled=true;
       try{for(const [key,value]of pendingNPCRequirements())await GameApp.configureNPCCards(key,value);await GameApp.configureSlots(slotSelection.actorId,slotSelection.modes);resetRoomDraft();slotSelection=null;modalRoot.innerHTML='';}
       catch(error){el.disabled=false;throw error;}return;
     }
