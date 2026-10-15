@@ -92,7 +92,7 @@ for (const name of ['game', 'designer']) {
         const models = url === 'https://settings.invalid/gateway/v1/models';
         const chat = url === 'https://settings.invalid/gateway/v1/chat/completions';
         await route.fulfill({ status: models || chat ? 200 : 404, contentType: 'application/json',
-          body: JSON.stringify(models ? { data: [{ id: 'settings-test' }, { id: 'other-provider/model' }] }
+          body: JSON.stringify(models ? { data: [{ id: 'settings-test' }, { id: 'settings-test-plus' }, { id: 'other-provider/model' }, { id: 'not-settings-test' }] }
             : { choices: [{ message: { content: 'OK' } }] }) });
       });
       await openSettings(page, name);
@@ -112,6 +112,21 @@ for (const name of ['game', 'designer']) {
         const picker = page.getByRole('combobox', { name: '选择模型', exact: true });
         await picker.waitFor();
         assert.equal(await model.inputValue(), 'settings-test', 'fetching models preserves the typed model');
+        const completionValues = () => model.evaluate(input => Array.from(document.getElementById(input.getAttribute('list')).options, option => option.value));
+        assert.deepEqual(await completionValues(), ['settings-test', 'settings-test-plus'], 'automatic completion uses the typed prefix');
+        await model.fill('other-');
+        assert.deepEqual(await completionValues(), ['other-provider/model']);
+        await model.fill('settings-test');
+        const joined = await model.evaluate(input => {
+          const group = input.closest('.model-picker'), arrow = group.querySelector('select');
+          const a = input.getBoundingClientRect(), b = arrow.getBoundingClientRect();
+          return { sameField: !!group, gap: Math.abs(a.right - b.left), arrowWidth: b.width,
+            inputBorder: getComputedStyle(input).borderLeftWidth, arrowBorder: getComputedStyle(arrow).borderRightWidth };
+        });
+        assert.equal(joined.sameField, true);
+        assert.ok(joined.gap <= 1 && joined.arrowWidth <= 36);
+        assert.equal(joined.inputBorder, '0px');
+        assert.equal(joined.arrowBorder, '0px');
         await picker.click();
         await page.getByRole('listbox').getByRole('option', { name: 'other-provider/model', exact: true }).click();
         assert.equal(await model.inputValue(), 'other-provider/model', 'a different model family remains selectable with an existing value');

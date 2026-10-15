@@ -238,5 +238,5 @@
 
 .spectator-identity>p{margin:8px 0 0;color:var(--muted);font:12px/1.8 var(--sans)}.spectator-identity .spectator-view-setting{display:flex;flex-direction:row;align-items:center;justify-content:space-between;gap:16px;margin:16px 0 0;color:var(--muted);font-size:12px}.spectator-view-setting>span{white-space:nowrap}.spectator-view-setting select{width:auto;max-width:65%;padding:7px 11px;background:#fffaf0;color:var(--ink);font-size:12px}.spectator-view-setting strong{font-size:12px;font-weight:500;color:#705c38;overflow-wrap:anywhere;text-align:right}
 
-/* The complete model list stays independent of the editable model name. */
-.model-control{display:flex}.model-control input{flex:1;width:0}.model-control select{flex:0 0 5em;width:5em;padding:7px 6px}
+/* Model input and the complete-list arrow share one field. */
+.model-control>.model-picker{min-width:0}

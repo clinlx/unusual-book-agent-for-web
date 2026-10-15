@@ -1392,17 +1392,12 @@ const GameUI = (() => {
     if(name==='api-options-help'){const panel=document.getElementById('api-options-help');if(!panel)return;panel.hidden=!panel.hidden;el.setAttribute('aria-expanded',String(!panel.hidden));return;}
     if(name==='fetch-models'){
       const form=document.getElementById('settings-form'),input=document.getElementById('model-input'),result=document.getElementById('model-list-result');
+      const picker=DropdownCompat.modelPicker(input,'model-options');
       const values=Object.fromEntries(new FormData(form));el.disabled=true;result.textContent='正在获取模型列表…';
-      const clearList=()=>{document.getElementById('model-options')?.remove();};
+      const clearList=()=>picker.setModels([]);
       try{
-        const response=await GameApp.listModels(values);clearList();
-        if(response.models.length){
-          const list=document.createElement('select');list.id='model-options';list.setAttribute('aria-label','选择模型');list.title='从完整列表选择模型';
-          const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='选择';placeholder.disabled=true;placeholder.hidden=true;list.append(placeholder);
-          for(const id of response.models){const option=document.createElement('option');option.value=id;option.textContent=id;list.appendChild(option);}
-          list.value='';list.addEventListener('change',()=>{if(!list.value)return;input.value=list.value;list.value='';input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));});
-          input.after(list);
-        }
+        const response=await GameApp.listModels(values);
+        picker.setModels(response.models);
         result.textContent='获取成功 · '+response.count+' 个模型';
       }catch(error){clearList();result.textContent='获取失败：'+(error.message||String(error));}
       finally{el.disabled=false;}return;

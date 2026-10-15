@@ -5148,7 +5148,7 @@
     const apiKey = el('input', { value: s.apiKey, type: 'password' });
     // 模型：可输入 + 可从 /models 拉取后下拉选择
     const model = el('input', { value: s.model, autocomplete: 'off', spellcheck: 'false', style: 'flex:1;min-width:0' });
-    let modelChoices;
+    const modelPicker = DropdownCompat.modelPicker(model, 'modelListOpts');
     const fetchModelsBtn = el('button', { class: 'iconbtn', title: '从接口获取模型列表', onclick: async () => {
       const base = baseUrl.value.trim();
       if (!base) { toast('请先填写 API Base URL'); return; }
@@ -5159,23 +5159,12 @@
         const json = await resp.json();
         const ids = (json.data || []).map(m => m.id).filter(Boolean).sort();
         if (!ids.length) throw new Error('返回的模型列表为空');
-        modelChoices?.remove();
-        modelChoices = el('select', { id: 'modelListOpts', 'aria-label': '选择模型', title: '从完整列表选择模型', style: 'flex:0 0 5em;width:5em;padding:7px 6px' },
-          el('option', { value: '', text: '选择', disabled: true, hidden: true }),
-          ...ids.map(id => el('option', { value: id, text: id })));
-        modelChoices.value = '';
-        modelChoices.addEventListener('change', () => {
-          if (!modelChoices.value) return;
-          model.value = modelChoices.value; modelChoices.value = '';
-          model.dispatchEvent(new Event('input', { bubbles: true }));
-          model.dispatchEvent(new Event('change', { bubbles: true }));
-        });
-        model.after(modelChoices);
-        toast('已获取 ' + ids.length + ' 个模型，可从“选择”下拉框切换');
+        modelPicker.setModels(ids);
+        toast('已获取 ' + ids.length + ' 个模型，输入可补全，右侧箭头可选择全部');
       } catch (e) { toast('获取失败: ' + e.message); }
       finally { fetchModelsBtn.disabled = false; }
     } }, icon('refresh'));
-    const modelWrap = el('div', { style: 'display:flex;flex:1;gap:4px;align-items:center;min-width:0' }, model, fetchModelsBtn);
+    const modelWrap = el('div', { style: 'display:flex;flex:1;gap:4px;align-items:center;min-width:0' }, modelPicker.element, fetchModelsBtn);
 
     // 连通性测试：用当前表单里的值（而非已保存值）发一条无上下文的 hello
     const testResult = el('div', { class: 'api-test-result' });
