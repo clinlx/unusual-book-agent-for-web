@@ -79,7 +79,7 @@ const GameWorldTriggers = (() => {
       const found = entry.secondary.keys.map(has), any = found.some(Boolean), all = found.every(Boolean);
       return { any, all, notAny: !any, notAll: !all }[entry.secondary.mode];
     }
-    const ok = entry.matchScope === 'event' ? window.some(e => inWindow([e])) : inWindow(window);
+    const ok = entry.constant && !entry.secondary || (entry.matchScope === 'event' ? window.some(e => inWindow([e])) : inWindow(window));
     return { ok, keys: [...keys] };
   }
   function prepare(save, estimate) {

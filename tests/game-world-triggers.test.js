@@ -79,6 +79,18 @@ test('大小写、英文整词与中文默认子串匹配', () => {
   assert.equal(Triggers.matches(entry('a', { keywords: ['King'], caseSensitive: true }), [{ text: 'king' }]).ok, false);
   assert.equal(Triggers.matches(entry('a'), [{ text: '走向钟楼内部' }]).ok, true);
 });
+test('常驻条目在同事件范围且没有可扫描事件时仍注入，并继续遵守状态条件', () => {
+  const when = { file: 'Player-pc/基础信息.json', path: ['状态', 'HP'], op: 'gte', value: 10 };
+  const s = save([entry('constant', { constant: true, keywords: undefined, matchScope: 'event',
+    sources: ['private_player'], actorIds: ['absent'], when })]);
+  Core.beginRound(s, '', true, '开场');
+  assert.deepEqual(ids(s), ['constant']);
+  V.writeFile(s.tree, '/workspace/Player-pc/基础信息.json', '{"状态":{"HP":9}}');
+  assert.deepEqual(ids(s), []);
+  const conditional = entry('secondary', { constant: true, matchScope: 'event', secondary: { mode: 'any', keys: ['夜晚'] } });
+  assert.equal(Triggers.matches(conditional, []).ok, false);
+  assert.equal(Triggers.matches(conditional, [{ text: '夜晚' }]).ok, true);
+});
 test('状态条件严格比较、嵌套逻辑、缺失字段与 JSON 损坏', () => {
   const condition = { file: 'Player-pc/基础信息.json', path: ['状态', 'HP'], op: 'gte', value: 10 };
   const s = save([entry('state', { constant: true, when: { all: [condition, { not: { ...condition, op: 'eq', value: '10' } }] } })]);

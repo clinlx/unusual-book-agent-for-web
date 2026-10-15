@@ -105,6 +105,33 @@ test('inflation is bounded and ordinary oversized sources fail before parsing', 
   await assert.rejects(Parser.inflate(bomb), /8 MiB/);
   await assert.rejects(Parser.load(new Uint8Array(Parser.MAX_INPUT_BYTES + 1), 'x.png'), /32 MiB/);
 });
+test('PNG decodes candidates lazily and does not inflate unused lower-priority metadata', async () => {
+  const Original = globalThis.DecompressionStream;
+  let inflations = 0;
+  globalThis.DecompressionStream = class extends Original {
+    constructor(format) { super(format); inflations++; }
+  };
+  try {
+    const large = JSON.stringify({ name: 'unused', description: 'x'.repeat(1024 * 1024) });
+    const bytes = png([...Array.from({ length: 16 }, () => metadata('zTXt', 'chara', large)),
+      metadata('zTXt', 'ccv3', JSON.stringify(card('selected')))]);
+    assert.equal((await Parser.load(bytes, 'x.png')).raw.data.name, 'selected');
+    assert.equal(inflations, 1);
+  } finally { globalThis.DecompressionStream = Original; }
+});
+test('PNG cumulative decode limit aborts fallback and leaves the output tree untouched', async () => {
+  const value = 'x'.repeat(Parser.MAX_METADATA_BYTES / 4 + 1);
+  for (const type of ['zTXt', 'iTXt', 'nested-base64']) {
+    const record = type === 'nested-base64'
+      ? metadata('tEXt', 'ccv3', zlib.deflateSync(Buffer.from(value)).toString('base64'))
+      : metadata(type, 'ccv3', value, true);
+    // A valid lower-priority card must not hide an exhausted resource budget.
+    const f = fixture(png([metadata('tEXt', 'chara', JSON.stringify(card())), ...Array(5).fill(record)]));
+    const before = JSON.stringify(f.tree);
+    await assert.rejects(f.parse(), error => error.code === 'PNG_METADATA_LIMIT' && /累计.*16 MiB/.test(error.message));
+    assert.equal(JSON.stringify(f.tree), before);
+  }
+});
 test('tool is skill-gated and independent of visual mode; real agent loop reports file writes and errors', async () => {
   assert.equal(Agent.toolDefinitions([]).some(t => t.function.name === 'parse_tavern_card'), false);
   assert.equal(Agent.toolDefinitions([skill], { imageSending: false }).some(t => t.function.name === 'parse_tavern_card'), true);

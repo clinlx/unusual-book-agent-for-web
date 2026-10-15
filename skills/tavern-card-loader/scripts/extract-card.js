@@ -1,7 +1,7 @@
 'use strict';
 // Browser/Node share this parser. Card metadata, HTML and scripts remain inert data.
 const TavernCard = (() => {
-  const MAX_INPUT_BYTES = 32 * 1024 * 1024, MAX_TEXT_BYTES = 8 * 1024 * 1024;
+  const MAX_INPUT_BYTES = 32 * 1024 * 1024, MAX_TEXT_BYTES = 8 * 1024 * 1024, MAX_METADATA_BYTES = 16 * 1024 * 1024;
   const object = x => x !== null && typeof x === 'object' && !Array.isArray(x);
   const list = x => x == null ? [] : Array.isArray(x) ? x : [x];
   const text = x => x == null ? '' : typeof x === 'string' ? x.trim() : Array.isArray(x) ? x.map(text).filter(Boolean).join('\n') : typeof x === 'object' ? JSON.stringify(x, null, 2) : String(x);
@@ -20,13 +20,14 @@ const TavernCard = (() => {
     const s = atob(clean + '='.repeat((4 - clean.length % 4) % 4));
     return Uint8Array.from(s, c => c.charCodeAt(0));
   }
-  async function inflate(bytes, check = () => {}) {
+  async function inflate(bytes, check = () => {}, consume = () => {}) {
     if (typeof DecompressionStream === 'undefined') throw Error('当前环境缺少 zlib 解压能力');
     const reader = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate')).getReader(), chunks = [];
     let size = 0;
     try {
       for (;;) {
         check(); const { value, done } = await reader.read(); if (done) break;
+        consume(value.length);
         size += value.length;
         if (size > MAX_TEXT_BYTES) throw Error('解压后的角色卡超过 8 MiB 上限');
         chunks.push(value);
@@ -50,14 +51,14 @@ const TavernCard = (() => {
     return !!text(p.name) && (['description', 'personality', 'scenario', 'first_mes', 'mes_example'].some(k => !!text(p[k]))
       || object(p.character_book) || object(p.worldbook) || object(p.world));
   }
-  async function payload(value, check) {
+  async function payload(value, check, consume) {
     const attempts = [value]; let bytes;
     try { bytes = fromBase64(value); attempts.push(decode(bytes)); } catch (_) {}
     for (const candidate of attempts) {
       try { const raw = json(candidate); if (isCard(raw)) return raw; } catch (_) {}
     }
     if (bytes?.[0] === 0x78) {
-      const raw = json(decode(await inflate(bytes, check)));
+      const raw = json(decode(await inflate(bytes, check, consume)));
       if (isCard(raw)) return raw;
     }
     throw Error('元数据不是可识别的角色卡 JSON（或 base64/压缩数据损坏）');
@@ -70,6 +71,11 @@ const TavernCard = (() => {
   async function png(bytes, check) {
     if (![137,80,78,71,13,10,26,10].every((b, i) => bytes[i] === b)) throw Error('不是有效的 PNG 文件');
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), records = [], warnings = [], names = [];
+    let metadataBytes = 0;
+    const consume = size => {
+      metadataBytes += size;
+      if (metadataBytes > MAX_METADATA_BYTES) throw Object.assign(Error('PNG 角色卡元数据累计解码超过 16 MiB 上限'), { code: 'PNG_METADATA_LIMIT' });
+    };
     let offset = 8, ended = false, count = 0;
     while (offset < bytes.length) {
       check();
@@ -86,30 +92,36 @@ const TavernCard = (() => {
       if (names.length >= 256) throw Error('PNG 文本元数据超过 256 块上限');
       const key = decode(data.subarray(0, nul)); names.push(key);
       if (!KEYS.includes(key)) continue;
+      if (records.some(r => r.key === key)) warnings.push('重复元数据键 ' + key + '，优先尝试最后一份有效数据');
+      // Keep bounded input slices; decode candidates only in priority order after validating the PNG.
+      records.push({ key, type, data, nul });
+    }
+    if (!ended) throw Error('PNG 缺少 IEND');
+    if (offset < bytes.length) warnings.push('PNG 尾部附加数据未作为角色卡元数据读取');
+    for (const key of KEYS) for (const record of records.filter(r => r.key === key).reverse()) {
       try {
+        const { type, data, nul } = record;
         let value;
         if (type === 'tEXt') value = data.subarray(nul + 1);
         else if (type === 'zTXt') {
           if (data[nul + 1] !== 0) throw Error('zTXt 压缩方式无效');
-          value = await inflate(data.subarray(nul + 2), check);
+          value = await inflate(data.subarray(nul + 2), check, consume);
         } else {
           const flag = data[nul + 1], method = data[nul + 2];
           if (![0, 1].includes(flag) || method !== 0) throw Error('iTXt 压缩标记无效');
           const languageEnd = data.indexOf(0, nul + 3), translatedEnd = data.indexOf(0, languageEnd + 1);
           if (languageEnd < 0 || translatedEnd < 0) throw Error('iTXt 语言/译名字段已截断');
           value = data.subarray(translatedEnd + 1);
-          if (flag === 1) value = await inflate(value, check);
+          if (flag === 1) value = await inflate(value, check, consume);
         }
+        if (type === 'tEXt' || type === 'iTXt' && data[nul + 1] === 0) consume(value.length);
         if (value.length > MAX_TEXT_BYTES) throw Error('元数据超过 8 MiB 上限');
-        if (records.some(r => r.key === key)) warnings.push('重复元数据键 ' + key + '，优先尝试最后一份有效数据');
-        records.push({ key, value: decode(value) });
-      } catch (e) { check(); warnings.push(key + '：' + e.message); }
-    }
-    if (!ended) throw Error('PNG 缺少 IEND');
-    if (offset < bytes.length) warnings.push('PNG 尾部附加数据未作为角色卡元数据读取');
-    for (const key of KEYS) for (const record of records.filter(r => r.key === key).reverse()) {
-      try { return { raw: await payload(record.value, check), format: 'png:' + key, metadata_keys: names, warnings }; }
-      catch (e) { check(); warnings.push(key + '：' + e.message); }
+        return { raw: await payload(decode(value), check, consume), format: 'png:' + key, metadata_keys: names, warnings };
+      } catch (e) {
+        check();
+        if (e.code === 'PNG_METADATA_LIMIT') throw e;
+        warnings.push(key + '：' + e.message);
+      }
     }
     if (names.some(k => ['ccv3', 'chara'].includes(k))) throw Error('发现角色卡元数据但无法解码：' + warnings.join('；'));
     return { raw: null, format: 'image-no-card-metadata', metadata_keys: names, warnings: [...warnings, '普通图片或没有可解析角色卡元数据'] };
@@ -209,6 +221,6 @@ const TavernCard = (() => {
         '\n\n工具只提取，不翻译。由 AI 根据 localize.md 维护译名、语气与文化事实，完成后再交接。\n' });
     return { normalized: n, files };
   }
-  return { MAX_INPUT_BYTES, MAX_TEXT_BYTES, load, normalize, packageFiles, crc32, inflate, isCard };
+  return { MAX_INPUT_BYTES, MAX_TEXT_BYTES, MAX_METADATA_BYTES, load, normalize, packageFiles, crc32, inflate, isCard };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = TavernCard;
