@@ -5,6 +5,10 @@ const Core=require('../../src/game-core');
 const Sync=require('../../src/multiplayer-sync');
 const Import=require('../../src/game-import');
 const dir=path.resolve(__dirname,'../../dist'),names=['追书人','鬼屋','常暗之厢','大雨倾盆然后','影子','猫咪来了铃声响','猫牌大扫除','古茂密林之中','猩红文档'];
+function missingPublishedFiles(...files){
+ const missing=files.filter(file=>!fs.existsSync(path.join(dir,file)));
+ return missing.length?'本地发布素材未提供：'+missing.join('、'):false;
+}
 async function load(name){
  const bytes=fs.readFileSync(path.join(dir,'files',name+'.zip'));
  const save=await Import.importSave({name:name+'.zip',arrayBuffer:async()=>bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength)});
@@ -15,7 +19,8 @@ for(const name of names)test('published world '+name+' passes current structure 
  for(const slot of Slots.scan(tree))assert.deepEqual(Data.validateCharacterInfo({tree},slot.path),[],slot.path);
 });
 
-test('追书人 ships two independent blank player slots and matching catalogue metadata',async()=>{
+test('追书人 ships two independent blank player slots and matching catalogue metadata',
+ {skip:missingPublishedFiles('files/追书人.zip','modules.json','modules-full.json')},async()=>{
  const {tree,zip}=await load('追书人'),slots=Slots.scan(tree).filter(s=>s.kind!=='kpc');assert.equal(slots.length,2);
  for(const slot of slots){const card=Data.read({tree},slot.path+'/基础信息.json');assert.equal(card.姓名,'');assert.deepEqual(Data.read({tree},slot.path+'/背包.json'),[]);}
  for(const id of slots.map(s=>s.id)){const save=Core.createSave('追书人',tree);Slots.select(save,id);assert.deepEqual(Builder.validate(save.tree,'/workspace').errors,[]);}
@@ -66,7 +71,8 @@ test('real multiplayer archives preserve individual story and dice privacy',{ski
  }
 });
 
-for(const [name,count]of [['古茂密林之中',4],['猩红文档',5]])test(name+' catalogue download imports independent creation slots without revealing the mystery',async()=>{
+for(const [name,count]of [['古茂密林之中',4],['猩红文档',5]])test(name+' catalogue download imports independent creation slots without revealing the mystery',
+ {skip:missingPublishedFiles('files/'+name+'.zip','modules.json')},async()=>{
  const items=JSON.parse(fs.readFileSync(path.join(dir,'modules.json'),'utf8'));
  const item=items.find(x=>x.Name===name);assert.ok(item,'missing catalogue entry: '+name);
  assert.equal(decodeURIComponent(item.Link),'/files/'+name+'.zip');
