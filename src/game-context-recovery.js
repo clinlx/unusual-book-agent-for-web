@@ -19,7 +19,8 @@ const GameContextRecovery=(()=>{
     }
     return units;
   }
-  // Only the request copy is shortened. Original messages, receipts, read guards and events stay intact.
+  // Only the request copy is shortened. Original messages, receipts and events stay intact;
+  // the caller expires file knowledge whose evidence is no longer present in that request.
   function fit(s,source,current,cap,project,estimate,protectedMessages=new WeakSet()){
     const units=completedUnits(source,current),planned=new Map();
     let root=ROOT+'/Context_Round_'+current+'_'+segment(s.activeRound?.id);

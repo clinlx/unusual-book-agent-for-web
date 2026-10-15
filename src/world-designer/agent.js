@@ -9,9 +9,16 @@ const Agent = (() => {
   const _ApiUrl = (typeof module !== 'undefined') ? require('../shared/api-url.js') : ApiUrl;
   const _OutputLimit = (typeof module !== 'undefined') ? require('../shared/output-limit.js') : OutputLimit;
   const _Arguments = (typeof module !== 'undefined') ? require('../shared/tool-arguments.js') : ToolArguments;
+  const _Knowledge = (typeof module !== 'undefined') ? require('../shared/file-knowledge.js') : FileKnowledge;
   const _FileWriteValidation = (typeof module !== 'undefined') ? require('../shared/file-write-validation.js') : FileWriteValidation;
 
-  const WRITE_TOOLS = new Set(['write_file', 'apply_patch', 'delete', 'move', 'copy']);
+  const WRITE_TOOLS = new Set(['write_file', 'append_file', 'apply_patch', 'delete', 'move', 'copy']);
+  const knowledgeByReads = new WeakMap();
+  function knowledge(ctx) {
+    if(!knowledgeByReads.has(ctx.readState))knowledgeByReads.set(ctx.readState,_Knowledge.create());
+    return knowledgeByReads.get(ctx.readState);
+  }
+  const canonicalPath = path => '/' + _VFS.normalize(path).join('/');
   const _GOAL_MAX = (typeof module !== 'undefined') ? require('./00-config.js').GOAL_MAX_CHARS : GOAL_MAX_CHARS;
   const _TOOL_DEFS = (typeof module !== 'undefined') ? require('./00-config.js').TOOL_DEFS : TOOL_DEFS;
 
@@ -31,7 +38,7 @@ const Agent = (() => {
     if (!spec) return null; // 未知工具由 executeTool 兜底
     for (const k of spec.required) {
       if (args[k] === undefined || args[k] === null)
-        return '错误: 缺少必填参数 ' + k + '（工具 ' + name + ' 必填: ' + spec.required.join(', ') + '）。请补全参数后重新调用。';
+        return '错误: 缺少必填参数 ' + k + '（工具 ' + name + ' 必填: ' + spec.required.join(', ') + (name==='apply_patch'?'；另需 old_str/new_str 或 patches':'') + '）。请补全参数后重新调用。';
     }
     for (const [k, v] of Object.entries(args)) {
       const decl = spec.props[k];
@@ -132,14 +139,16 @@ const Agent = (() => {
   // 记录某路径「读取/写入时的内容指纹」，写入前据此判断是否被别人改动过
   function recordRead(ctx, path) {
     if (!ctx.readState) return;
+    path=canonicalPath(path);
     const node = _VFS.resolve(ctx.tree, _VFS.normalize(path));
-    if (node && node.type === 'file' && node.encoding !== 'base64') ctx.readState.set(path, fileStamp(node.content));
+    if (node && node.type === 'file' && node.encoding !== 'base64') {ctx.readState.set(path, fileStamp(node.content));_Knowledge.record(knowledge(ctx),path,ctx.toolCallId);}
   }
 
   // 覆盖已存在文件前的读保护：未读过→拒绝；读过但内容被改动→拒绝。
   // AI 自己的写入会同步更新指纹（见各写工具末尾的 recordRead），
   // 所以连续修改同一个文件不会被自己挡住——只拦真正来自外部的改动。
   function assertReadBeforeWrite(ctx, path) {
+    path=canonicalPath(path);
     const node = _VFS.resolve(ctx.tree, _VFS.normalize(path));
     if (!node || node.type !== 'file') return; // 新文件不受限
     if (node.encoding === 'base64') throw new Error('非文本文件不能用文本工具覆盖；可移动、复制或删除');
@@ -148,6 +157,16 @@ const Agent = (() => {
       throw new Error('该文件已存在，写入前必须先用 read_file 读取其最新内容: ' + path);
     if (ctx.readState.get(path) !== fileStamp(node.content))
       throw new Error('该文件的当前内容与你上次读到的不一致（用户手动编辑、拒绝了你的改动、或回滚了工作目录），请先重新 read_file 确认最新内容再写入: ' + path);
+    if(!_Knowledge.fresh(knowledge(ctx),path))throw new Error('读取记录已过期，请先 read_file 确认最新内容: '+path);
+  }
+  function transferReadState(ctx,from,to,moved) {
+    if(!ctx.readState)return;
+    from=canonicalPath(from);to=canonicalPath(to);
+    for(const [path,stamp] of [...ctx.readState])if(path===from||path.startsWith(from+'/')){
+      const target=to+path.slice(from.length),node=_VFS.resolve(ctx.tree,_VFS.normalize(target));
+      if(node?.type==='file'&&fileStamp(node.content)===stamp&&_Knowledge.fresh(knowledge(ctx),path))recordRead(ctx,target);
+      if(moved){ctx.readState.delete(path);delete knowledge(ctx).entries[path];}
+    }
   }
 
   // 规范化 ask_user 的参数：模型偶尔会漏字段或给出畸形结构，这里兜底修正，
@@ -190,7 +209,9 @@ const Agent = (() => {
   }
 
   // ctx: { tree, skills, config, readState?, askUser? }
-  function executeTool(ctx, name, args) {
+  function executeTool(ctx, name, args, options = {}) {
+    ctx={...ctx,toolCallId:options.callId};
+    if(ctx.readState)_Knowledge.tick(knowledge(ctx));
     const cfg = ctx.config;
     const writeOptions = { cap: cfg.writeCharLimit, validateContent: _FileWriteValidation.validate };
     const isWrite = WRITE_TOOLS.has(name);
@@ -236,6 +257,24 @@ const Agent = (() => {
           recordRead(ctx, args.path);
           return { isWrite, result: framePartialRead(r, args.path) };
         }
+        case 'read_multiple_files': {
+          const results=args.paths.map(path=>{
+            try {
+              const r=_VFS.readFile(ctx.tree,path,{cap:readCapFor(cfg,path,args.limit),limit:args.limit});
+              recordRead(ctx,path);return {path,...r};
+            } catch(error) { return {path,error:error.message}; }
+          });
+          return {isWrite:false,result:JSON.stringify(results)};
+        }
+        case 'append_file': {
+          assertReadBeforeWrite(ctx,args.path);
+          const node=_VFS.resolve(ctx.tree,_VFS.normalize(args.path));
+          if(!node||node.type!=='file')throw Error('文件不存在: '+args.path);
+          if(node.encoding==='base64')throw Error('非文本文件不能追加文本');
+          _VFS.writeFile(ctx.tree,args.path,node.content+args.content,writeOptions);
+          recordRead(ctx,args.path);
+          return {isWrite,change:buildChange(name,args,before,ctx.tree),result:'追加成功: '+args.path+' ('+args.content.length+' 字符)'};
+        }
         case 'write_file': {
           assertReadBeforeWrite(ctx, args.path);
           _VFS.writeFile(ctx.tree, args.path, args.content, writeOptions);
@@ -244,31 +283,31 @@ const Agent = (() => {
           return { isWrite, change, result: '写入成功: ' + args.path + ' (' + String(args.content).length + ' 字符)' };
         }
         case 'apply_patch': {
-          _VFS.applyPatch(ctx.tree, args.path, args.old_str, args.new_str, writeOptions);
+          assertReadBeforeWrite(ctx,args.path);
+          _VFS.applyPatches(ctx.tree, args.path, args.patches||[{old_str:args.old_str,new_str:args.new_str}], writeOptions);
           recordRead(ctx, args.path);
           const change = buildChange(name, args, before, ctx.tree);
-          return { isWrite, change, result: '补丁应用成功: ' + args.path };
+          return { isWrite, change, result: '补丁应用成功: ' + args.path+' ('+(args.patches?.length||1)+' 项)' };
         }
         case 'delete': {
           const source = _VFS.resolve(ctx.tree, _VFS.normalize(args.path));
           const binary = source && source.encoding === 'base64';
           _VFS.deletePath(ctx.tree, args.path);
           // 文件没了，读记录也该作废：同名文件重建后是新内容，不能沿用旧记录放行
-          if (ctx.readState) ctx.readState.delete(args.path);
+          if (ctx.readState) for(const p of ctx.readState.keys())if(p===canonicalPath(args.path)||p.startsWith(canonicalPath(args.path)+'/')){ctx.readState.delete(p);delete knowledge(ctx).entries[p];}
           // 非文本文件由完整工作区快照回滚，不生成会丢失编码信息的文本 diff。
           return { isWrite, change: binary ? null : buildChange(name, args, before, ctx.tree), result: '已删除: ' + args.path };
         }
         case 'move': {
           _VFS.move(ctx.tree, args.from, args.to, writeOptions);
           // 目标文件的内容是自己搬过来的，等于刚读过；源路径已不存在
-          if (ctx.readState) ctx.readState.delete(args.from);
-          recordRead(ctx, args.to);
+          transferReadState(ctx,args.from,args.to,true);
           return { isWrite, change: buildChange(name, args, before, ctx.tree), result: '已移动: ' + args.from + ' → ' + args.to };
         }
         case 'copy': {
           _VFS.copy(ctx.tree, args.from, args.to, writeOptions);
           // 同上：副本内容就是自己刚复制的，无须再读一遍才能改
-          recordRead(ctx, args.to);
+          transferReadState(ctx,args.from,args.to,false);
           return { isWrite, change: buildChange(name, args, before, ctx.tree), result: '已复制: ' + args.from + ' → ' + args.to };
         }
         case 'search': {
@@ -360,6 +399,7 @@ const Agent = (() => {
   }
   // hooks: onMessage(每产出一条消息就回调，供逐条落库)/onText/onToolStart/onToolEnd/signal
   async function runTurn(ctx, messages, transport, hooks) {
+    if(!ctx.readState)ctx.readState=new Map();
     const h = hooks || {};
     const msgs = messages.slice();
     const requestOnly = [];
@@ -384,7 +424,9 @@ const Agent = (() => {
         msgs.splice(0, msgs.length, ...prepared);
         checkAbort();
       }
-      const resp = await waitWithAbort(transport(_Arguments.project(msgs)), h.signal);
+      const outgoing=_Arguments.project(msgs);
+      _Knowledge.retain(knowledge(ctx),outgoing,path=>ctx.readState.delete(path));
+      const resp = await waitWithAbort(transport(outgoing), h.signal);
       checkAbort();
       const asst = { role: 'assistant', content: resp.content || '' };
       // 思考内容用 API 的规范字段名挂回消息。DeepSeek 思考模式的硬性要求：
@@ -405,7 +447,7 @@ const Agent = (() => {
         let out;
         try {
           const args = _Arguments.parse(tc.function?.arguments);
-          out = executeTool(ctx, tc.function.name, args);
+          out = executeTool(ctx, tc.function.name, args, {callId:tc.id});
         } catch (e) {
           // 参数串本身就不是合法 JSON（多为超长内容被截断，或转义写坏）。
           // 把长度报给模型：它能据此判断是不是太长了，改用分次写入。

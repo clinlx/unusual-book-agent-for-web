@@ -17,7 +17,7 @@ const ToolArguments = (() => {
   // Validate file-tool inputs before resolving paths; omission is not an empty value.
   const fileRequired = {
     read_file:['path'], read_multiple_files:['paths'], list_dir:['path'], tree:['path'], search:['pattern'],
-    write_file:['path','content'], append_file:['path','content'], apply_patch:['path','old_str','new_str'],
+    write_file:['path','content'], append_file:['path','content'], apply_patch:['path'],
     mkdir:['path'], delete:['path'], move:['from','to'], copy:['from','to'],
     view_image:['path'], parse_document:['path','format','output'], validate_game_structure:['path'],
     parse_tavern_card:['path'],
@@ -35,6 +35,19 @@ const ToolArguments = (() => {
     const fail=(key,reason)=>'参数 '+key+' '+reason+'（工具 '+name+'）。本次调用未执行，请修正参数后重新调用。';
     const supplied=key=>(required.includes(key)||(Object.hasOwn(fileOptional,name)&&fileOptional[name].includes(key)))&&Object.hasOwn(args,key);
     for(const key of required)if(!Object.hasOwn(args,key)||args[key]===undefined)return '缺少必填参数 '+key+'（工具 '+name+'）。本次调用未执行，请显式填写后重新调用。';
+    if(name==='apply_patch'){
+      const batch=Object.hasOwn(args,'patches');
+      if(batch&&(Object.hasOwn(args,'old_str')||Object.hasOwn(args,'new_str')))return fail('patches','不能与顶层 old_str/new_str 同时使用');
+      if(batch&&(!Array.isArray(args.patches)||!args.patches.length||args.patches.length>50))return fail('patches','需要包含 1 到 50 项替换的数组');
+      for(const [i,patch] of (batch?args.patches:[args]).entries()){
+        const prefix=batch?'patches['+i+'].':'';
+        if(!patch||typeof patch!=='object'||Array.isArray(patch))return fail('patches['+i+']','需要包含 old_str 和 new_str 的对象');
+        for(const key of ['old_str','new_str']){
+          if(!Object.hasOwn(patch,key))return fail(prefix+key,'缺少必填参数，请补齐 old_str 和 new_str');
+          if(typeof patch[key]!=='string'||key==='old_str'&&!patch[key].length)return fail(prefix+key,key==='old_str'?'需要非空字符串':'需要字符串，可用空字符串删除');
+        }
+      }
+    }
     for(const key of ['path','from','to','output_path','output_dir'])if(supplied(key)){
       if(typeof args[key]!=='string')return fail(key,'需要字符串');
       if(!args[key].trim())return fail(key,'不能为空或纯空白；请填写实际路径');

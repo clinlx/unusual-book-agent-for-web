@@ -23,7 +23,7 @@ const GameTools=(()=>{
     search:{properties:{path:{...filePath,description:'搜索根目录；省略时搜索 /workspace。显式填写时必须是非空实际路径。'},pattern:{...str,minLength:1},target:{type:'string',enum:['both','name','content']},limit:{...integer,minimum:1}},required:['pattern']},
     write_file:{properties:{path:filePath,content:str},required:['path','content']},
     append_file:{properties:{path:filePath,content:{...str,minLength:1}},required:['path','content']},
-    apply_patch:{properties:{path:filePath,old_str:{...str,minLength:1},new_str:str},required:['path','old_str','new_str']},
+    apply_patch:{properties:{path:filePath,old_str:{...str,minLength:1},new_str:str,patches:{type:'array',minItems:1,maxItems:50,items:{type:'object',properties:{old_str:{...str,minLength:1},new_str:str},required:['old_str','new_str']}}},required:['path'],oneOf:[{required:['old_str','new_str'],not:{required:['patches']}},{required:['patches'],not:{anyOf:[{required:['old_str']},{required:['new_str']}]}}]},
     mkdir:{properties:{path:filePath},required:['path']},delete:{properties:{path:filePath},required:['path']},
     move:{properties:{from:filePath,to:filePath},required:['from','to']},copy:{properties:{from:filePath,to:filePath},required:['from','to']}
   };

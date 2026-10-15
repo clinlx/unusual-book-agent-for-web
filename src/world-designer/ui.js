@@ -21,7 +21,7 @@
     continuing: false,
     storageBusy: false,
     activeTmpPaths: new Set(),  // 正在运行的轮次需要的临时文件，容量清理时暂时保留
-    readState: new Map(),       // 写保护：path → 读取时 mtime（每项目重置）
+    readState: new Map(),       // 写保护：规范路径 → 最近成功读写的内容指纹
     running: false,             // 本页正在跑 Agent 轮次
     run: null,                 // 本轮中止控制器与收尾完成信号
     runningSession: null,       // 正在运行轮次的 sessionId（send() 赋值）
@@ -1532,7 +1532,7 @@
   // 工具执行中的占位卡片：只报告在做什么，不显示结果（还没有）。
   // 措辞与完成后的卡片对应，这样卡片"变身"时视觉上是连续的。
   const TOOL_BUSY_LABEL = {
-    read_file: '正在读取', view_image: '正在查看图片', write_file: '正在写入', apply_patch: '正在修改',
+    read_file: '正在读取', read_multiple_files:'正在批量读取', view_image: '正在查看图片', write_file: '正在写入', append_file:'正在追加', apply_patch: '正在修改',
     list_dir: '正在查看目录', search: '正在搜索', delete: '正在删除',
     move: '正在移动', copy: '正在复制', run_skill: '正在加载 Skill',
     goal: '正在更新目标', ask_user: '等待你的回答',
@@ -1678,19 +1678,19 @@
   }
 
   // 判定：这次工具调用是否在读 /skills/ 下的内容（Skill 自带的参考资料）
-  const SKILL_READ_TOOLS = new Set(['read_file', 'list_dir', 'search']);
+  const SKILL_READ_TOOLS = new Set(['read_file', 'read_multiple_files', 'list_dir', 'search']);
   function isSkillRead(tc) {
     if (!SKILL_READ_TOOLS.has(tc.function.name)) return false;
     try {
       const a = JSON.parse(tc.function.arguments || '{}');
-      const p = a.path || '';
-      return typeof p === 'string' && /^\/?skills(\/|$)/.test(p.replace(/^\.?\//, '/'));
+      const paths = Array.isArray(a.paths)?a.paths:[a.path||''];
+      return paths.some(p=>typeof p === 'string' && /^\/?skills(\/|$)/.test(p.replace(/^\.?\//, '/')));
     } catch (_) { return false; }
   }
   // 读取 Skill 资料的卡片：只报告在读什么，内容不可展开
   function skillReadCard(tc) {
     let path = '';
-    try { path = JSON.parse(tc.function.arguments || '{}').path || ''; } catch (_) { /* 参数损坏时留空 */ }
+    try { const args=JSON.parse(tc.function.arguments || '{}');path=args.path||(args.paths||[]).find(p=>typeof p==='string'&&/^\/?skills\//.test(p))||''; } catch (_) { /* 参数损坏时留空 */ }
     // /skills/<name>/... → 取出 Skill 名与相对路径，便于阅读
     const m = String(path).replace(/^\.?\//, '/').match(/^\/skills\/([^/]+)(?:\/(.*))?$/);
     const skill = m ? m[1] : '';
@@ -2621,6 +2621,7 @@
             try {
               const a = JSON.parse(tc.function.arguments || '{}');
               if (['read_file', 'view_image', 'parse_document'].includes(tc.function.name) && !/^错误/.test(res.result) && a.path && String(a.path).startsWith('/tmp/')) readPaths.add(a.path);
+              if(tc.function.name==='read_multiple_files'&&!/^错误/.test(res.result))for(const item of JSON.parse(res.result))if(!item.error&&String(item.path).startsWith('/tmp/'))readPaths.add(item.path);
             } catch (_) { /* 参数非法时忽略 */ }
             recordPendingChange(res, turnNo);
             renderFileTree();

@@ -6,6 +6,7 @@ const GameCore = (() => {
   const history = typeof module !== 'undefined' && module.exports ? require('./game-history.js') : GameHistory;
   const recovery = typeof module !== 'undefined' && module.exports ? require('./game-context-recovery.js') : GameContextRecovery;
   const toolArguments = typeof module !== 'undefined' && module.exports ? require('./shared/tool-arguments.js') : ToolArguments;
+  const fileKnowledge = typeof module !== 'undefined' && module.exports ? require('./shared/file-knowledge.js') : FileKnowledge;
   const inputs = typeof module !== 'undefined' && module.exports ? require('./game-input-history.js') : GameInputs;
   const slots = typeof module !== 'undefined' && module.exports ? require('./game-slots.js') : GameSlots;
   const worldTriggers = typeof module !== 'undefined' && module.exports ? require('./game-world-triggers.js') : GameWorldTriggers;
@@ -332,6 +333,7 @@ const GameCore = (() => {
   function execute(s,name,a={},callId=uid(),options={}) {
     const round=s.activeRound;if(!round)return {ok:false,error:'尚未开始回合'};
     if(Object.hasOwn(round.receipts,callId))return copy(round.receipts[callId]);
+    const knowledge=round.fileKnowledge||(round.fileKnowledge=fileKnowledge.create());fileKnowledge.tick(knowledge);
     
     
     const before=copy({tree:s.tree,slots:s.slots,cache:s.cache,round:s.round,status:s.status,playerPath:s.playerPath,
@@ -343,6 +345,7 @@ const GameCore = (() => {
       if(!object(a))throw Error('参数必须是对象');
       const invalidFileArgs=toolArguments.validateFiles(name,a);if(invalidFileArgs)throw Error(invalidFileArgs);
       const p=a.path===undefined?'/workspace':path(a.path);
+      const record=fp=>{const node=vfs.resolve(s.tree,vfs.normalize(fp));if(node?.type==='file'&&node.encoding!=='base64'){round.readState[fp]=node.content;fileKnowledge.record(knowledge,fp,callId);}};
       const read=(input)=>{
         const fp=path(input.path),resource=options.resource?.(fp)??options.resource?.(String(input.path));
         const n=vfs.resolve(s.tree,vfs.normalize(fp));
@@ -351,14 +354,14 @@ const GameCore = (() => {
           return {content:resource.slice(offset,offset+limit),offset,totalLength:resource.length,truncated:offset+limit<resource.length};}
         if(!n&&fp.startsWith('/workspace/')&&['开场说明.md','开场白.md','样例开场.md','开场原文.txt','开场剧情.txt'].includes(fp.split('/').at(-1)))return {content:'',offset:0,totalLength:0,truncated:false,exists:false,optional:true};
         if(!n)throw Error('文件不存在: '+fp);
-        const r=vfs.readFile(s.tree,fp,{offset:input.offset,limit:input.limit,cap:120000});round.readState[fp]=n.content;return r;
+        const r=vfs.readFile(s.tree,fp,{offset:input.offset,limit:input.limit,cap:120000});record(fp);return r;
       };
       const writable=fp=>{
         if(fp==='/.reference'||fp.startsWith('/.reference/')||fp==='/prompts'||fp.startsWith('/prompts/')||options.resource?.(fp)!==undefined)throw Error('提示词为只读资源');
         const role=/^\/workspace\/((Player|AIPC|DISABLE|KPC)-[^/]*)(?:\/|$)/.exec(fp);
         if(role&&(role[2]==='DISABLE'||!vfs.resolve(s.tree,['workspace',role[1]])))throw Error('角色槽位由宿主管理，不能新增槽位或修改关闭角色');
       };
-      const readFirst=fp=>{writable(fp);const n=vfs.resolve(s.tree,vfs.normalize(fp));if(n?.type==='file'&&round.readState[fp]!==n.content)throw Error('修改前先 read_file 读取最新内容: '+fp);};
+      const readFirst=fp=>{writable(fp);const n=vfs.resolve(s.tree,vfs.normalize(fp));if(n?.type==='file'&&(round.readState[fp]!==n.content||!fileKnowledge.fresh(knowledge,fp)))throw Error('修改前先 read_file 读取最新内容（未读取、内容已变化或读取记录已过期）: '+fp);};
       const readSubtreeFirst=fp=>{readFirst(fp);const n=vfs.resolve(s.tree,vfs.normalize(fp));if(n?.type==='dir')for(const child of Object.values(n.children))readSubtreeFirst(fp+'/'+child.name);};
       let result;
       switch(name){
@@ -462,7 +465,7 @@ const GameCore = (() => {
           result={path:p,appended:a.content.length,totalLength:content.length};break;
         }
         case 'write_file':readFirst(p);if(typeof a.content!=='string')throw Error('content 必须是文本');vfs.writeFile(s.tree,p,a.content,writeOptions);result={path:p,written:a.content.length};break;
-        case 'apply_patch':readFirst(p);if(typeof a.new_str!=='string')throw Error('new_str 必须是文本');result=vfs.applyPatch(s.tree,p,a.old_str,a.new_str,writeOptions);break;
+        case 'apply_patch':readFirst(p);vfs.applyPatches(s.tree,p,a.patches||[{old_str:a.old_str,new_str:a.new_str}],writeOptions);result={path:p,applied:a.patches?.length||1};break;
         case 'mkdir':writable(p);vfs.mkdir(s.tree,p);result={path:p};break;
         case 'delete':if(p==='/workspace'||slots.scan(s.tree).some(x=>x.path===p))throw Error('角色目录由槽位管理，不能删除');readSubtreeFirst(p);vfs.deletePath(s.tree,p);result={path:p};break;
         case 'move':case 'copy':{
@@ -498,6 +501,18 @@ const GameCore = (() => {
         const old=roles(before.tree),next=roles(s.tree),shape=xs=>JSON.stringify(xs.map(([key,node])=>[key,node.type]).sort(([a],[b])=>a.localeCompare(b)));
         if(shape(old)!==shape(next))throw Error('角色根目录集合由槽位管理，文件工具不能改变');
         for(const [key,node]of old)if(key.startsWith('DISABLE-')&&JSON.stringify(node)!==JSON.stringify(vfs.resolve(s.tree,['workspace',key])))throw Error('关闭角色资料只允许通过槽位管理恢复后修改');
+        if(['write_file','append_file','apply_patch'].includes(name))record(p);
+        if(name==='delete'||name==='move'){
+          const removed=name==='delete'?p:path(a.from);
+          for(const fp of Object.keys(round.readState))if(fp===removed||fp.startsWith(removed+'/')){delete round.readState[fp];delete knowledge.entries[fp];}
+        }
+        if(name==='move'||name==='copy'){
+          const from=path(a.from),to=path(a.to);
+          for(const [fp,content] of Object.entries(before.activeRound.readState))if(fp===from||fp.startsWith(from+'/')){
+            const dest=to+fp.slice(from.length),node=vfs.resolve(s.tree,vfs.normalize(dest));
+            if(node?.content===content&&before.activeRound.fileKnowledge&&fileKnowledge.fresh(before.activeRound.fileKnowledge,fp))record(dest);
+          }
+        }
       }
       out={ok:true,result:result??{status:'ok'}};
     }catch(e){
@@ -559,7 +574,7 @@ const GameCore = (() => {
           '以下为程序执行的预设开场记录，不是新的玩家行动。预设第一回合.md 的内容在 append_story 成功后已作为 story 正文向玩家发布。以各项回执为准，成功发布的正文及已完成的回合不得重复执行；沿用记录中的状态继续。',
         operations:(m.tool_calls||[]).map(c=>{
           const receipt=receipts.get(key(m,c.id));
-          return {name:c.function.name,arguments:parse(c.function.arguments),result:receipt?parse(receipt.content):{pending:true}};
+          return {call_id:c.id,name:c.function.name,arguments:parse(c.function.arguments),result:receipt?parse(receipt.content):{pending:true}};
         })};
       if(m.content)record.content=m.content;
       return [{role:'user',content:(preload?'[开局预读资料]':'[预设开场执行记录]')+'\n'+JSON.stringify(record)}];
@@ -636,6 +651,7 @@ const GameCore = (() => {
     if(estimate(sent)>cap)sent=recovery.fit(s,s.messages.filter(m=>(m.round||1)>=from),current,cap,build,estimate,protectedMessages);
     const used=estimate(sent);
     if(used>cap)throw Object.assign(Error('自动整理后仍超过上下文上限（估算消息 '+used+' / 可用消息 '+cap+' tokens）。固定提示词或必须保留的输入过大，请在设置中调大上下文上限或降低输出上限，再点击“继续本轮”。'),{code:'CONTEXT_LIMIT',used,cap});
+    if(s.activeRound?.fileKnowledge)fileKnowledge.retain(s.activeRound.fileKnowledge,sent,fp=>delete s.activeRound.readState[fp]);
     s.contextFromRound=from;return sent;
   }
   function prepareOpeningReads(s){

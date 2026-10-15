@@ -6,8 +6,8 @@ const C = require('../../src/world-designer/00-config.js');
 test('TOOL_DEFS 含全部工具', () => {
   const names = C.TOOL_DEFS.map(t => t.function.name).sort();
   assert.deepStrictEqual(names, [
-    'apply_patch', 'ask_user', 'copy', 'delete', 'goal', 'list_dir', 'move',
-    'parse_document', 'read_file', 'run_skill', 'search', 'view_image', 'write_file',
+    'append_file', 'apply_patch', 'ask_user', 'copy', 'delete', 'goal', 'list_dir', 'move',
+    'parse_document', 'read_file', 'read_multiple_files', 'run_skill', 'search', 'view_image', 'write_file',
   ]);
   for (const t of C.TOOL_DEFS) {
     assert.strictEqual(t.type, 'function');

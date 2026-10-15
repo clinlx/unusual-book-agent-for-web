@@ -165,19 +165,27 @@ const VFSCore = { create({ readableRoots, writableRoots, binaryReadError }) {
   }
 
   function applyPatch(tree, path, oldStr, newStr, opts = {}) {
+    return applyPatches(tree,path,[{old_str:oldStr,new_str:newStr}],opts);
+  }
+  function applyPatches(tree, path, patches, opts = {}) {
     const parts = normalize(path);
     assertWritable(parts);
     const node = resolve(tree, parts);
     if (!node || node.type !== 'file') throw new Error('文件不存在: ' + path);
     if (node.encoding === 'base64') throw new Error('非文本文件不能应用文本补丁');
-    if (!oldStr) throw new Error('old_str 不能为空');
-    if (opts.cap && (oldStr.length > opts.cap || String(newStr).length > opts.cap))
-      throw new Error('补丁内容超过上限 ' + opts.cap + ' 字符，请拆分为多次补丁');
-    const first = node.content.indexOf(oldStr);
-    if (first === -1) throw new Error('old_str 未在文件中找到，请先 read_file 确认内容');
-    if (node.content.indexOf(oldStr, first + 1) !== -1)
-      throw new Error('old_str 在文件中出现多次，请提供更长的唯一片段');
-    const content = node.content.slice(0, first) + String(newStr) + node.content.slice(first + oldStr.length);
+    if(!Array.isArray(patches)||!patches.length||patches.length>50)throw new Error('patches 必须包含 1 到 50 项替换');
+    let content=node.content,total=0;
+    for(const [i,patch] of patches.entries()){
+      const label='patches['+i+']',oldStr=patch?.old_str,newStr=patch?.new_str;
+      if(typeof oldStr!=='string'||!oldStr.length)throw new Error(label+'.old_str 必须是字符串且不能为空');
+      if(typeof newStr!=='string')throw new Error(label+'.new_str 必须是字符串');
+      total+=oldStr.length+newStr.length;
+      if(opts.cap&&(oldStr.length>opts.cap||newStr.length>opts.cap||total>opts.cap*2))throw new Error(label+' 补丁内容超过上限，请拆分为多次补丁');
+      const first=content.indexOf(oldStr);
+      if(first===-1)throw new Error(label+'.old_str 未在文件中找到，请先 read_file 确认内容');
+      if(content.indexOf(oldStr,first+1)!==-1)throw new Error(label+'.old_str 在文件中出现多次，请提供更长的唯一片段');
+      content=content.slice(0,first)+newStr+content.slice(first+oldStr.length);
+    }
     if (opts.validateContent) opts.validateContent('/' + parts.join('/'), content, node);
     node.content = content;
     node.mtime = opts.now !== undefined ? opts.now : nowTs();
@@ -272,6 +280,6 @@ const VFSCore = { create({ readableRoots, writableRoots, binaryReadError }) {
     return lines.length ? lines.join('\n') : '(空)';
   }
 
-  return { createTree, normalize, resolve, mkdir, mkdirp, readFile, writeFile, fileBytes, listDir, deletePath, move, copy, clone, applyPatch, search, overview, stat };
+  return { createTree, normalize, resolve, mkdir, mkdirp, readFile, writeFile, fileBytes, listDir, deletePath, move, copy, clone, applyPatch, applyPatches, search, overview, stat };
 } };
 if (typeof module !== 'undefined' && module.exports) module.exports = VFSCore;
