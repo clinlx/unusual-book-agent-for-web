@@ -25,8 +25,17 @@ jobs:
       - name: 安装依赖
         run: npm ci
 
-      - name: 运行测试
-        run: npm test
+      - name: 运行测试（README 保护仅在本地检查）
+        shell: bash
+        run: |
+          test_files=()
+          for test_file in tests/*.test.js tests/world-designer/*.test.js tests/integration/*.test.js; do
+            if [[ "$test_file" != "tests/readme-protection.test.js" ]]; then
+              test_files+=("$test_file")
+            fi
+          done
+          node --test --test-concurrency=1 "${test_files[@]}"
+          npm run posttest
 
       - name: 构建网页
         run: npm run build
