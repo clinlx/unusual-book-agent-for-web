@@ -173,7 +173,7 @@ const GameCore = (() => {
     try{return JSON.parse(n.content.replace(/^\uFEFF/,''));}catch(_){throw Error(p+' 的 JSON 格式不正确，请在 DEBUG 中修正');}
   }
   function player(s,section,{includeHidden=false}={}) {
-    const info=section==='items'?{}:data.displayPaths(s,includeHidden?readJson(s,s.playerPath+'/基础信息.json',{}):filterVisible(readJson(s,s.playerPath+'/基础信息.json',{})));
+    const info=section==='items'?{}:data.displayPaths(s,includeHidden?readJson(s,s.playerPath+'/基础信息.json',{}):filterVisible(readJson(s,s.playerPath+'/基础信息.json',{})),{includeHidden});
     if(!object(info))throw Error('基础信息.json 必须是 JSON 对象');
     if(section==='info')return {info,name:data.get(info,'姓名')||s.playerPath.split('/').pop()};
     const bag=readJson(s,s.playerPath+'/背包.json',[]);

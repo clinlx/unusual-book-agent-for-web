@@ -67,6 +67,23 @@ test('spectator views filter private dice, pending actions and profile access at
  assert.equal(Sync.inventory(f.save,'a',{room:f.host.state(),memberId:'all'}).items.length,1);
 });
 
+test('spectator wearing references resolve at the host and preserve perspective visibility',async t=>{
+ const f=await setup(t);for(const [id,permission]of [['one','a'],['all','all']])await f.host.reserveSpectator(id,permission);
+ VFS.writeFile(f.save.tree,'/workspace/Player-a/基础信息.json',JSON.stringify({姓名:'甲',穿戴:{头部:'hat',右手:'secret'},'.秘密':'角色秘密'}));
+ VFS.writeFile(f.save.tree,'/workspace/存档-索引-物品/hat/物品基础信息.json',JSON.stringify({名称:'灰色呢帽',信息:'毡制帽檐','.秘密':'帽内密文'}));
+ VFS.writeFile(f.save.tree,'/workspace/存档-索引-物品/secret/物品基础信息.json',JSON.stringify({名称:'隐藏道具名称','.是否对玩家隐藏':true}));
+ const projector=Sync.createHost({getSave:()=>f.save,getRoom:()=>f.host.state()});
+ const first=await projector.sync('one');assert.equal(first.view.info.穿戴.头部,'灰色呢帽');
+ assert.doesNotMatch(JSON.stringify(first),/隐藏道具名称|角色秘密|帽内密文/);assert.equal(first.view.tree,undefined);
+ const options=memberId=>({memberId,room:f.host.state()});
+ assert.equal(Sync.profile(f.save,'a',options('one')).info.穿戴.头部,'灰色呢帽');
+ assert.notEqual(Sync.profile(f.save,'a',options('one')).info.穿戴.右手,'隐藏道具名称');
+ assert.equal(Sync.profile(f.save,'a',options('all')).info.穿戴.右手,'隐藏道具名称');
+ VFS.writeFile(f.save.tree,'/workspace/存档-索引-物品/hat/物品基础信息.json',JSON.stringify({名称:'破损的呢帽'}));
+ const update=await projector.sync('one',{revision:first.revision,hashes:first.hashes,cursor:first.cursor});
+ assert.match(JSON.stringify(update),/破损的呢帽/);
+});
+
 
 test('spectating host may advance unconscious players but cannot bypass conscious submissions',async t=>{
  const f=await setup(t,true);await f.send('host','round.start');await f.host.waitForIdle();

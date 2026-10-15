@@ -33,15 +33,26 @@ const GameData=(()=>{
   function consensusTime(s){try{return timeValue(read(s,'世界状态和世界规则/世界共识.json'));}catch(_){return '';}}
   function worldTime(s){const world=consensusTime(s),r=s.activeRound;if(r&&!r.complete&&r.initialWorldTime!==undefined&&world&&world!==r.initialWorldTime)return world;return timeValue(s.cache)||world;}
   function actorState(info){const groups=[get(info,'状态'),get(info,'属性'),get(info,'衍生属性'),info];const enabled=k=>{for(const g of groups){const v=get(g,k);if(v!==undefined)return ![false,0,'false','0'].includes(typeof v==='string'?v.toLowerCase().trim():v);}return true;};return {alive:enabled('Alive'),enabled:enabled('Enabled')};}
-  function displayPaths(s,value){
-    if(Array.isArray(value))return value.map(v=>displayPaths(s,v));
-    if(object(value))return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,displayPaths(s,v)]));
+  function displayPaths(s,value,{includeHidden=false}={}){
+    const options={includeHidden};
+    if(Array.isArray(value))return value.map(v=>displayPaths(s,v,options));
+    if(object(value))return Object.fromEntries(Object.entries(value).map(([k,v])=>{
+      if(aliases.穿戴.some(alias=>normalize(alias)===normalize(k))&&object(v)){
+        // Wearing accepts bare item IDs as well as full paths; ordinary text stays text.
+        const wearing=Object.fromEntries(Object.entries(v).map(([part,ref])=>{
+          const p=typeof ref==='string'?itemPath(ref):null;
+          return [part,displayPaths(s,p&&node(s,p)?p:ref,options)];
+        }));
+        return [k,wearing];
+      }
+      return [k,displayPaths(s,v,options)];
+    }));
     if(typeof value!=='string')return value;
     const p=value.replace(/\\/g,'/').replace(/^\/?workspace\//,'');
     if(!/^(存档-索引-物品|存档-索引-NPC|存档-世界)\//.test(p))return value;
     const n=node(s,p);if(!n)return value;
     const file=n.type==='file'?p:p+'/'+(p.startsWith('存档-索引-物品/')?'物品基础信息.json':p.startsWith('存档-索引-NPC/')?'基础信息.json':'场景信息.json');
-    try{const info=read(s,file);if(!hiddenFlag(info['.是否对玩家隐藏'])){const name=get(info,['名称','姓名','Name','name']);if(typeof name==='string'&&name.trim())return name;}}catch(_){}
+    try{const info=read(s,file);if(includeHidden||!hiddenFlag(info['.是否对玩家隐藏'])){const name=get(info,['名称','姓名','Name','name']);if(typeof name==='string'&&name.trim())return name;}}catch(_){}
     return n.type==='dir'?n.name:p.split('/').at(-2)||n.name;
   }
   function references(s,entries){const warnings=[];for(const entry of entries||[]){if(!object(entry))continue;const p=entry.所在文件,k=entry.剧情关键词||entry.事件关键词;if(typeof p!=='string'||!p.trim())continue;const n=node(s,p);if(!n&&!p.replace(/\\/g,'/').split('/').includes('..')&&['开场说明.md','开场白.md','样例开场.md','开场原文.txt','开场剧情.txt'].includes(p.replace(/\\/g,'/').split('/').at(-1)))continue;if(!n){warnings.push('[引用错误] 文件或目录不存在: '+p+'。先用 tree/search 确认实际路径，再读取模组和相关台本，修正 phase_plan 或 Cache 的引用；确需新增的后续事件先落实到文件，再登记引用，不凭不存在的引用推进剧情。');continue;}if(typeof k==='string'&&k.trim()){
