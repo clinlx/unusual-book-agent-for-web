@@ -27,6 +27,10 @@ const FileWriteValidation = (() => {
     const parts = String(path).split('/').filter(Boolean), file = parts.at(-1) || '';
     if (!/\.json$/i.test(file)) return;
     if (metadata.encoding === 'base64') throw Error('JSON 文件必须保存文本内容: ' + path);
+    if(file==='世界触发器.json'){
+      const rules=typeof module!=='undefined'&&module.exports?require('../../skills/game-world-builder/scripts/world-trigger-rules.js'):WorldTriggerRules;
+      rules.parse(content);
+    }
     if (!content.trim()) {if(file==='开局预读.json')openingFiles(null);return;}
     let value;
     try { value = JSON.parse(content.replace(/^\uFEFF/, '')); }

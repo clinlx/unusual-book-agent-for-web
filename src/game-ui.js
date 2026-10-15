@@ -207,6 +207,7 @@ const GameUI = (() => {
     if (e.type === 'dice'&&e.secret&&mode!=='debug') return `<div class="secret-dice-notice ${isPrivateEvent(e)?'private-dice':''}" role="status"><span aria-hidden="true">⚄</span> ${privacyTag(e)} [AI 进行了一次暗骰]</div>`;
     if (e.type === 'dice') return diceHTML(e,mode,details,meta);
     if (e.type === 'tool') return `<article class="tool-event"><header><span class="tool-mark">ƒ</span> ${esc(e.name)} <small>${e.success === false ? '失败' : '工具调用'}</small></header>${details('参数',e.args)}${details('结果',e.result)}${e.fileChanges?.length?details('文件修改记录',e.fileChanges):''}</article>`;
+    if (e.type === 'world_trigger') return mode==='debug'?`<article class="tool-event"><header>世界资料触发检测 <small>第 ${esc(e.round)} 回合</small></header>${details('命中与过滤结果',e.decisions)}</article>`:'';
     if (e.type === 'assistant') return `<article class="assistant-event"><header>模型回复</header>${e.reasoning ? details('模型返回的思考',e.reasoning) : ''}${markdown(e.content)}</article>`;
     return `<article class="error-event"><header>${esc(e.type)}</header><pre>${esc(json(e.content || e))}</pre></article>`;
   }

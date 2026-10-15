@@ -51,7 +51,7 @@ test('default build emits index.html and leaves the manually managed catalog unt
   const normalize=text=>text.replace(/^\uFEFF/,'').replace(/\r\n?/g,'\n');
   for(const [id,text] of Object.entries(skills)){
     if(!id.endsWith('.md'))continue;
-    const source=id.startsWith('skills/game-world-builder/')?id:'assets/world-designer/'+id;
+    const source=/^skills\/(game-world-builder|tavern-card-loader)\//.test(id)?id:'assets/world-designer/'+id;
     assert.equal(text,normalize(fs.readFileSync(path.join(root,source),'utf8')),id);
   }
   if(expected.includes('index.md')){

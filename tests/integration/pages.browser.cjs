@@ -9,7 +9,7 @@ const readyDesigner = require('./designer-ready.cjs');
 const { parseFrontmatter } = require('../../src/world-designer/skills');
 const root = path.resolve(__dirname, '../..');
 const dist = path.join(root, 'dist');
-const expected = ['game-world-builder', 'write-novel', 'desire-analysis', 'grilling'];
+const expected = ['game-world-builder', 'write-novel', 'desire-analysis', 'grilling', 'tavern-card-loader'];
 const call = (name, args, id) => ({ id, type: 'function', function: { name, arguments: JSON.stringify(args) } });
 
 (async () => {
@@ -169,7 +169,7 @@ const call = (name, args, id) => ({ id, type: 'function', function: { name, argu
     assert.equal(await page.evaluate(() => VFS.resolve(__UI_STATE__.tree, ['skills', 'unwanted-skill'])), null);
     assert.ok((await page.evaluate(() => Object.keys(VFS.resolve(__UI_STATE__.tree, ['skills']).children))).every(name => expected.includes(name)));
     await page.getByTitle('设置', { exact: true }).click();
-    assert.equal(await page.locator('.skill-item').count(), 4);
+    assert.equal(await page.locator('.skill-item').count(), 5);
     assert.equal(await page.locator('.skill-item').first().getAttribute('data-skill'), 'game-world-builder');
     const requiredToggle = page.locator('.skill-item.required .sk-toggle');
     assert.equal(await requiredToggle.isDisabled(), true);

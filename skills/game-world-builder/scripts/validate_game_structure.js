@@ -25,6 +25,21 @@ function validateStructure(world) {
   for (const file of walk(root).filter(f=>/\.json$/i.test(f))) {
     try { parsed.set(file, readJSON(file)); } catch(e) { report(`[JSON格式错误] ${rel(file)}: ${e.message}`, file); }
   }
+  const triggerConfig=path.join(root,'世界触发器.json');
+  if(kind(triggerConfig,true))report('[世界触发器错误] 世界触发器.json 必须是文件',triggerConfig);
+  if(parsed.has(triggerConfig)){
+    try{
+      const rules=typeof module!=='undefined'&&module.exports?require('./world-trigger-rules.js'):WorldTriggerRules;
+      const {references}=rules.parse(fs.readFileSync(triggerConfig,'utf8'));
+      for(const relative of references){
+        const target=path.join(root,relative);
+        if(!kind(target)){report('[世界触发器错误] 引用文件不存在：'+relative,triggerConfig);continue;}
+        const actual=path.relative(fs.realpathSync(root),fs.realpathSync(target));
+        if(actual.startsWith('..')||path.isAbsolute(actual))report('[世界触发器错误] 引用越界：'+relative,triggerConfig);
+        else {const content=fs.readFileSync(target,'utf8');if(content.length>120000)report('[世界触发器错误] 引用文本超过 120000 字符：'+relative,triggerConfig);}
+      }
+    }catch(e){report('[世界触发器错误] '+e.message,triggerConfig);}
+  }
   // These files are optional; legacy opening samples never activate local round one.
   for(const name of ['开局内部说明.md','预设第一回合.md']){
     const file=path.join(root,name);

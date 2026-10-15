@@ -1,7 +1,7 @@
 'use strict';
 const DesignerResources = (() => {
   const loader = typeof module !== 'undefined' && module.exports ? require('./skill-loader.js') : SkillLoader;
-  const names = Object.freeze(['write-novel', 'desire-analysis', 'grilling', 'game-world-builder']);
+  const names = Object.freeze(['write-novel', 'desire-analysis', 'grilling', 'game-world-builder', 'tavern-card-loader']);
   const isRequired = name => name === 'game-world-builder';
   function installed(skills) {
     return (skills || []).filter(skill => names.includes(skill.name))
@@ -34,10 +34,10 @@ const DesignerResources = (() => {
         return fetchResource(file, as);
       });
       report.skills = installed(report.skills);
-      for (const skill of report.skills) if (skill.required) {
+      for (const skill of report.skills) if (skill.required || skill.name === 'tavern-card-loader') {
         skill.warnings = (skill.warnings || []).filter(message => !message.includes('本环境不执行脚本'));
       }
-      report.warnings = report.warnings.filter(message => !(message.startsWith('game-world-builder:') && message.includes('本环境不执行脚本')));
+      report.warnings = report.warnings.filter(message => !(['game-world-builder:', 'tavern-card-loader:'].some(prefix => message.startsWith(prefix)) && message.includes('本环境不执行脚本')));
       return { ...report, origin, complete };
     }
     if (!standalone && /^https?:/i.test(href) && fetchFn) {

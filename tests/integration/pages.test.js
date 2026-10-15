@@ -13,7 +13,7 @@ test('one build delivers the game and the complete offline-capable workbench', (
   fs.writeFileSync(path.join(obsolete, 'SKILL.md'), '# Old generated resource');
   execFileSync(process.execPath, ['build.js'], { cwd: root, stdio: 'pipe' });
   assert.ok(fs.existsSync(path.join(root, 'dist/designer.html')), 'the standalone designer must be generated');
-  const expectedSkills = ['write-novel', 'desire-analysis', 'grilling', 'game-world-builder'];
+  const expectedSkills = ['write-novel', 'desire-analysis', 'grilling', 'game-world-builder', 'tavern-card-loader'];
   for (const obsoleteName of ['world-designer', 'world-designer.html', 'world-designer.standalone.html'])
     assert.equal(fs.existsSync(path.join(root, 'dist', obsoleteName)), false, 'remove obsolete generated artifact '+obsoleteName);
   for (const name of ['index.html', 'designer.html']) {

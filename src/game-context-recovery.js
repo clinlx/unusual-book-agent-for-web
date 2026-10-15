@@ -20,7 +20,7 @@ const GameContextRecovery=(()=>{
     return units;
   }
   // Only the request copy is shortened. Original messages, receipts, read guards and events stay intact.
-  function fit(s,source,current,cap,project,estimate){
+  function fit(s,source,current,cap,project,estimate,protectedMessages=new WeakSet()){
     const units=completedUnits(source,current),planned=new Map();
     let root=ROOT+'/Context_Round_'+current+'_'+segment(s.activeRound?.id);
     while(V.resolve(s.tree,V.normalize(root))?.type==='file')root+='_'+uid();
@@ -48,9 +48,9 @@ const GameContextRecovery=(()=>{
       if(estimate(sent)<=cap)return commit(sent,paths);
       const groups=[];
       for(let start=0;start<sent.length;){
-        if(sent[start].role!=='user'||typeof sent[start].content!=='string'){start++;continue;}
+        if(sent[start].role!=='user'||typeof sent[start].content!=='string'||protectedMessages.has(sent[start])){start++;continue;}
         let end=start+1;
-        while(end<sent.length&&sent[end].role==='user'&&typeof sent[end].content==='string')end++;
+        while(end<sent.length&&sent[end].role==='user'&&typeof sent[end].content==='string'&&!protectedMessages.has(sent[end]))end++;
         groups.push({start,end,messages:sent.slice(start,end)});start=end;
       }
       const projected=sent,replacements=new Map(),inputPaths=[];
