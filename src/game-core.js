@@ -7,6 +7,7 @@ const GameCore = (() => {
   const recovery = typeof module !== 'undefined' && module.exports ? require('./game-context-recovery.js') : GameContextRecovery;
   const inputs = typeof module !== 'undefined' && module.exports ? require('./game-input-history.js') : GameInputs;
   const slots = typeof module !== 'undefined' && module.exports ? require('./game-slots.js') : GameSlots;
+  const worldTriggers = typeof module !== 'undefined' && module.exports ? require('./game-world-triggers.js') : GameWorldTriggers;
   const fileValidation = typeof module !== 'undefined' && module.exports ? require('./shared/file-write-validation.js') : FileWriteValidation;
   const writeOptions = {cap:120000,validateContent:fileValidation.validate};
   const copy = x => structuredClone(x);
@@ -109,7 +110,7 @@ const GameCore = (() => {
       (String(s.draft||'')!==submittedDraft.draft||String(s.privateDraft||'')!==submittedDraft.privateDraft);
     s.snapshots.push({tree:copy(s.tree),slots:copy(s.slots||[]),actorId:s.actorId,playerPath:s.playerPath,messageCount:s.messages.length,eventCount:s.events.length,round:s.round,
       worldTime:data.worldTime(s),at:Date.now(),
-      cache:copy(s.cache),openingPending:s.openingPending?copy(s.openingPending):null,slotControlState:s.slotControlState?copy(s.slotControlState):null,summaryCount:s.summaries.length,status:s.status,contextFromRound:s.contextFromRound,lastChanges:copy(s.lastChanges),
+      cache:copy(s.cache),worldTriggers:s.worldTriggers?copy(s.worldTriggers):null,openingPending:s.openingPending?copy(s.openingPending):null,slotControlState:s.slotControlState?copy(s.slotControlState):null,summaryCount:s.summaries.length,status:s.status,contextFromRound:s.contextFromRound,lastChanges:copy(s.lastChanges),
       draft:isStart||options.skip?boundDraft:String(text||''),draftRound:inputRound,inputRoundId:roundId});
     pruneRollback(s);
     if(!options.skip&&String(text||'').trim())inputs.record(s,inputRound,roundId,text);
@@ -154,6 +155,7 @@ const GameCore = (() => {
     const input=inputs.retract(s,snap.round+1,snap.inputRoundId);
     s.tree=copy(snap.tree);s.messages.length=snap.messageCount;s.events.length=snap.eventCount;
     s.round=snap.round;s.cache=copy(snap.cache);s.summaries.length=snap.summaryCount;s.status=snap.status;
+    if(snap.worldTriggers)s.worldTriggers=copy(snap.worldTriggers);else delete s.worldTriggers;
     if(snap.openingPending)s.openingPending=copy(snap.openingPending);else delete s.openingPending;
     if(snap.slotControlState)s.slotControlState=copy(snap.slotControlState);else delete s.slotControlState;
     s.draft=input?.text??(snap.draftRound==null||snap.draftRound===snap.round+1?snap.draft||'':'');s.draftRound=snap.round+1;inputs.advance(s);
@@ -557,6 +559,7 @@ const GameCore = (() => {
     });
   }
   function context(s,system,cap=240000,opts={}) {
+    const triggerMessage=worldTriggers.prepare(s,estimate),protectedMessages=new WeakSet();
     const current=s.activeRound?.number||Math.max(1,s.round);
     let from=s.contextFromRound||1,compact=false;
     const rounds=[...new Set(s.messages.filter(m=>(m.round||1)>=from).map(m=>m.round||1))];
@@ -615,6 +618,7 @@ const GameCore = (() => {
         const out={role:m.role,content:m.content||''};
         for(const k of ['tool_calls','tool_call_id','reasoning_content'])if(m[k]!==undefined)out[k]=copy(m[k]);return out;
       });const sent=[...head,...msgs];
+      if(triggerMessage){const message={...triggerMessage};protectedMessages.add(message);sent.push(message);}
       if(opts.transformContext)for(const m of sent){m.content=opts.transformContext(m.content);if(m.tool_calls)for(const tc of m.tool_calls)tc.function.arguments=opts.transformContext(tc.function.arguments);}
       return sent;
     }
@@ -622,7 +626,7 @@ const GameCore = (() => {
     if(estimate(sent)>cap){compact=true;sent=build();}
     if(estimate(sent)>cap&&rounds.length>1){from=rounds[Math.floor(rounds.length/2)];sent=build();
       while(estimate(sent)>cap&&from<current){const next=rounds.find(r=>r>from);if(next===undefined)break;from=next;sent=build();}}
-    if(estimate(sent)>cap)sent=recovery.fit(s,s.messages.filter(m=>(m.round||1)>=from),current,cap,build,estimate);
+    if(estimate(sent)>cap)sent=recovery.fit(s,s.messages.filter(m=>(m.round||1)>=from),current,cap,build,estimate,protectedMessages);
     const used=estimate(sent);
     if(used>cap)throw Object.assign(Error('自动整理后仍超过上下文上限（估算消息 '+used+' / 可用消息 '+cap+' tokens）。固定提示词或必须保留的输入过大，请在设置中调大上下文上限或降低输出上限，再点击“继续本轮”。'),{code:'CONTEXT_LIMIT',used,cap});
     s.contextFromRound=from;return sent;
