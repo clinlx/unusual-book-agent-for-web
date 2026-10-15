@@ -18,9 +18,15 @@
 | `creator_notes` | 作者说明、玩法提示 | 主持提示、噪声复核 |
 | `system_prompt` | 行为约束 | 世界规则或主持规则 |
 | `post_history_instructions` | 后续回复约束 | 长期主持规则 |
-| `character_book.entries` | 世界书 | 地点、组织、规则、NPC、物品、时间线 |
+| `character_book.entries` | 世界书 | 地点、组织、规则、NPC、物品、时间线；按需注入的条目可改写为 `世界触发器.json` |
 | `tags` | 类型、语言、题材 | 分类与风险提示 |
 | `extensions` | 酒馆扩展信息 | 运行信息，通常不写成世界事实 |
+
+## 世界书的条件注入
+
+原卡按关键词或剧情状态提供资料的世界书条目，可迁移到世界根目录的 `世界触发器.json`。宿主按近期玩家行动、story 和 JSON 状态自动匹配并注入资料，游玩时无需主持人手动扫描。条目可用 `content` 保存短说明，或用 `file` 引用世界内的长资料；关键词映射为 `keywords`，明确的状态要求用 `when` 表达。
+
+逐项对应与取舍见 [世界书迁移](worldbook-migration.md)，目标字段和完整例子见 [自动世界资料触发器约定](../../game-world-builder/reference/WorldTriggers.md)。触发器只提供参考资料；真实剧情效果仍落到规则、台本与现有工具。纯酒馆格式补丁无需迁移。
 
 ## 数据面板与缓存字段
 
