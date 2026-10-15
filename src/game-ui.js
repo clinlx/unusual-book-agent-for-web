@@ -1437,7 +1437,7 @@ const GameUI = (() => {
     if(name==='home'){if(!state.active||state.home)return;if(fileDraft!==fileOriginal&&!await appConfirm('文件有未保存改动，仍返回存档选择？',{title:'放弃未保存改动'}))return;clearTimeout(draftTimer);await GameApp.saveDraft(draft,undefined,inputOptions());GameApp.returnHome();filePath='';fileDraft=fileOriginal='';draft=privateDraft='';modalRoot.innerHTML='';return render();}
     if(name==='rename-save'){const text=await appPrompt('存档名称',el.dataset.name,{label:'名称'});if(text?.trim())await GameApp.renameSave(el.dataset.id,text.trim());return;}
     if(name==='delete-save'){if(await appConfirm('永久删除这份浏览器存档？',{title:'删除存档',confirmLabel:'永久删除',danger:true}))await GameApp.deleteSave(el.dataset.id);return;}
-    if(name==='start'){if(!apiKeyWarning())return;return GameApp.start();}
+    if(name==='start'){if(state.active?.slotsConfigured===false){toast('请先选择角色槽位');return roomModal();}if(!apiKeyWarning())return;return GameApp.start();}
     if(name==='resume'){if(state.active?.pendingManualDice){const e=state.active.events?.find(x=>x.id===state.active.pendingManualDice.eventId);if(e)return diceDetailModal(e);}if(!apiKeyWarning())return;return GameApp.resume();}
     if(name==='abort')return GameApp.abort();
     if(name==='rollback'&&state.client){await GameApp.requestRollback();toast('已向房主请求回退');return;}
