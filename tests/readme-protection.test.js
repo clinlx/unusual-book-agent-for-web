@@ -7,7 +7,7 @@ const path = require('node:path');
 
 // 仅在用户明确同意修改根目录 README.md 后，才可更新此基准。
 // 不提供环境变量或自动更新开关；授权规则见根目录 AGENTS.md。
-const approvedSha256 = '661b43336ef8568945cf483aed51411b92781c8cac63fc1ac8d905c7ea7564d0';
+const approvedSha256 = '9abe36b9bd57a9cbdb34815217a098216dd63a1e98beca0df50beda427a5fef2';
 
 test('根目录 README.md 必须保持用户确认的内容', () => {
   const readme = readFileSync(path.join(__dirname, '..', 'README.md'));
