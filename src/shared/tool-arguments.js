@@ -14,6 +14,61 @@ const ToolArguments = (() => {
       throw error;
     }
   }
+  // Validate file-tool inputs before resolving paths; omission is not an empty value.
+  const fileRequired = {
+    read_file:['path'], read_multiple_files:['paths'], list_dir:['path'], tree:['path'], search:['pattern'],
+    write_file:['path','content'], append_file:['path','content'], apply_patch:['path','old_str','new_str'],
+    mkdir:['path'], delete:['path'], move:['from','to'], copy:['from','to'],
+    view_image:['path'], parse_document:['path','format','output'], validate_game_structure:['path'],
+    parse_tavern_card:['path'],
+  };
+  const pathSchema = {type:'string',minLength:1,pattern:'\\S',description:'明确填写实际路径，不可省略或留空。/workspace 是当前虚拟工作区根目录；文件操作需指向具体文件。'};
+  const fileOptional = {
+    read_file:['offset','limit'],read_multiple_files:['limit'],tree:['depth'],
+    search:['path','target','limit'],view_image:['crop'],
+    parse_document:['output_path','output_dir','start_page','end_page','offset','limit'],
+    parse_tavern_card:['output_dir'],
+  };
+  function validateFiles(name, args) {
+    const required=Object.hasOwn(fileRequired,name)?fileRequired[name]:null;if(!required)return null;
+    if(!args||typeof args!=='object'||Array.isArray(args))return '参数必须是 JSON 对象。本次调用未执行。';
+    const fail=(key,reason)=>'参数 '+key+' '+reason+'（工具 '+name+'）。本次调用未执行，请修正参数后重新调用。';
+    const supplied=key=>(required.includes(key)||(Object.hasOwn(fileOptional,name)&&fileOptional[name].includes(key)))&&Object.hasOwn(args,key);
+    for(const key of required)if(!Object.hasOwn(args,key)||args[key]===undefined)return '缺少必填参数 '+key+'（工具 '+name+'）。本次调用未执行，请显式填写后重新调用。';
+    for(const key of ['path','from','to','output_path','output_dir'])if(supplied(key)){
+      if(typeof args[key]!=='string')return fail(key,'需要字符串');
+      if(!args[key].trim())return fail(key,'不能为空或纯空白；请填写实际路径');
+    }
+    if(name==='read_multiple_files'){
+      if(!Array.isArray(args.paths)||!args.paths.length||args.paths.length>20)return fail('paths','需要包含 1 到 20 个文件路径的数组');
+      for(let i=0;i<args.paths.length;i++)if(typeof args.paths[i]!=='string'||!args.paths[i].trim())return fail('paths['+i+']','需要非空文件路径字符串');
+    }
+    for(const key of ['content','old_str','new_str','pattern'])if(required.includes(key)){
+      if(typeof args[key]!=='string')return fail(key,'需要字符串');
+      if((key==='old_str'||key==='pattern'||name==='append_file'&&key==='content')&&!args[key].length)return fail(key,'不能为空字符串');
+    }
+    for(const [key,min] of Object.entries({offset:0,limit:1,depth:0,start_page:1,end_page:1}))if(supplied(key)){
+      if(!Number.isSafeInteger(args[key])||args[key]<min)return fail(key,'需要不小于 '+min+' 的整数；使用默认值时请省略该参数');
+    }
+    if(supplied('target')&&!['both','name','content'].includes(args.target))return fail('target','需要 both、name 或 content');
+    if(name==='parse_document'){
+      if(!['text','images'].includes(args.format))return fail('format','需要 text 或 images');
+      if(!['return','file'].includes(args.output))return fail('output','需要 return 或 file');
+      if(args.output==='file'){
+        const key=args.format==='text'?'output_path':'output_dir';
+        if(!Object.hasOwn(args,key))return fail(key,'在 output=file 时必须填写');
+      }
+      if(args.end_page!==undefined&&args.end_page<(args.start_page??1))return fail('end_page','不能小于 start_page');
+      if(args.limit>120000)return fail('limit','不能超过 120000');
+      for(const key of ['offset','limit'])if(Object.hasOwn(args,key)&&(args.format!=='text'||args.output!=='return'))return fail(key,'仅支持 format=text 且 output=return');
+    }
+    if(name==='view_image'&&Object.hasOwn(args,'crop')){
+      const c=args.crop;
+      if(!c||typeof c!=='object'||Array.isArray(c))return fail('crop','需要包含 x、y、width、height 的对象；查看整图时省略');
+      for(const [key,min] of Object.entries({x:0,y:0,width:1,height:1}))if(!Number.isSafeInteger(c[key])||c[key]<min)return fail('crop.'+key,'需要不小于 '+min+' 的像素整数');
+    }
+    return null;
+  }
   function invalid(call) {
     try { parse(call?.function?.arguments); return false; } catch (_) { return true; }
   }
@@ -34,6 +89,6 @@ const ToolArguments = (() => {
     return out.map(m => m.role === 'tool' && changed.has(m.tool_call_id)
       ? { ...m, content: PLACEHOLDER + (typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? '')) } : m);
   }
-  return { HINT, NOTICE, parse, invalid, hasInvalid, project };
+  return { HINT, NOTICE, parse, invalid, hasInvalid, project, validateFiles, pathSchema };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = ToolArguments;

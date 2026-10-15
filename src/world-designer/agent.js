@@ -26,7 +26,8 @@ const Agent = (() => {
     _TOOL_SPEC[t.function.name] = { required: p.required || [], props: p.properties || {} };
   }
   function validateToolArgs(name, args) {
-    const spec = _TOOL_SPEC[name];
+    if(!args||typeof args!=='object'||Array.isArray(args))return '错误: 参数必须是 JSON 对象。本次调用未执行。';
+    const spec = Object.hasOwn(_TOOL_SPEC,name)?_TOOL_SPEC[name]:null;
     if (!spec) return null; // 未知工具由 executeTool 兜底
     for (const k of spec.required) {
       if (args[k] === undefined || args[k] === null)
@@ -34,9 +35,14 @@ const Agent = (() => {
     }
     for (const [k, v] of Object.entries(args)) {
       const decl = spec.props[k];
-      if (!decl || v === undefined || v === null) continue;
+      if (!decl || v === undefined) continue;
+      if(decl.type==='boolean'&&typeof v!=='boolean')return '错误: 参数 '+k+' 必须是 true 或 false。';
+      if(decl.enum&&!decl.enum.includes(name==='goal'&&typeof v==='string'?v.trim():v))return '错误: 参数 '+k+' 必须是 '+decl.enum.join(' / ')+'。';
+      if(v===null)continue;
       if (decl.type === 'string' && typeof v !== 'string')
         return '错误: 参数 ' + k + ' 需要字符串，收到 ' + (Array.isArray(v) ? 'array' : typeof v) + '。请以字符串形式重新调用。';
+      if(decl.type==='string'&&((decl.minLength&&v.length<decl.minLength)||(decl.pattern&&!new RegExp(decl.pattern).test(v))))return '错误: 参数 '+k+' 不能为空或纯空白。';
+      if(decl.maxLength!==undefined&&(name==='goal'?v.trim():v).length>decl.maxLength)return '错误: 参数 '+k+' 过长，最多 '+decl.maxLength+' 个字符。';
       if (decl.type === 'integer') {
         // 模型把数字发成 "100" 很常见，语义无歧义就地纠正，不值得打回重试
         const n = typeof v === 'string' && /^-?\d+$/.test(v) ? Number(v) : v;
@@ -47,7 +53,12 @@ const Agent = (() => {
       if (decl.type === 'array' && !Array.isArray(v))
         return '错误: 参数 ' + k + ' 需要数组，收到 ' + typeof v + '。请以数组形式重新调用。';
     }
-    return null;
+    // Retain question/option normalization; only reject ambiguous boolean switches.
+    if(name==='ask_user'&&Array.isArray(args.questions))for(const [i,q] of args.questions.entries()){
+      if(q&&typeof q==='object'&&Object.hasOwn(q,'multiSelect')&&typeof q.multiSelect!=='boolean')return '错误: 参数 questions['+i+'].multiSelect 必须是 true 或 false。';
+    }
+    const fileError=_Arguments.validateFiles(name,args);
+    return fileError?'错误: '+fileError:null;
   }
 
   // 读取文件当前内容用于 diff 前置快照；不存在或为目录时返回 null

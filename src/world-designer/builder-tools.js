@@ -9,7 +9,7 @@ const BuilderTools = (() => {
   const definitions = [{ type: 'function', function: {
     name: 'validate_game_structure',
     description: '校验当前虚拟工作区内的游戏世界目录：文件、JSON、角色、引用、物品位置。只读，不自动修复；根据 errors 用文件工具修复后重新调用。',
-    parameters: { type: 'object', properties: { path: { type: 'string', description: '世界根目录，必须是 /workspace 或其子目录，例如 /workspace/my-world' } }, required: ['path'], additionalProperties: false },
+    parameters: { type: 'object', properties: { path: { type: 'string', minLength: 1, pattern: '\\S', description: '世界根目录，必须是 /workspace 或其子目录，例如 /workspace/my-world' } }, required: ['path'], additionalProperties: false },
   } }];
   const enabled = skills => (skills || []).some(skill => skill.name === skillName);
 

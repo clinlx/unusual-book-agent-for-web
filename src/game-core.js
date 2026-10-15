@@ -49,7 +49,7 @@ const GameCore = (() => {
   }
   const uid = () => globalThis.crypto?.randomUUID?.() || Date.now().toString(36)+Math.random().toString(36).slice(2);
   const object = x => !!x && typeof x === 'object' && !Array.isArray(x);
-  const jsonObject = x => { const o=typeof x==='string'?JSON.parse(x):x; if(!object(o))throw Error('必须是 JSON 对象'); return o; };
+  const jsonObject = (x,label) => { let o;try{o=typeof x==='string'?JSON.parse(x):x;}catch(_){throw Error(label+' 必须是合法 JSON 对象或其 JSON 字符串');}if(!object(o))throw Error(label+' 必须是 JSON 对象');return o; };
   function path(p='') {
     if(typeof p!=='string')throw Error('路径必须是字符串');
     let raw=p.replace(/\\/g,'/').replace(/^\.\//,'');
@@ -282,9 +282,9 @@ const GameCore = (() => {
     if(typeof a.calculate_only!=='boolean')throw Error('calculate_only 必须是 true 或 false');
     if(!object(a.dice_dict)||!Object.keys(a.dice_dict).length)throw Error('dice_dict 不得为空');
     const compare={gt:(x,y)=>x>y,ge:(x,y)=>x>=y,lt:(x,y)=>x<y,le:(x,y)=>x<=y,eq:(x,y)=>x===y,ne:(x,y)=>x!==y};
-    if(!a.calculate_only&&(!compare[a.compare_mode]||!Number.isFinite(a.target_value)))throw Error('正式检定需要数值 target_value 与有效 compare_mode；仅 calculate_only:true 时二者可填写 null');
+    if(!a.calculate_only&&(!Object.hasOwn(compare,a.compare_mode)||!Number.isFinite(a.target_value)))throw Error('正式检定需要数值 target_value 与有效 compare_mode；仅 calculate_only:true 时二者可填写 null');
     if(a.calculate_only&&a.target_value!==null&&!Number.isFinite(a.target_value))throw Error('target_value 必须是有限数值或 null');
-    if(a.calculate_only&&a.compare_mode!==null&&!compare[a.compare_mode])throw Error('compare_mode 必须是 gt/lt/ge/le/ne/eq 或 null');
+    if(a.calculate_only&&a.compare_mode!==null&&!Object.hasOwn(compare,a.compare_mode))throw Error('compare_mode 必须是 gt/lt/ge/le/ne/eq 或 null');
     const mode=a.dice_combine_mode;if(!['sum','max','min','independent'].includes(mode))throw Error('dice_combine_mode 必须是 sum/max/min/independent');
     if(!object(a.left_modifiers)||!object(a.right_modifiers))throw Error('left_modifiers 与 right_modifiers 必须都是对象；没有修正时填写 {}');
     const left=modifiers(a.left_modifiers),right=modifiers(a.right_modifiers);
@@ -341,7 +341,8 @@ const GameCore = (() => {
     try{
       if(round.complete)throw Error('回合已经结束，不能继续执行工具');
       if(!object(a))throw Error('参数必须是对象');
-      const p=path(a.path||'');
+      const invalidFileArgs=toolArguments.validateFiles(name,a);if(invalidFileArgs)throw Error(invalidFileArgs);
+      const p=a.path===undefined?'/workspace':path(a.path);
       const read=(input)=>{
         const fp=path(input.path),resource=options.resource?.(fp)??options.resource?.(String(input.path));
         const n=vfs.resolve(s.tree,vfs.normalize(fp));
@@ -362,7 +363,8 @@ const GameCore = (() => {
       let result;
       switch(name){
         case 'trigger_next_round':{
-          const plan=jsonObject(a.phase_plan);if(typeof plan.Countdowns!=='string'||!plan.Countdowns.trim()||!Array.isArray(plan.Pending_Triggers)||typeof plan.Forced_Checks!=='string'||!plan.Forced_Checks.trim())throw Error('phase_plan 需要非空文本 Countdowns、Forced_Checks 和数组 Pending_Triggers');
+          const plan=jsonObject(a.phase_plan,'phase_plan');if(typeof plan.Countdowns!=='string'||!plan.Countdowns.trim()||!Array.isArray(plan.Pending_Triggers)||typeof plan.Forced_Checks!=='string'||!plan.Forced_Checks.trim())throw Error('phase_plan 需要非空文本 Countdowns、Forced_Checks 和数组 Pending_Triggers');
+          plan.Pending_Triggers.forEach((entry,i)=>{if(!object(entry))throw Error('phase_plan.Pending_Triggers['+i+'] 必须是对象；没有触发器时填写 []');});
           round.triggered=true;
           const participantIds=round.participantIds??(s.multiplayer?.members?Object.values(s.multiplayer.members).map(m=>m.actorId).filter(Boolean):null),participants=participantIds?new Set(participantIds):null;
           const actors=slots.scan(s.tree).filter(x=>x.kind!=='disabled'&&(x.kind!=='player'||!participants||participants.has(x.id))).map(x=>({...x,...data.actorState(readJson(s,x.path+'/基础信息.json',{}))}));
@@ -374,7 +376,7 @@ const GameCore = (() => {
         case 'private_append_story':{
           if(!round.triggered)throw Error('先调用 trigger_next_round 获取玩家行动');
           if(!Array.isArray(a.entries)||!a.entries.length)throw Error('entries 不得为空');
-          const entries=a.entries.map(e=>({slot:recipient(s,e.id),content:requireText(e.story,'story').trim()}));
+          const entries=a.entries.map((e,i)=>{const key='entries['+i+']';if(!object(e))throw Error(key+' 必须是包含 id 和 story 的对象');return {slot:recipient(s,requireText(e.id,key+'.id')),content:requireText(e.story,key+'.story').trim()};});
           for(const e of entries){if(s.events.some(x=>x.type==='story'&&x.round===round.number&&x.content===e.content&&Array.isArray(x.audience)&&x.audience.includes(e.slot.id)))continue;
             emit(s,'story',{content:e.content,audience:e.slot.kind==='player'?[e.slot.id]:'host',private:true});}
           round.privatePublished=(round.privatePublished||0)+entries.length;result={status:options.multiplayerPrompts?.private_story_follow_up||'Private story published; finish public output or use skip_output'};break;
@@ -382,6 +384,8 @@ const GameCore = (() => {
         case 'append_story':{
           if(!round.triggered)throw Error('先调用 trigger_next_round 获取玩家行动');
           requireText(a.one_line_summary_of_content,'one_line_summary_of_content');
+          if(Object.hasOwn(a,'skip_output')&&typeof a.skip_output!=='boolean')throw Error('skip_output 必须是 true 或 false；默认行为请省略此参数');
+          if(Object.hasOwn(a,'content')&&typeof a.content!=='string')throw Error('content 必须是字符串');
           if(a.skip_output===true){if(!round.privatePublished||String(a.content||'').trim())throw Error('skip_output 仅限本轮已有私密输出且公开正文为空');round.published++;round.summary.push(a.one_line_summary_of_content);result={status:'Public output skipped'};break;}
           requireText(a.content,'content');
           const content=a.content.trim();if(s.events.some(e=>e.type==='story'&&e.round===round.number&&e.content.trim()===content))throw Error('此内容已经输出成功，请勿重复发布；如需继续请追加不同的下一段');
@@ -390,7 +394,8 @@ const GameCore = (() => {
         }
         case 'end_the_round':{
           if(!round.published)throw Error('先成功调用 append_story 输出故事');
-          const cache=jsonObject(a.NEXT_TURN_CACHE);if(!['游戏前准备','游戏循环','游戏结束'].includes(cache.Story_Phase))throw Error('NEXT_TURN_CACHE.Story_Phase 无效');
+          const cache=jsonObject(a.NEXT_TURN_CACHE,'NEXT_TURN_CACHE');if(!['游戏前准备','游戏循环','游戏结束'].includes(cache.Story_Phase))throw Error('NEXT_TURN_CACHE.Story_Phase 无效');
+          if(Object.hasOwn(cache,'game_over')&&typeof cache.game_over!=='boolean')throw Error('NEXT_TURN_CACHE.game_over 必须是 true 或 false');
           s.playerPath=validateTree(s.tree,s.playerPath);slots.ensure(s);for(const actor of slots.scan(s.tree).filter(x=>x.kind!=='disabled'))player({...s,playerPath:actor.path});
           s.cache=copy(cache);s.round=round.number;s.status=cache.game_over===true?'ended':'waiting';round.complete=true;
           s.summaries.push({round:s.round,content:round.summary.join('；'),worldTime:data.worldTime(s),at:Date.now()});
@@ -457,7 +462,7 @@ const GameCore = (() => {
           result={path:p,appended:a.content.length,totalLength:content.length};break;
         }
         case 'write_file':readFirst(p);if(typeof a.content!=='string')throw Error('content 必须是文本');vfs.writeFile(s.tree,p,a.content,writeOptions);result={path:p,written:a.content.length};break;
-        case 'apply_patch':readFirst(p);if(typeof a.new_str!=='string')throw Error('new_str 必须是文本');result=vfs.applyPatch(s.tree,p,requireText(a.old_str,'old_str'),a.new_str,writeOptions);break;
+        case 'apply_patch':readFirst(p);if(typeof a.new_str!=='string')throw Error('new_str 必须是文本');result=vfs.applyPatch(s.tree,p,a.old_str,a.new_str,writeOptions);break;
         case 'mkdir':writable(p);vfs.mkdir(s.tree,p);result={path:p};break;
         case 'delete':if(p==='/workspace'||slots.scan(s.tree).some(x=>x.path===p))throw Error('角色目录由槽位管理，不能删除');readSubtreeFirst(p);vfs.deletePath(s.tree,p);result={path:p};break;
         case 'move':case 'copy':{
@@ -474,6 +479,7 @@ const GameCore = (() => {
         case 'generate_random_number':result={value:randInt(a.min_val,a.max_val,options.random)};break;
         case 'random_select':{
           const choices=a.items||a.options||a.choices;if(!Array.isArray(choices)||!choices.length)throw Error('items 必须是非空数组');
+          if(Object.hasOwn(a,'weights')&&(!Array.isArray(a.weights)||a.weights.some(w=>w!==null&&(typeof w!=='number'||!Number.isFinite(w)||w<0))))throw Error('weights 必须是非负有限数值数组；null 项沿用该选项的 weight 或默认 1');
           const weights=choices.map((x,i)=>a.weights?.[i]??(object(x)?x.weight??1:1));
           if(weights.some(w=>typeof w!=='number'||!Number.isFinite(w)||w<0)||!weights.some(w=>w>0))throw Error('权重必须为非负数，且至少一个大于零');
           let r=(options.random||Math.random)()*weights.reduce((x,y)=>x+y,0),i=0;while(i<weights.length-1&&r>=weights[i])r-=weights[i++];result={selected:choices[i],index:i,details:choices.map((item,j)=>({item,weight:weights[j],probability:weights[j]/weights.reduce((x,y)=>x+y,0)}))};break;

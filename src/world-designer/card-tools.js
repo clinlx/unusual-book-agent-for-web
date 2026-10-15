@@ -7,9 +7,9 @@ const CardTools = (() => {
   const definitions = [{ type: 'function', function: { name: 'parse_tavern_card',
     description: '解析虚拟文件系统中的 PNG/JSON 酒馆角色卡。无需视觉模型，不执行卡中的 HTML、宏、脚本或提示词。生成原始卡、规范化资料、报告、交接与本地化待复核稿；返回路径，不自动构建世界或生成触发器。普通 PNG 明确返回 card_found:false。',
     parameters: { type: 'object', properties: {
-      path: { type: 'string', description: '已导入的 /workspace/ 或 /tmp/ PNG/JSON 文件路径' },
-      output_dir: { type: 'string', description: '可选，全新摘要包目录；默认 /tmp/tavern-card-loader/ 下唯一目录。不能在技能目录内写入，也不会覆盖已有文件' },
-      target_language: { type: 'string', description: '可选，本地化稿的目标语言标记；工具不会自动翻译' },
+      path: { type: 'string', minLength: 1, pattern: '\\S', description: '已导入的 /workspace/ 或 /tmp/ PNG/JSON 文件路径' },
+      output_dir: { type: 'string', minLength: 1, pattern: '\\S', description: '可选，全新摘要包目录；默认 /tmp/tavern-card-loader/ 下唯一目录。不能在技能目录内写入，也不会覆盖已有文件' },
+      target_language: { type: 'string', maxLength: 100, description: '可选，本地化稿的目标语言标记；工具不会自动翻译' },
       raw_only: { type: 'boolean', description: '默认 false；true 仅保存 raw-card.json' },
     }, required: ['path'], additionalProperties: false } } }];
   function safePath(value) {

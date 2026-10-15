@@ -377,17 +377,17 @@ const TOOL_DEFS = [
   }, required: ['path', 'format', 'output'], additionalProperties: false } } },
   { type: 'function', function: { name: 'view_image', description: '查看 /workspace/ 或 /tmp/ 图片，返回真实图片供视觉理解。先看整图；小字或长截图可按原图像素坐标传 crop 放大局部。临时图片可能过期。', parameters: { type: 'object', properties: {
     path: { type: 'string', description: '图片文件完整路径' },
-    crop: { type: 'object', description: '可选，按原图像素裁剪', properties: { x: { type: 'integer' }, y: { type: 'integer' }, width: { type: 'integer' }, height: { type: 'integer' } }, required: ['x', 'y', 'width', 'height'] },
+    crop: { type: 'object', description: '可选，按原图像素裁剪', properties: { x: { type: 'integer', minimum: 0 }, y: { type: 'integer', minimum: 0 }, width: { type: 'integer', minimum: 1 }, height: { type: 'integer', minimum: 1 } }, required: ['x', 'y', 'width', 'height'] },
   }, required: ['path'] } } },
   { type: 'function', function: { name: 'list_dir', description: '列出目录内容（名称、类型、大小）', parameters: { type: 'object', properties: { path: { type: 'string', description: '目录路径，如 /workspace' } }, required: ['path'] } } },
   { type: 'function', function: { name: 'read_file', description: '读取文件内容。默认返回上限 ' + AGENT_CONFIG.readCharLimit + ' 字符（/skills/ 下为 ' + AGENT_CONFIG.skillReadCharLimit + '）。预计文件很长时可传 limit 一次读完，避免反复续读。返回的不是全文时，结果首尾会标出前后各省略了多少字符——看到这类标注说明你手里只是片段，据此判断要不要续读，不要拿半截内容下结论', parameters: { type: 'object', properties: { path: { type: 'string' }, offset: { type: 'integer', description: '起始字符位置，默认 0' }, limit: { type: 'integer', description: '本次最大字符数，上限 ' + AGENT_CONFIG.readCharLimitMax + '；不传则用默认上限' } }, required: ['path'] } } },
   { type: 'function', function: { name: 'write_file', description: '创建或覆盖写文件（自动创建父目录）。内容上限 ' + AGENT_CONFIG.writeCharLimit + ' 字符，超长文本可分段追加。非空 JSON 内容每次修改后须完整合法，大型 JSON 可先在 .txt 拼接完成再改为 .json。物品列表 ID 唯一，玩家身份字段只填当前值；校验失败不写入。覆盖已存在文件前必须先 read_file 读取其最新内容，否则会被拒绝', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } } },
-  { type: 'function', function: { name: 'apply_patch', description: '对现有文件应用搜索替换补丁；old_str 必须在文件中唯一匹配。JSON 校验完整修改结果，失败保留原文件', parameters: { type: 'object', properties: { path: { type: 'string' }, old_str: { type: 'string' }, new_str: { type: 'string' } }, required: ['path', 'old_str', 'new_str'] } } },
+  { type: 'function', function: { name: 'apply_patch', description: '对现有文件应用搜索替换补丁；old_str 必须在文件中唯一匹配。JSON 校验完整修改结果，失败保留原文件', parameters: { type: 'object', properties: { path: { type: 'string' }, old_str: { type: 'string', minLength: 1 }, new_str: { type: 'string' } }, required: ['path', 'old_str', 'new_str'] } } },
   { type: 'function', function: { name: 'delete', description: '删除文件或目录（递归）', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
   { type: 'function', function: { name: 'move', description: '移动或重命名文件/目录', parameters: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } }, required: ['from', 'to'] } } },
   { type: 'function', function: { name: 'copy', description: '复制文件或目录到新路径', parameters: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } }, required: ['from', 'to'] } } },
-  { type: 'function', function: { name: 'search', description: '正则搜索（大小写敏感，忽略大小写请用 [Tt] 写法）。target: content=内容 name=文件名 both=两者（默认）', parameters: { type: 'object', properties: { pattern: { type: 'string' }, path: { type: 'string', description: '搜索根目录，默认 /workspace' }, target: { type: 'string', enum: ['content', 'name', 'both'] } }, required: ['pattern'] } } },
-  { type: 'function', function: { name: 'run_skill', description: '加载一个 Skill 的完整操作指令（Skill 清单见系统提示）', parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } } },
+  { type: 'function', function: { name: 'search', description: '正则搜索（大小写敏感，忽略大小写请用 [Tt] 写法）。target: content=内容 name=文件名 both=两者（默认）', parameters: { type: 'object', properties: { pattern: { type: 'string', minLength: 1 }, path: { type: 'string', description: '搜索根目录，默认 /workspace' }, target: { type: 'string', enum: ['content', 'name', 'both'] } }, required: ['pattern'] } } },
+  { type: 'function', function: { name: 'run_skill', description: '加载一个 Skill 的完整操作指令（Skill 清单见系统提示）', parameters: { type: 'object', properties: { name: { type: 'string', minLength: 1, pattern: '\\S' } }, required: ['name'] } } },
   { type: 'function', function: {
     name: 'goal',
     description: '管理当前的长期目标。设立目标后，每轮回答结束会自动继续推进，直到你用 end 结束。适合需要多轮才能完成的任务——先 set 目标，再逐步推进。',
@@ -396,7 +396,7 @@ const TOOL_DEFS = [
       properties: {
         action: { type: 'string', enum: ['set', 'change', 'end'],
           description: 'set=设立目标（当前无目标时）；change=修改目标（当前有目标时）；end=结束循环并清空目标' },
-        content: { type: 'string', description: 'set/change 时必填：目标内容，不超过 ' + GOAL_MAX_CHARS + ' 字' },
+        content: { type: 'string', maxLength: GOAL_MAX_CHARS, description: 'set/change 时必填：目标内容，不超过 ' + GOAL_MAX_CHARS + ' 字' },
         reason: { type: 'string', enum: ['break', 'finished'],
           description: 'end 时必填：finished=目标已达成；break=被打断或无法继续，需用户介入' },
       },
@@ -410,20 +410,20 @@ const TOOL_DEFS = [
       type: 'object',
       properties: {
         questions: {
-          type: 'array',
+          type: 'array', minItems: 1, maxItems: 3,
           description: '1–3 个问题。每题给 2–4 个互斥选项。',
           items: {
             type: 'object',
             properties: {
-              question: { type: 'string', description: '完整的问题，说清在问什么' },
-              header: { type: 'string', description: '不超过 12 字的短标签，如「存储方案」' },
+              question: { type: 'string', minLength: 1, pattern: '\\S', description: '完整的问题，说清在问什么' },
+              header: { type: 'string', maxLength: 12, description: '不超过 12 字的短标签，如「存储方案」' },
               options: {
-                type: 'array',
+                type: 'array', minItems: 2, maxItems: 4,
                 description: '2–4 个选项。推荐项放第一个。不要写「其他」「都行」这类兜底项，程序会自动补。',
                 items: {
                   type: 'object',
                   properties: {
-                    label: { type: 'string', description: '选项名，1–5 个词' },
+                    label: { type: 'string', minLength: 1, pattern: '\\S', description: '选项名，1–5 个词' },
                     description: { type: 'string', description: '这个选项意味着什么、有何取舍' },
                   },
                   required: ['label'],
@@ -439,6 +439,16 @@ const TOOL_DEFS = [
     },
   } },
 ];
+
+// Path values must be explicit when supplied; optional paths retain their documented defaults.
+for(const tool of TOOL_DEFS)for(const [key,schema] of Object.entries(tool.function.parameters.properties||{})){
+  if(['offset','limit','start_page','end_page'].includes(key))schema.minimum=key==='offset'?0:1;
+  if(tool.function.name==='parse_document'&&key==='limit')schema.maximum=120000;
+  if(['path','from','to','output_path','output_dir'].includes(key)){
+    schema.minLength=1;schema.pattern='\\S';
+    schema.description=(schema.description?schema.description+'。':'')+'必须是非空实际路径；不接受 null、空字符串或纯空白。';
+  }
+}
 
 // Skill 在虚拟文件系统中的挂载根目录
 const SKILLS_ROOT = '/skills';
