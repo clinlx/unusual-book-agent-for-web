@@ -13,12 +13,11 @@ test('rollback recovers submitted action and story carries world time',()=>{cons
 test('structural audit covers character lists, scene references, and exact reference filenames',()=>{
  const D=require('../src/game-data'),s=save();
  for(const p of ['关系记忆.json','格式化记忆.json','关系图.json','待办与目标.json'])V.writeFile(s.tree,'/workspace/Player-p/'+p,'{}');
- V.writeFile(s.tree,'/workspace/Player-p/日志.txt','');
  V.writeFile(s.tree,'/workspace/Player-p/基础信息.json',JSON.stringify({Name:'青',Gender:'女',Appearance:'黑发',Wearing:{足部:'key'},Personality:'谨慎',Occupation:'调查员',Identity:'访客',SpeakingStyle:'平静',Principles:'保密',Preferences:'咖啡',Skills:{观察:40},Stats:{},ActiveSkills:[],Status:{HP:10,MaxHealth:12,MP:5,MaxMana:10,Enabled:true,Alive:true},Buffs:[],Location:'站台'}));
  V.writeFile(s.tree,'/workspace/Player-p/背包.json','["key"]');
- V.writeFile(s.tree,'/workspace/存档-索引-物品/key/物品基础信息.json',JSON.stringify({Name:'钥匙',Description:'铜',Owner:'主角',Visibility:true,Amount:1,Actions:{}}));V.writeFile(s.tree,'/workspace/存档-索引-物品/key/物品日志.txt','');
+ V.writeFile(s.tree,'/workspace/存档-索引-物品/key/物品基础信息.json',JSON.stringify({Name:'钥匙',Description:'铜',Owner:'主角',Visibility:true,Amount:1,Actions:{}}));
  for(const dir of ['剧情线与进度','世界状态和世界规则','存档-索引-NPC','存档-世界','存档-旧'])V.mkdirp(s.tree,['workspace',dir]);
- for(const p of ['剧情线与进度/主线剧情.md','世界状态和世界规则/世界规则.md','世界状态和世界规则/掷骰规则.md','存档-世界/世界日志.txt'])V.writeFile(s.tree,'/workspace/'+p,'规则');
+ for(const p of ['剧情线与进度/主线剧情.md','世界状态和世界规则/世界规则.md','世界状态和世界规则/掷骰规则.md'])V.writeFile(s.tree,'/workspace/'+p,'规则');
  V.writeFile(s.tree,'/workspace/世界状态和世界规则/世界共识.json','{"WorldTime":"夜晚"}');
  assert.deepEqual(D.validate(s),[]);
  V.writeFile(s.tree,'/workspace/存档-世界/车站/场景信息.json','{}');V.writeFile(s.tree,'/workspace/存档-世界/车站/NPC列表.json','["不存在的NPC"]');

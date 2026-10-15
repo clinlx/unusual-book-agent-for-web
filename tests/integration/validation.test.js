@@ -103,3 +103,10 @@ test('optional preset opening files and preload paths are validated without requ
  for(const config of [{version:2,files:[]},{version:1,files:['../secret']},{version:1,files:['/etc/secret']},{version:1,files:['https://x/a']},{version:1,files:['不存在.md']},{version:1,files:['Player-pc']}]){f.write('开局预读.json',config);assert.ok(Builder.validate(f.tree,f.root).issues.some(i=>i.path===f.root+'/开局预读.json'));}
  f.write('开局预读.json',{version:1,files:[]});f.write('预设第一回合.md','');assert.ok(Builder.validate(f.tree,f.root).issues.some(i=>i.path===f.root+'/预设第一回合.md'));
 });
+
+
+test('legacy journals remain optional historical files and stale preload references do not require them',()=>{
+ const f=fixture();f.write('开局预读.json',{version:1,files:['Player-pc/日志.txt','存档-世界/世界日志.txt','物品/物品日志.txt','场景/场景日志.txt']});
+ assert.deepEqual(Builder.validate(f.tree,f.root).errors,[]);
+ f.write('Player-pc/日志.txt','旧存档中的独有经历');assert.deepEqual(Builder.validate(f.tree,f.root).errors,[]);
+});

@@ -106,3 +106,17 @@ test('DeepSeek-shaped streaming and non-streaming requests accept preload data a
   assert.equal(s.events.filter(e=>e.type==='story').length,1);
  }
 });
+
+
+test('retired journals are skipped in legacy opening lists without deleting historical files or fictional diaries',async()=>{
+ const s=setup(),journal='/workspace/Player-pc/日志.txt',diary='/workspace/线索/航海日记.txt';
+ VFS.writeFile(s.tree,journal,'旧存档独有经历');VFS.writeFile(s.tree,diary,'剧情线索');
+ VFS.writeFile(s.tree,'/workspace/开局预读.json',JSON.stringify({version:1,files:[journal,'存档-世界/世界日志.txt','物品/物品日志.txt','场景/场景日志.txt',diary]}));
+ Core.beginRound(s,'',true,'开局');
+ // A restored round can still carry a list created by an older build.
+ s.activeRound.openingExtraReads.push(journal);
+ await assert.rejects(Core.run(s,stop),/test-stop/);
+ const paths=calls(s).flatMap(c=>JSON.parse(c.function.arguments).paths);
+ assert.ok(!paths.some(p=>p.endsWith('日志.txt')));assert.ok(paths.includes(diary));
+ assert.equal(VFS.resolve(s.tree,VFS.normalize(journal)).content,'旧存档独有经历');
+});

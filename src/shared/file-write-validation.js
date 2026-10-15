@@ -13,6 +13,7 @@ const FileWriteValidation = (() => {
       annotations(child, next, found);
     }
   }
+  const retiredJournal = path => /(?:^|\/)(?:日志|物品日志|场景日志|世界日志)\.txt$/.test(String(path));
   function openingFiles(value) {
     const fail=()=>{throw Error('开局预读.json 必须为 {"version":1,"files":["工作目录内的文件路径"]}，最多 100 个路径，不支持外部地址、目录或越界路径');};
     if(!value||typeof value!=='object'||Array.isArray(value)||value.version!==1||!Array.isArray(value.files)||value.files.length>100)fail();
@@ -21,7 +22,7 @@ const FileWriteValidation = (() => {
       const relative=raw.replace(/^\/?workspace\//,'');
       if(relative.startsWith('/')||relative.split('/').some(p=>!p||['.','..','__proto__','prototype','constructor'].includes(p)))fail();
       return '/workspace/'+relative;
-    }))];
+    }))].filter(path=>!retiredJournal(path));
   }
   function validate(path, content, metadata = {}) {
     const parts = String(path).split('/').filter(Boolean), file = parts.at(-1) || '';
@@ -43,7 +44,7 @@ const FileWriteValidation = (() => {
       const found = [];
       for (const [key, child] of Object.entries(value)) if (identityFields.has(normalize(key))) annotations(child, key, found);
       if (found.length) throw Error('玩家身份字段含注释: ' + [...new Set(found)].join('、')
-        + '。姓名、性别、年龄、职业和身份只填写当前值，括号或 → 中的历史与解释请移入日志或相应隐藏字段。本次修改未写入。');
+        + '。姓名、性别、年龄、职业和身份只填写当前值，括号或 → 中的历史与解释请精简移入相关记忆或相应隐藏字段。本次修改未写入。');
     }
     if (/^(背包|场景物品列表)\.json$/i.test(file) && Array.isArray(value)) {
       const ids = new Map();
@@ -54,6 +55,6 @@ const FileWriteValidation = (() => {
         + '。同一列表的 ID 必须唯一，多件同类物品使用数量/余量，不同实例使用不同 ID 并建立索引。本次修改未写入。');
     }
   }
-  return { validate, openingFiles };
+  return { validate, openingFiles, retiredJournal };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = FileWriteValidation;

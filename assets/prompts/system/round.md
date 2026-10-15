@@ -105,7 +105,7 @@ if 有个人私密正文: @private_append_story(entries=按固定角色ID分组�
 if 有公开正文: @append_story(content=公开终稿, one_line_summary_of_content=one_line_summary)
 elif 本轮已经成功私密输出: @append_story(content="", skip_output=true, one_line_summary_of_content=one_line_summary)
 # 仅成功发布后进入收尾；已发布正文不可修改，中断续执行不得重复发布。
-assert 背包、人物信息、日志已更新
+assert 本轮实际变化的背包、人物与世界状态已更新
 assert 战斗数值/状态/技能/资源/倒计时冷却已准确更新；属性 Value 不加括号注释，它只反映此刻状态
 assert 本回合触发的强制检定均已执行、属性损失已落盘
 assert 需要对玩家隐藏的信息都用了 "." 前缀隐藏键，没有把 Cache 内容写进正文
@@ -133,7 +133,7 @@ NEXT_TURN_CACHE = update_cache(所有维度字段)
 ```
 
 ### §R8 状态恢复与计时
-文件与缓存冲突时，结合最新成功回执和日志确认哪些变更已生效，再修正过时的一方。历史摘要只补充经历，不覆盖已确认的当前状态。
+文件与缓存冲突时，结合最新成功工具回执与当前文件确认哪些变更已生效，再修正过时的一方。历史摘要只补充经历，不覆盖已确认的当前状态。
 
 填写缓存前按 `/.reference/游戏前准备.md` 的 §O10 NEXT_TURN_CACHE Schema 核对字段。文件类剧情/事件引用使用实际路径与文件中存在的关键词，排除已完成的一次性事件；无文件出处的临时触发器放入 `Triggers_Not_In_File`。收到缓存校验提醒后按回执在下一回合纠偏，不重复成功结束的回合。
 

@@ -28,12 +28,12 @@ const character = contract.match(/```json\r?\n([\s\S]*?)```/)[1];
     await page.evaluate(async character => {
       const S = __UI_STATE__, root = '/workspace/测试世界';
       S.tree.children.workspace.children = {};
-      for (const dir of ['存档-索引-NPC', '存档-索引-物品', '存档-旧']) VFS.mkdir(S.tree, root + '/' + dir);
-      for (const file of ['模组.md', '开场说明.md', '剧情线与进度/主线剧情.md', '世界状态和世界规则/世界规则.md', '世界状态和世界规则/掷骰规则.md', '世界状态和世界规则/检定与触发器索引.md', '存档-世界/世界日志.txt']) VFS.writeFile(S.tree, root + '/' + file, '世界内容。'.repeat(30));
+      for (const dir of ['存档-索引-NPC', '存档-索引-物品', '存档-旧', '存档-世界']) VFS.mkdir(S.tree, root + '/' + dir);
+      for (const file of ['模组.md', '开场说明.md', '剧情线与进度/主线剧情.md', '世界状态和世界规则/世界规则.md', '世界状态和世界规则/掷骰规则.md', '世界状态和世界规则/检定与触发器索引.md']) VFS.writeFile(S.tree, root + '/' + file, '世界内容。'.repeat(30));
       VFS.writeFile(S.tree, root + '/世界状态和世界规则/世界共识.json', '{"世界时间":"第一日"}');
       VFS.writeFile(S.tree, root + '/Player-pc/基础信息.json', character);
       for (const file of ['关系记忆.json', '格式化记忆.json', '关系图.json', '待办与目标.json']) VFS.writeFile(S.tree, root + '/Player-pc/' + file, '{}');
-      VFS.writeFile(S.tree, root + '/Player-pc/背包.json', '[]'); VFS.writeFile(S.tree, root + '/Player-pc/日志.txt', '');
+      VFS.writeFile(S.tree, root + '/Player-pc/背包.json', '[]');
       await __UI__.saveTree(); __UI__.renderAll();
     }, character);
     assert.equal(await lamp.getAttribute('data-state'), 'valid');

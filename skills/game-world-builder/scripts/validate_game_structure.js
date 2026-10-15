@@ -54,6 +54,8 @@ function validateStructure(world) {
     else for(const raw of value.files){
       const clean=typeof raw==='string'?raw.replace(/^\/?workspace\//,''):'';
       if(typeof raw!=='string'||!raw.trim()||raw!==raw.trim()||/[\\:\u0000-\u001f?#]/.test(raw)||clean.startsWith('/')||clean.split('/').some(p=>!p||['.','..','__proto__','prototype','constructor'].includes(p))){report(`[开局预读错误] 非法文件路径：${JSON.stringify(raw)}`,openingConfig);continue;}
+      // Legacy preload lists may reference journals that have since been retired.
+      if(/(?:^|\/)(?:日志|物品日志|场景日志|世界日志)\.txt$/.test(clean))continue;
       const target=path.join(root,clean);
       if(!kind(target))report(`[开局预读错误] 文件不存在：${raw}`,openingConfig);
       else {const actual=path.relative(fs.realpathSync(root),fs.realpathSync(target));if(actual.startsWith('..')||path.isAbsolute(actual))report(`[开局预读错误] 文件超出世界目录：${raw}`,openingConfig);}
@@ -120,7 +122,7 @@ function validateStructure(world) {
     owners.forEach(o=>locations.get(target).add(owner(o)));
   }
   function character(dir) {
-    for(const name of ['关系记忆.json','格式化记忆.json','日志.txt','关系图.json']) need(path.join(dir,name));
+    for(const name of ['关系记忆.json','格式化记忆.json','关系图.json']) need(path.join(dir,name));
     if(!['.json','.txt',''].some(ext=>kind(path.join(dir,'待办与目标'+ext)))) report(`[文件缺失] ${rel(dir)}/待办与目标 (json/txt)`,path.join(dir,'待办与目标.json'));
     const bag=path.join(dir,'背包.json');
     list(bag,'存档-索引-物品').forEach(value=>locate(value,[path.basename(dir),rel(dir),rel(bag)],rel(bag),bag));
@@ -162,16 +164,14 @@ function validateStructure(world) {
     ids.add(id);
   }
   [...roles,...children(path.join(root,'存档-索引-NPC'))].forEach(character);
-  need(path.join(root,'存档-世界/世界日志.txt'));
   for(const file of parsed.keys()) if(rel(file).startsWith('存档-世界/')&&path.basename(file)==='场景信息.json') {
     const dir=path.dirname(file);json(file,'object');
-    for(const name of ['场景日志.txt','场景台本.json']) need(path.join(dir,name));
+    need(path.join(dir,'场景台本.json'));
     list(path.join(dir,'NPC列表.json'),'存档-索引-NPC');
     const listFile=path.join(dir,'场景物品列表.json');
     list(listFile,'存档-索引-物品').forEach(v=>locate(v,[path.basename(dir),rel(dir),rel(dir).replace(/^存档-世界\//,''),rel(listFile)],rel(listFile),listFile));
   }
   for(const dir of children(path.join(root,'存档-索引-物品'))) {
-    need(path.join(dir,'物品日志.txt'));
     const file=path.join(dir,'物品基础信息.json'),data=json(file,'object');
     if(!data) continue;
     fields(data,{名称:['名称','Name'],信息:['信息','Description','Info'],位置所属:['位置所属','Location','Owner'],可见性:['可见性','Visibility'],余量:['余量','Amount'],Action字典:['Action字典','Actions','ActionList']},rel(file),file);

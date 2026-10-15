@@ -73,7 +73,7 @@ const GameData=(()=>{
     const complex=(o,key,schema,p)=>{const xs=get(o,key);if(xs===undefined)return;if(!Array.isArray(xs)){warnings.push('[列表格式] '+p+': '+key);return;}xs.forEach((x,i)=>{if(!object(x))warnings.push('[对象格式] '+p+'/'+key+'/'+i);else fields(x,schema,p+'/'+key+'/'+i);});};
     const character=dir=>{
       if(!characterPath){
-        for(const f of ['关系记忆.json','格式化记忆.json','日志.txt','关系图.json'])need(dir+'/'+f);
+        for(const f of ['关系记忆.json','格式化记忆.json','关系图.json'])need(dir+'/'+f);
         if(!['.json','.txt',''].some(ext=>node(s,dir+'/待办与目标'+ext)?.type==='file'))warnings.push('[文件缺失] '+dir+'/待办与目标 (json/txt)');
         list(dir+'/背包.json','存档-索引-物品');
       }
@@ -91,9 +91,9 @@ const GameData=(()=>{
     if(need('剧情线与进度','dir')){need('剧情线与进度/主线剧情.md');for(const n of Object.values(node(s,'剧情线与进度').children))if(n.type==='dir')for(const f of ['剧情.md','目标.json','进度.json'])need('剧情线与进度/'+n.name+'/'+f);}
     if(need('世界状态和世界规则','dir')){need('世界状态和世界规则/世界规则.md');need('世界状态和世界规则/掷骰规则.md');const o=json('世界状态和世界规则/世界共识.json','object');if(o&&get(o,['世界时间','WorldTime'])===undefined)warnings.push('[字段缺失] 世界共识: 世界时间');}
     if(need('存档-索引-NPC','dir'))for(const n of Object.values(node(s,'存档-索引-NPC').children))if(n.type==='dir')character('存档-索引-NPC/'+n.name);
-    if(need('存档-索引-物品','dir'))for(const n of Object.values(node(s,'存档-索引-物品').children))if(n.type==='dir'){const dir='存档-索引-物品/'+n.name;need(dir+'/物品日志.txt');const o=json(dir+'/物品基础信息.json','object');if(o)fields(o,{名称:['名称','Name'],信息:['信息','Description','Info'],位置所属:['位置所属','Location','Owner'],可见性:['可见性','Visibility'],余量:['余量','Amount'],Action字典:['Action字典','Actions','ActionList']},dir);}
-    const scenes=(n,p)=>{if(node(s,p+'/场景信息.json')){json(p+'/场景信息.json','object');need(p+'/场景日志.txt');need(p+'/场景台本.json');list(p+'/NPC列表.json','存档-索引-NPC');list(p+'/场景物品列表.json','存档-索引-物品');}for(const c of Object.values(n.children||{}))if(c.type==='dir')scenes(c,p+'/'+c.name);};
-    if(need('存档-世界','dir')){need('存档-世界/世界日志.txt');scenes(node(s,'存档-世界'),'存档-世界');}need('存档-旧','dir');return warnings;
+    if(need('存档-索引-物品','dir'))for(const n of Object.values(node(s,'存档-索引-物品').children))if(n.type==='dir'){const dir='存档-索引-物品/'+n.name;const o=json(dir+'/物品基础信息.json','object');if(o)fields(o,{名称:['名称','Name'],信息:['信息','Description','Info'],位置所属:['位置所属','Location','Owner'],可见性:['可见性','Visibility'],余量:['余量','Amount'],Action字典:['Action字典','Actions','ActionList']},dir);}
+    const scenes=(n,p)=>{if(node(s,p+'/场景信息.json')){json(p+'/场景信息.json','object');need(p+'/场景台本.json');list(p+'/NPC列表.json','存档-索引-NPC');list(p+'/场景物品列表.json','存档-索引-物品');}for(const c of Object.values(n.children||{}))if(c.type==='dir')scenes(c,p+'/'+c.name);};
+    if(need('存档-世界','dir')){scenes(node(s,'存档-世界'),'存档-世界');}need('存档-旧','dir');return warnings;
   }
   const validateCharacterInfo=(s,dir)=>validate(s,dir);
   return {aliases,get,normalize,visible,hiddenFlag,read,node,itemPath,worldTime,consensusTime,actorState,displayPaths,references,cacheWarnings,validate,validateCharacterInfo};

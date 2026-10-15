@@ -642,7 +642,7 @@ const GameCore = (() => {
     for(const slot of slots.scan(s.tree).filter(slot=>['player','ai'].includes(slot.kind))){
       paths.push(slot.path+'/基础信息.json',slot.path+'/背包.json');
     }
-    for(const p of round.openingExtraReads||[])if(!paths.includes(p))paths.push(p);
+    for(const p of round.openingExtraReads||[])if(!fileValidation.retiredJournal(p)&&!paths.includes(p))paths.push(p);
     round.openingReadsPrepared=true;
     if(!paths.length)return false;
     const limit=Math.min(16000,Math.max(1,Math.floor(64000/paths.length))),tool_calls=[];

@@ -96,3 +96,24 @@ for(const [name,count]of [['古茂密林之中',4],['猩红文档',5]])test(name
   for(const branch of ['维克','罗奇','弗林德斯','寇特'])assert.ok(zip.file('世界状态和世界规则/窃贼分支/窃贼-'+branch+'.md'));
  }
 });
+
+
+for(const name of names)test('published world '+name+' contains no retired journals or references to them',{skip:!fs.existsSync(path.join(dir,'files',name+'.zip'))},async()=>{
+ const {zip}=await load(name);
+ for(const entry of Object.values(zip.files)){
+  if(entry.dir)continue;
+  assert.doesNotMatch(entry.name,/(?:^|\/)(?:日志|物品日志|场景日志|世界日志)\.txt$/,entry.name);
+  if(/\.(md|json|txt)$/.test(entry.name))assert.doesNotMatch(await entry.async('string'),/(?:日志|物品日志|场景日志|世界日志)\.txt/,entry.name);
+ }
+});
+
+test('journal cleanup keeps actual clue diaries and private facts in their canonical records',{skip:missingPublishedFiles('files/古茂密林之中.zip','files/猩红文档.zip','files/鬼屋.zip')},async()=>{
+ const forest=await load('古茂密林之中'),scarlet=await load('猩红文档'),ghost=await load('鬼屋');
+ assert.ok(forest.zip.file('存档-索引-物品/特纳的日记本/物品基础信息.json'));
+ assert.ok(scarlet.zip.file('存档-索引-物品/露西的约会日记/物品基础信息.json'));
+ assert.ok(ghost.zip.file('存档-索引-物品/科比特日记-第1册/物品基础信息.json'));
+ const memory=JSON.parse(await forest.zip.file('存档-索引-NPC/卡尔·怀特/格式化记忆.json').async('string'));
+ assert.match(memory['.勘探经历'],/报告未寄出/);
+ assert.doesNotMatch(JSON.stringify(Core.filterVisible(memory)),/报告未寄出/);
+ assert.match(await ghost.zip.file('故事集/原模组摘要.md').async('string'),/1835/);
+});

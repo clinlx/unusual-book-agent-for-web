@@ -7,15 +7,15 @@ function fixture(t) {
   t.after(()=>fs.rmSync(temp,{recursive:true,force:true}));
   const write=(p,text)=>{const full=path.join(root,p);fs.mkdirSync(path.dirname(full),{recursive:true});fs.writeFileSync(full,text);};
   const json=(p,value)=>write(p,JSON.stringify(value));
-  for(const d of ['存档-索引-NPC','存档-索引-物品','存档-旧']) fs.mkdirSync(path.join(root,d),{recursive:true});
-  for(const p of ['模组.md','开场白.md','样例开场.md','剧情线与进度/主线剧情.md','世界状态和世界规则/世界规则.md','世界状态和世界规则/掷骰规则.md','世界状态和世界规则/检定与触发器索引.md','存档-世界/世界日志.txt']) write(p,'测试世界。'.repeat(30));
+  for(const d of ['存档-索引-NPC','存档-索引-物品','存档-旧','存档-世界']) fs.mkdirSync(path.join(root,d),{recursive:true});
+  for(const p of ['模组.md','开场白.md','样例开场.md','剧情线与进度/主线剧情.md','世界状态和世界规则/世界规则.md','世界状态和世界规则/掷骰规则.md','世界状态和世界规则/检定与触发器索引.md']) write(p,'测试世界。'.repeat(30));
   json('世界状态和世界规则/世界共识.json',{世界时间:'第一天'});
   const doc=fs.readFileSync(path.join(__dirname,'../reference/WorldDataContract.md'),'utf8').replace(/\r\n/g,'\n');
   const info=JSON.parse(doc.split('```json\n')[1].split('```')[0]);
   json('Player-pc/基础信息.json',info);
   for(const f of ['关系记忆.json','格式化记忆.json','关系图.json','待办与目标.json']) json('Player-pc/'+f,{});
-  json('Player-pc/背包.json',[]);write('Player-pc/日志.txt','');
-  const item=(owner='Player-pc')=>{json('存档-索引-物品/key/物品基础信息.json',{名称:'钥匙',信息:'开门',位置所属:owner,可见性:'可见',余量:1,Action字典:{}});write('存档-索引-物品/key/物品日志.txt','');};
+  json('Player-pc/背包.json',[]);
+  const item=(owner='Player-pc')=>{json('存档-索引-物品/key/物品基础信息.json',{名称:'钥匙',信息:'开门',位置所属:owner,可见性:'可见',余量:1,Action字典:{}});};
   return {temp,root,write,json,info,item,errors:()=>validateStructure(root)};
 }
 test('documented character creation template passes without derived stats',t=>a.deepEqual(fixture(t).errors(),[]));
@@ -37,5 +37,5 @@ test('wrong directory type does not crash',t=>{const f=fixture(t);fs.rmdirSync(p
 test('fixed opening accepts omitted optional opening story text',t=>{const f=fixture(t);f.write('故事.txt','既定主角');a.deepEqual(f.errors(),[]);f.write('开场剧情.txt','开场');a.deepEqual(f.errors(),[]);});
 test('merged opening instructions work in the CLI validator',t=>{const f=fixture(t);fs.unlinkSync(path.join(f.root,'开场白.md'));fs.unlinkSync(path.join(f.root,'样例开场.md'));a.deepEqual(f.errors(),[]);f.write('开场说明.md','## 主持人开场白\n'+'主持说明。'.repeat(30)+'\n## 样例开场\n'+'开场小说。'.repeat(30));a.deepEqual(f.errors(),[]);f.write('开场说明.md','太短');a.match(f.errors().join('\n'),/内容过短.*开场说明.md/);});
 test('fixed opening accepts renamed original text',t=>{const f=fixture(t);f.write('故事.txt','既定主角');f.write('开场原文.txt','原文\n\n  原有对白。\n');a.deepEqual(f.errors(),[]);});
-test('scene containers account for item locations',t=>{const f=fixture(t);const dir='存档-世界/区域/大厅';f.item(dir);f.json(dir+'/场景信息.json',{});f.json(dir+'/场景台本.json',[]);f.json(dir+'/NPC列表.json',[]);f.json(dir+'/场景物品列表.json',['key']);f.write(dir+'/场景日志.txt','');a.deepEqual(f.errors(),[]);f.json(dir+'/场景物品列表.json',[]);a.match(f.errors().join('\n'),/不可访问物品/);});
+test('scene containers account for item locations',t=>{const f=fixture(t);const dir='存档-世界/区域/大厅';f.item(dir);f.json(dir+'/场景信息.json',{});f.json(dir+'/场景台本.json',[]);f.json(dir+'/NPC列表.json',[]);f.json(dir+'/场景物品列表.json',['key']);a.deepEqual(f.errors(),[]);f.json(dir+'/场景物品列表.json',[]);a.match(f.errors().join('\n'),/不可访问物品/);});
 test('CLI handles cwd, absolute paths, invalid targets and arguments',t=>{const f=fixture(t),script=path.join(__dirname,'validate_game_structure.js');for(const [cwd,args] of [[f.root,[]],[f.temp,['world']],[f.temp,[f.root]]]){const r=spawnSync(process.execPath,[script,...args],{cwd,encoding:'utf8'});a.equal(r.status,0,r.stdout+r.stderr);}for(const [args,code] of [[[path.join(f.root,'模组.md')],1],[['--unknown'],2],[['--help'],0]]){const r=spawnSync(process.execPath,[script,...args],{encoding:'utf8'});a.equal(r.status,code);}});

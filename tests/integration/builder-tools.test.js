@@ -29,7 +29,6 @@ test('validator rejects paths outside workspace, traversal and prototype segment
 test('nested worlds accept VFS absolute item references inside their own root', () => {
   const tools = api(), f = fixture();
   f.write('存档-索引-物品/key/物品基础信息.json', { 名称: '钥匙', 信息: '开门', 位置所属: 'Player-pc', 可见性: '可见', 余量: 1, Action字典: {} });
-  f.write('存档-索引-物品/key/物品日志.txt', '');
   f.write('Player-pc/背包.json', [f.root + '/存档-索引-物品/key/物品基础信息.json']);
   assert.deepEqual(tools.validate(f.tree, f.root).errors, []);
   f.write('Player-pc/背包.json', ['/workspace/another/存档-索引-物品/key/物品基础信息.json']);
