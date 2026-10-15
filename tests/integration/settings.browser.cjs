@@ -23,7 +23,8 @@ before(async () => {
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   origin = 'http://127.0.0.1:' + server.address().port;
-  browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL || 'msedge', headless: true });
+  browser = await chromium.launch({ ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH }
+    : { channel: process.env.BROWSER_CHANNEL || 'msedge' }), headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
 });
 after(async () => {
   await browser?.close();
@@ -83,6 +84,7 @@ for (const name of ['game', 'designer']) {
       const page = await context.newPage(), urls = [], errors = [];
       page.setDefaultTimeout(5000);
       page.on('pageerror', error => errors.push(error.message));
+      await page.addInitScript(() => Object.defineProperty(HTMLSelectElement.prototype, 'showPicker', { configurable: true, value: undefined }));
       await page.route('https://**/*', async route => {
         const url = route.request().url();
         if (!url.startsWith('https://settings.invalid/')) return route.abort();
@@ -90,7 +92,7 @@ for (const name of ['game', 'designer']) {
         const models = url === 'https://settings.invalid/gateway/v1/models';
         const chat = url === 'https://settings.invalid/gateway/v1/chat/completions';
         await route.fulfill({ status: models || chat ? 200 : 404, contentType: 'application/json',
-          body: JSON.stringify(models ? { data: [{ id: 'settings-test' }] }
+          body: JSON.stringify(models ? { data: [{ id: 'settings-test' }, { id: 'other-provider/model' }] }
             : { choices: [{ message: { content: 'OK' } }] }) });
       });
       await openSettings(page, name);
@@ -107,10 +109,19 @@ for (const name of ['game', 'designer']) {
         await result.filter({ hasText: /连接成功/ }).waitFor();
         await (name === 'game' ? page.locator('[data-action="fetch-models"]')
           : page.getByRole('button', { name: '从接口获取模型列表' })).click();
-        await page.locator(name === 'game' ? '#model-list-result' : '#modelListOpts option').filter(
-          name === 'game' ? { hasText: /获取成功/ } : { hasText: '' }).waitFor({ state: 'attached' });
+        const picker = page.getByRole('combobox', { name: '选择模型', exact: true });
+        await picker.waitFor();
+        assert.equal(await model.inputValue(), 'settings-test', 'fetching models preserves the typed model');
+        await picker.click();
+        await page.getByRole('listbox').getByRole('option', { name: 'other-provider/model', exact: true }).click();
+        assert.equal(await model.inputValue(), 'other-provider/model', 'a different model family remains selectable with an existing value');
+        await picker.click();
+        await page.getByRole('listbox').getByRole('option', { name: 'settings-test', exact: true }).click();
+        assert.equal(await model.inputValue(), 'settings-test', 'the full list can be reopened after selection');
       }
+      await model.fill('custom-unlisted-model');
       await page.getByRole('button', { name: name === 'game' ? '保存设置' : '保存', exact: true }).click();
+      await page.getByRole('button', { name: name === 'game' ? '保存设置' : '保存', exact: true }).waitFor({ state: 'hidden' });
       await page.reload();
       if (name === 'game') {
         await page.locator('[data-action="settings"]').waitFor();
@@ -119,6 +130,7 @@ for (const name of ['game', 'designer']) {
         await readyDesigner(page);
         await page.evaluate(() => Agent.createHttpTransport({ ...__UI_STATE__.settings, stream: false }, [])([{ role: 'user', content: 'hello' }]));
       }
+      assert.equal(await page.evaluate(name => name === 'game' ? GameApp.getState().settings.model : __UI_STATE__.settings.model, name), 'custom-unlisted-model', 'manual model names still persist');
       assert.equal(urls.length, 5);
       assert.deepEqual(urls, [
         'https://settings.invalid/gateway/v1/chat/completions', 'https://settings.invalid/gateway/v1/models',

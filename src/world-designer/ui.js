@@ -5147,8 +5147,8 @@
     const baseUrlWrap = el('div', { class: 'api-base-setting' }, baseUrl);
     const apiKey = el('input', { value: s.apiKey, type: 'password' });
     // 模型：可输入 + 可从 /models 拉取后下拉选择
-    const model = el('input', { value: s.model, list: 'modelListOpts', style: 'flex:1;min-width:0' });
-    const modelDatalist = el('datalist', { id: 'modelListOpts' });
+    const model = el('input', { value: s.model, autocomplete: 'off', spellcheck: 'false', style: 'flex:1;min-width:0' });
+    let modelChoices;
     const fetchModelsBtn = el('button', { class: 'iconbtn', title: '从接口获取模型列表', onclick: async () => {
       const base = baseUrl.value.trim();
       if (!base) { toast('请先填写 API Base URL'); return; }
@@ -5159,14 +5159,23 @@
         const json = await resp.json();
         const ids = (json.data || []).map(m => m.id).filter(Boolean).sort();
         if (!ids.length) throw new Error('返回的模型列表为空');
-        modelDatalist.innerHTML = '';
-        for (const id of ids) modelDatalist.append(el('option', { value: id }));
-        toast('已获取 ' + ids.length + ' 个模型，点击模型输入框选择');
-        model.focus();
+        modelChoices?.remove();
+        modelChoices = el('select', { id: 'modelListOpts', 'aria-label': '选择模型', title: '从完整列表选择模型', style: 'flex:0 0 5em;width:5em;padding:7px 6px' },
+          el('option', { value: '', text: '选择', disabled: true, hidden: true }),
+          ...ids.map(id => el('option', { value: id, text: id })));
+        modelChoices.value = '';
+        modelChoices.addEventListener('change', () => {
+          if (!modelChoices.value) return;
+          model.value = modelChoices.value; modelChoices.value = '';
+          model.dispatchEvent(new Event('input', { bubbles: true }));
+          model.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        model.after(modelChoices);
+        toast('已获取 ' + ids.length + ' 个模型，可从“选择”下拉框切换');
       } catch (e) { toast('获取失败: ' + e.message); }
       finally { fetchModelsBtn.disabled = false; }
     } }, icon('refresh'));
-    const modelWrap = el('div', { style: 'display:flex;flex:1;gap:4px;align-items:center;min-width:0' }, model, fetchModelsBtn, modelDatalist);
+    const modelWrap = el('div', { style: 'display:flex;flex:1;gap:4px;align-items:center;min-width:0' }, model, fetchModelsBtn);
 
     // 连通性测试：用当前表单里的值（而非已保存值）发一条无上下文的 hello
     const testResult = el('div', { class: 'api-test-result' });
