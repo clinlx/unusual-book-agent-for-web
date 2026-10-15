@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const expected = ['game-world-builder', 'write-novel', 'desire-analysis', 'grilling'];
+const expected = ['game-world-builder', 'write-novel', 'desire-analysis', 'grilling', 'tavern-card-loader'];
 const fixture = Object.fromEntries([
   ['skill_enable_list.json', JSON.stringify([...expected, 'other-page'])],
   ...[...expected, 'other-page'].flatMap(name => [
@@ -29,7 +29,7 @@ test('hosted skills come only from the world designer namespace and whitelist', 
   assert.ok(urls.length);
   assert.ok(urls.every(url => !url.includes('other-page')));
 });
-test('file and standalone pages load exactly four bundled skills without network', async () => {
+test('file and standalone pages load exactly five bundled skills without network', async () => {
   for (const args of [{ href: 'file:///tmp/designer.html' }, { href: 'https://example.test/designer.html', standalone: true }]) {
     const report = await resources().load({ ...args, snapshot: fixture, fetchFn: () => { throw Error('unexpected network'); } });
     assert.equal(report.origin, 'bundled');

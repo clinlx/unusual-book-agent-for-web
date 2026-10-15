@@ -5,6 +5,7 @@ const Agent = (() => {
   const _Budget = (typeof module !== 'undefined') ? require('./context-budget.js') : ContextBudget;
   const _Diff = (typeof module !== 'undefined') ? require('./diff.js') : Diff;
   const _BuilderTools = (typeof module !== 'undefined') ? require('./builder-tools.js') : BuilderTools;
+  const _CardTools = (typeof module !== 'undefined') ? require('./card-tools.js') : CardTools;
   const _ApiUrl = (typeof module !== 'undefined') ? require('../shared/api-url.js') : ApiUrl;
   const _FileWriteValidation = (typeof module !== 'undefined') ? require('../shared/file-write-validation.js') : FileWriteValidation;
 
@@ -18,7 +19,7 @@ const Agent = (() => {
      不如在入口对照工具定义查一遍，把「哪个参数、期望什么、收到什么」
      直白地喂回给模型，它下一轮就知道怎么改。 */
   const _TOOL_SPEC = {};
-  for (const t of [..._TOOL_DEFS, ..._BuilderTools.definitions]) {
+  for (const t of [..._TOOL_DEFS, ..._BuilderTools.definitions, ..._CardTools.definitions]) {
     const p = t.function.parameters || {};
     _TOOL_SPEC[t.function.name] = { required: p.required || [], props: p.properties || {} };
   }
@@ -187,6 +188,11 @@ const Agent = (() => {
     const before = isWrite ? snapshotFile(ctx.tree, args.path || args.from) : null;
     try {
       switch (name) {
+        case 'parse_tavern_card': {
+          if (!_CardTools.enabled(ctx.skills)) throw Error('该工具所需的 tavern-card-loader 技能未启用');
+          return { isWrite: true, pending: Promise.resolve().then(() => typeof ctx.parseCard === 'function'
+            ? ctx.parseCard(args) : _CardTools.parse(ctx.tree, args, { signal: ctx.signal })) };
+        }
         case 'parse_document': {
           if (typeof ctx.parseDocument !== 'function') throw Error('文档解析工具不可用');
           if (args.format === 'images' && args.output === 'return' && typeof ctx.viewImage !== 'function') throw Error('图片发送已关闭，请开启多模态或使用 output=file 保存图片');
@@ -548,7 +554,7 @@ const Agent = (() => {
   }
 
   function toolDefinitions(skills, { imageSending = true } = {}) {
-    return [..._TOOL_DEFS, ...(_BuilderTools.enabled(skills) ? _BuilderTools.definitions : [])]
+    return [..._TOOL_DEFS, ...(_BuilderTools.enabled(skills) ? _BuilderTools.definitions : []), ...(_CardTools.enabled(skills) ? _CardTools.definitions : [])]
       .filter(tool => imageSending || tool.function.name !== 'view_image')
       .map(tool => imageSending || tool.function.name !== 'parse_document' ? tool : {
         ...tool, function: { ...tool.function,

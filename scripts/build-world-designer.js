@@ -4,8 +4,8 @@ const path = require('node:path');
 const { root, read, safeJSON, scripts, compose, svgDataUri } = require('./build-common.js');
 const { buildSnapshot } = require('./bundle-skills.js');
 const { bundleDocuments } = require('./bundle-documents.js');
-const SKILLS = ['write-novel', 'desire-analysis', 'grilling', 'game-world-builder'];
-const modules = ['00-config', 'vfs', 'tokens', 'context-budget', 'temp-files', 'images', 'document-runtime', 'documents', 'compress',
+const SKILLS = ['write-novel', 'desire-analysis', 'grilling', 'game-world-builder', 'tavern-card-loader'];
+const modules = ['00-config', 'vfs', 'tokens', 'context-budget', 'temp-files', 'card-tools', 'images', 'document-runtime', 'documents', 'compress',
   'sse', 'zip', 'workspace-import', 'skills', 'skill-loader', 'versioning', 'diff',
   'pending', 'md', 'db', 'storage', 'builder-tools', 'validation', 'agent', 'lease', 'resources', 'ui'];
 
@@ -13,10 +13,10 @@ function buildWorldDesigner() {
   const assets = path.join(root, 'assets/world-designer');
   const enabled = JSON.parse(fs.readFileSync(path.join(assets, 'skill_enable_list.json'), 'utf8'));
   if (JSON.stringify(enabled) !== JSON.stringify(SKILLS))
-    throw Error('世界设计者的内置技能清单必须包含且仅包含指定的四个技能');
+    throw Error('世界设计者的内置技能清单必须包含且仅包含指定的五个技能');
   const warnings = [];
   const bundled = buildSnapshot(assets, {
-    skillDirectories: { 'game-world-builder': path.join(root, 'skills/game-world-builder') },
+    skillDirectories: { 'game-world-builder': path.join(root, 'skills/game-world-builder'), 'tavern-card-loader': path.join(root, 'skills/tavern-card-loader') },
     warn: message => warnings.push(message),
   });
   if (!bundled || bundled.stats.length !== SKILLS.length || warnings.length)
@@ -26,7 +26,7 @@ function buildWorldDesigner() {
     files: Object.keys(bundled.snapshot).filter(file => file.startsWith(builderPrefix))
       .map(file => file.slice(builderPrefix.length)).filter(file => file !== 'SKILL.md' && file !== 'manifest.json'),
   });
-  const source = scripts(['vendor/marked.min.js', 'skills/game-world-builder/scripts/world-trigger-rules.js', 'skills/game-world-builder/scripts/validate_game_structure.js', 'src/shared/file-write-validation.js', 'src/shared/api-url.js', 'src/shared/world-handoff.js', 'src/shared/transfer-dialog.js', 'src/shared/designer-projects.js', 'src/shared/back-navigation.js','src/shared/send-shortcut.js','src/shared/dropdown.js',
+  const source = scripts(['vendor/marked.min.js', 'skills/game-world-builder/scripts/world-trigger-rules.js', 'skills/game-world-builder/scripts/validate_game_structure.js', 'skills/tavern-card-loader/scripts/extract-card.js', 'src/shared/file-write-validation.js', 'src/shared/api-url.js', 'src/shared/world-handoff.js', 'src/shared/transfer-dialog.js', 'src/shared/designer-projects.js', 'src/shared/back-navigation.js','src/shared/send-shortcut.js','src/shared/dropdown.js',
     ...modules.map(name => 'src/world-designer/' + name + '.js')]);
   const schema = JSON.parse(fs.readFileSync(path.join(root, 'skills/game-world-builder/scripts/world-schema.json'), 'utf8'));
   const prefix = 'const BUNDLED_DESIGNER_ICON = ' + safeJSON(read('assets/icons/designer.svg')) + ';\n' + 'const BUNDLED_SKILLS = ' + safeJSON(bundled.snapshot) + ';\n'
@@ -43,6 +43,6 @@ function buildWorldDesigner() {
     if (path.dirname(target) !== dist) throw Error('Invalid obsolete output path');
     fs.rmSync(target, { recursive: true, force: true });
   }
-  console.log('Built dist/designer.html (' + Math.round(Buffer.byteLength(html) / 1024) + ' KiB), 4 embedded isolated skills.');
+  console.log('Built dist/designer.html (' + Math.round(Buffer.byteLength(html) / 1024) + ' KiB), ' + SKILLS.length + ' embedded isolated skills.');
 }
 module.exports = { buildWorldDesigner };

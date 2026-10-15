@@ -2526,6 +2526,8 @@
           viewImage: S.settings.imageSending ? viewImage : undefined,
           parseDocument: args => Documents.parse(S.tree, args, { signal: S.abort.signal,
             checkActive: () => { if (S.projectId !== projectId || !S.running || lease.isHeldByOther(projectId)) throw Error('文档解析任务已失效'); } }),
+          parseCard: args => CardTools.parse(S.tree, args, { signal: S.abort.signal,
+            checkActive: () => { if (S.projectId !== projectId || !S.running || lease.isHeldByOther(projectId)) throw Error('角色卡解析任务已失效'); } }),
           askUser: askUserDialog, goal: S.goal || (S.goal = { content: '', changedPending: false }) };
         S.streamSession = sess.id;      // 流式内容归属本会话，切走后不画到别处
         S.streamBuf = '';
