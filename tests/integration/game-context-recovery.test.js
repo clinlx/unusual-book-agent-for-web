@@ -122,14 +122,15 @@ test('recovery archives are reused, keep later edits intact and disappear on rou
 test('emergency checkpoints retain frozen actions, trigger plan, published progress and dice outcomes',()=>{
   const s=save(),plan={Countdowns:'钟声还剩两次',Pending_Triggers:[{Event:'门口的来客'}],Forced_Checks:'已完成侦查'};
   s.activeRound.action='去门口';s.activeRound.actions=[{actorId:'p',content:'等候',privateContent:'察看钥匙'}];
-  const calls=[call('trigger','trigger_next_round',{phase_plan:plan}),
+  const calls=[call('trigger','trigger_next_round',{phase_plan:JSON.stringify(plan)}),
+    call('failed-trigger','trigger_next_round',{phase_plan:{Countdowns:'不能恢复失败规划'}}),
     call('dice','roll_dice',{description:'确认动静',roller:'p',related_attr:'侦查',is_secret:false,dice_dict:{侦查:'1d100'},calculate_only:false,target_value:60,compare_mode:'le',critical_success_range:null,critical_failure_range:null,dice_combine_mode:'sum',left_modifiers:{},right_modifiers:{}}),
     call('story','append_story',{content:'你已到达门口。',one_line_summary_of_content:'到达门口'})];
   s.messages.push({role:'assistant',round:1,reasoning_content:'推理'.repeat(6000),tool_calls:calls});
   for(const c of calls)s.messages.push({role:'tool',round:1,tool_call_id:c.id,content:JSON.stringify(Core.execute(s,c.function.name,JSON.parse(c.function.arguments),c.id,{random:()=>.2}))});
   const state=structuredClone(s.activeRound),out=Core.context(s,'规则',2000);validProtocol(out);
   const progress=JSON.parse(out.find(m=>m.content.startsWith('[本回合执行记录]')).content.split('\n').slice(1).join('\n'));
-  assert.deepEqual(progress.actions,state.actions);assert.equal(progress.action,'去门口');assert.deepEqual(progress.phase_plan,plan);
+  assert.deepEqual(progress.actions,state.actions);assert.equal(Object.hasOwn(progress,'action'),false);assert.deepEqual(progress.phase_plan,plan);
   assert.equal(progress.published,1);assert.deepEqual(progress.summary,['到达门口']);
   assert.equal(progress.recent_calls.find(c=>c.id==='dice').dice.total,21);
   assert.deepEqual(s.activeRound,state);
@@ -193,7 +194,7 @@ test('a large recovery checkpoint is itself recoverable and preserves the full e
   const index=JSON.parse(sent.find(m=>m.content.startsWith('[上下文资料索引]')).content.split('\n').slice(1).join('\n'));
   const inputs=JSON.parse(file(s,index.archive_path)),checkpoint=inputs.find(m=>m.content.startsWith('[本回合执行记录]'));
   const progress=JSON.parse(checkpoint.content.split('\n').slice(1).join('\n'));
-  assert.deepEqual(progress.actions,s.activeRound.actions);assert.equal(progress.action,action);
+  assert.deepEqual(progress.actions,s.activeRound.actions);assert.equal(progress.actions[0].content,action);assert.equal(Object.hasOwn(progress,'action'),false);
   assert.deepEqual(progress.summary,[summary]);assert.equal(progress.published,1);
   const batches=JSON.parse(file(s,progress.archive_path));
   assert.deepEqual(JSON.parse(file(s,batches[0].path)),original.slice(1));

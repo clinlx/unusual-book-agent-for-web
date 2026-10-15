@@ -21,7 +21,7 @@ if 满足阶段转移条件: read_file(对应阶段文档)
 # ===== 2 解析输入与检定 =====
 if 非系统已提供的开局行动 and 本轮尚未获取行动:
     result = @trigger_next_round(phase_plan={"Countdowns": 倒计时说明文本, "Pending_Triggers": 待触发事项数组, "Forced_Checks": 强制检定说明文本})
-    actions = result.actions  # 宿主提供的全部角色提交，兼容单人 result.player/result.action
+    actions = result.actions  # 单人和多人统一为角色行动数组；actorId 对应 result.actors 中的 id
     逐个解析 actions 的 actorId、公开行动、私密行动与 Alive/Enabled；无意识自动等待，死亡和禁用角色不能行动
 conditions = 从本轮行动与已读世界状态确认；无计划事项时 Countdowns、Forced_Checks 填 "无"，Pending_Triggers 填 []
 逐源列出适用于本回合输入的规则条目(编号/条名)备用:

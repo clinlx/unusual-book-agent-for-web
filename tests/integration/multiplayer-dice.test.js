@@ -30,5 +30,5 @@ test('public NPC and GM dice leave other-player history hashes unchanged, and pr
 });
 test('participant roster freezes before a guest joins and dead participants do not trigger unconscious recovery',()=>{
  const s=fixture();Core.rollback(s);s.multiplayer={members:{host:{actorId:'a'},guest:{actorId:null,invitationActorId:'b'}}};V.writeFile(s.tree,'/workspace/Player-a/基础信息.json','{"姓名":"甲","Alive":false,"Enabled":false}');Core.beginRound(s,'',false,'',{actions:[]});s.multiplayer.members.guest.actorId='b';
- const out=Core.execute(s,'trigger_next_round',{phase_plan:{Countdowns:'无',Forced_Checks:'无',Pending_Triggers:[]}},'dead-trigger');assert.deepEqual(out.result.unconsciousActors,[]);assert.equal(out.result.actors.some(a=>a.kind==='player'&&a.alive),false);assert.equal(out.result.actors.find(a=>a.id==='a').alive,false);
+ const out=Core.execute(s,'trigger_next_round',{phase_plan:{Countdowns:'无',Forced_Checks:'无',Pending_Triggers:[]}},'dead-trigger');assert.equal(out.result.unconsciousActors,undefined);assert.equal(out.result.actors.some(a=>a.kind==='player'&&a.alive),false);assert.equal(out.result.actors.find(a=>a.id==='a').alive,false);
 });

@@ -3,6 +3,16 @@ const GameContextRecovery=(()=>{
   const V=typeof module!=='undefined'&&module.exports?require('./vfs'):VFS;
   const ROOT='/workspace/过往回合历史记忆';
   const reads=new Set(['read_file','read_multiple_files','list_dir','tree','search']);
+  // Model-facing projection only; transport metadata remains in the frozen submissions.
+  function actions(s){
+    const round=s.activeRound||{};
+    const source=round.actions?.length?round.actions:!s.hostSpectator&&(round.action||round.skip)?[
+      {actorId:s.actorId,content:round.action||'',skip:round.skip}
+    ]:[];
+    return source.map(a=>({actorId:a.actorId,content:a.content||'',
+      ...(a.privateContent?{privateContent:a.privateContent}:{}),
+      ...Object.fromEntries(['skip','automatic','disguise'].filter(k=>a[k]===true).map(k=>[k,true]))}));
+  }
   const segment=x=>String(x||'current').replace(/[^\w-]/g,'_').slice(0,100);
   const uid=()=>globalThis.crypto?.randomUUID?.()||Date.now().toString(36)+Math.random().toString(36).slice(2);
   function completedUnits(source,current){
@@ -97,7 +107,13 @@ const GameContextRecovery=(()=>{
       for(const call of unit.calls){
         let receipt;try{receipt=JSON.parse(source.slice(unit.start+1,unit.end).find(m=>m.tool_call_id===call.id)?.content);}catch(_){}
         const entry={id:call.id,tool:call.function.name,ok:receipt?.ok===true};
-        if(entry.ok&&call.function.name==='trigger_next_round')phasePlan=receipt.result?.phase_plan;
+        if(entry.ok&&call.function.name==='trigger_next_round'){
+          // New receipts omit the echoed plan; old saved receipts remain readable.
+          try{const args=JSON.parse(call.function.arguments),plan=typeof args.phase_plan==='string'?JSON.parse(args.phase_plan):args.phase_plan;
+            if(plan&&typeof plan==='object'&&!Array.isArray(plan))phasePlan=plan;
+            else if(receipt.result?.phase_plan)phasePlan=receipt.result.phase_plan;
+          }catch(_){if(receipt.result?.phase_plan)phasePlan=receipt.result.phase_plan;}
+        }
         if(call.function.name==='roll_dice'){
           const d=receipt?.result?.data;
           if(d){
@@ -110,7 +126,7 @@ const GameContextRecovery=(()=>{
       }
       const indexPath=archive(JSON.stringify(entries),'Index_'+unit.end),r=s.activeRound||{};
       const progress={round:current,triggered:!!r.triggered,published:r.published||0,privatePublished:r.privatePublished||0,
-        action:r.action||'',actions:r.actions||[],phase_plan:phasePlan,summary:r.summary||[],completed_calls:recentCalls.length,
+        actions:actions(s),phase_plan:phasePlan,summary:r.summary||[],completed_calls:recentCalls.length,
         recent_calls:recentCalls.slice(-8),archive_path:indexPath,
         instruction:'沿用本轮行动与受众，从已完成进度继续。成功的修改、掷骰及正文不得重复执行。完整思考与工具回执在 archive_path 列出的快照内；缺少细节时用 read_file 按 offset/limit 分段读取，limit 建议 4000。'};
       const checkpoint={role:'user',round:current,content:'[本回合执行记录]\n'+JSON.stringify(progress)};
@@ -124,6 +140,6 @@ const GameContextRecovery=(()=>{
     }
     return sent;
   }
-  return {fit};
+  return {fit,actions};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=GameContextRecovery;

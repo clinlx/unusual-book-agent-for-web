@@ -20,8 +20,9 @@ test('game resumes an interrupted oversized tool batch at the same budget withou
     requests++; return { tool_calls: [call('write', 'write_file', { path: '/workspace/proof.txt', content: '已经写入' }),
       call('read', 'read_file', { path: '/workspace/large.txt' })] };
   }, { system: '规则', cap: 1000, signal: { get aborted() { return stopped; } },
-    onStep: () => { if (s.messages.filter(m => m.role === 'tool').length === 2) stopped = true; } }), /中止/);
-  assert.equal(requests, 1); assert.equal(s.status, 'interrupted'); assert.equal(s.messages.filter(m => m.role === 'tool').length, 2);
+    onStep: () => { if (s.messages.some(m => m.role === 'tool' && m.tool_call_id === 'write')) stopped = true; } }), /中止/);
+  assert.equal(requests, 1); assert.equal(s.status, 'interrupted'); assert.equal(s.messages.filter(m => m.role === 'tool' && m.tool_call_id === 'write').length, 1);
+  assert.equal(s.messages.some(m => m.role === 'tool' && m.tool_call_id === 'read'), false);
   VFS.writeFile(s.tree, '/workspace/proof.txt', '中断后的手动编辑');
   await Core.run(s, async messages => {
     requests++; assert.ok(Core.estimate(messages) <= 1000);

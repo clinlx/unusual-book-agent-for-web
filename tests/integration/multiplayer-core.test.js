@@ -3,6 +3,20 @@ const {test}=require('node:test'),a=require('node:assert/strict');
 const V=require('../../src/vfs'),C=require('../../src/game-core');
 function save(){const t=V.createTree();for(const id of ['a','b']){V.writeFile(t,'/workspace/Player-'+id+'/基础信息.json',JSON.stringify({姓名:id,状态:{Alive:true,Enabled:true}}));V.writeFile(t,'/workspace/Player-'+id+'/背包.json','[]');}return C.createSave('多人',t);}
 const plan={Countdowns:'无',Pending_Triggers:[],Forced_Checks:'无'};
+test('trigger returns lean actions and rules without changing internal submissions',()=>{
+ const s=save(),actions=[{actorId:'a',memberId:'host',requestId:'transport-id',submissionVersion:3,content:'开门',privateContent:'',skip:false,automatic:false},
+  {actorId:'b',content:'假装等待',privateContent:'藏钥匙',disguise:true,skip:true,automatic:true}];
+ C.beginRound(s,'重复文本',false,'',{actions});const before=structuredClone(s.activeRound.actions);
+ const r=C.execute(s,'trigger_next_round',{phase_plan:plan},'trigger',{multiplayerPrompts:{ai_roles:'固定角色控制规则'}});
+ a.equal(r.ok,true);a.deepEqual(r.result.actions,[{actorId:'a',content:'开门'},{actorId:'b',content:'假装等待',privateContent:'藏钥匙',disguise:true,skip:true,automatic:true}]);
+ for(const key of ['action','player','phase_plan','warnings','unconsciousActors'])a.equal(Object.hasOwn(r.result,key),false,key);
+ a.equal(r.result.instruction,'固定角色控制规则');a.match(r.result.disguiseInstruction,/privateContent/);a.equal(r.result.actors.length,2);a.deepEqual(s.activeRound.actions,before);
+ a.deepEqual(C.execute(s,'trigger_next_round',{phase_plan:plan},'trigger'),r);
+});
+test('single-player actions and skips use the same lean shape; spectator hosts add no action',()=>{
+ for(const skip of [false,true]){const s=save();C.beginRound(s,'观察房间',false,'',{skip});const r=C.execute(s,'trigger_next_round',{phase_plan:plan});a.equal(r.ok,true);a.equal(r.result.actions.length,1);a.equal(r.result.actions[0].actorId,s.actorId);a.equal(r.result.actions[0].content,s.activeRound.action);a.equal(r.result.actions[0].skip,skip?true:undefined);}
+ const s=save();s.hostSpectator={perspective:'all'};C.beginRound(s,'房主不是行动者',false,'',{actions:[]});const r=C.execute(s,'trigger_next_round',{phase_plan:plan});a.deepEqual(r.result.actions,[]);
+});
 test('multi actions remain attributed and only intended private recipients see the story',()=>{
  const s=save();C.beginRound(s,'',false,'回合',{actions:[{actorId:'a',content:'开门',privateContent:'藏钥匙'},{actorId:'b',content:'等候'}],roundId:'r1'});
  const got=C.execute(s,'trigger_next_round',{phase_plan:plan},'trigger');a.equal(got.ok,true);a.equal(got.result.actions.length,2);a.equal(got.result.actions[0].privateContent,'藏钥匙');
@@ -18,7 +32,7 @@ test('private batch is atomic and invalid recipients never become public',()=>{
 });
 test('all unconscious injection names living actors only and rollback restores multi slot state',()=>{
  const s=save();V.writeFile(s.tree,'/workspace/Player-a/基础信息.json','{"状态":{"Alive":true,"Enabled":false}}');V.writeFile(s.tree,'/workspace/Player-b/基础信息.json','{"状态":{"Alive":false,"Enabled":false}}');
- C.beginRound(s,'',false,'',{actions:[{actorId:'a',content:'等待',automatic:true,skip:true}]});const r=C.execute(s,'trigger_next_round',{phase_plan:plan},'t');a.equal(r.ok,true);a.deepEqual(r.result.unconsciousActors,['a']);a.match(r.result.instruction,/苏醒/);C.rollback(s);a.equal(s.slots.length,2);
+ C.beginRound(s,'',false,'',{actions:[{actorId:'a',content:'等待',automatic:true,skip:true}]});const r=C.execute(s,'trigger_next_round',{phase_plan:plan},'t');a.equal(r.ok,true);a.deepEqual(r.result.unconsciousActors,['a']);a.match(r.result.instruction,/苏醒/);a.match(r.result.instruction,/AIPC\/KPC/);C.rollback(s);a.equal(s.slots.length,2);
 });
 test('round archives retain separately attributed visible snapshots for every active human actor',()=>{
  const s=save();C.beginRound(s,'',true);V.writeFile(s.tree,'/workspace/Player-b/基础信息.json','{"姓名":"b","信息":"b独有",".秘密":"不公开"}');

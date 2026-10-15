@@ -20,8 +20,8 @@ test('documented empty phase plan executes in object and serialized forms', () =
     Core.beginRound(save, '观察房间', false);
     const receipt = Core.execute(save, 'trigger_next_round', {phase_plan:input}, 'documented-plan');
     assert.equal(receipt.ok, true, receipt.error);
-    assert.equal(receipt.result.action, '观察房间');
-    assert.deepEqual(receipt.result.phase_plan, plan);
+    assert.deepEqual(receipt.result.actions, [{actorId:'pc',content:'观察房间'}]);
+    assert.equal(Object.hasOwn(receipt.result,'phase_plan'),false);
   }
 });
 

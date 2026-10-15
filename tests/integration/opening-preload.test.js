@@ -11,7 +11,25 @@ function setup(){
 }
 const stop=async()=>{throw Error('test-stop');};
 const calls=s=>s.messages.flatMap(m=>m.tool_calls||[]).filter(c=>c.function.name==='read_multiple_files');
-const results=s=>s.messages.filter(m=>m.role==='tool').flatMap(m=>JSON.parse(m.content).result||[]);
+const results=s=>{const ids=new Set(calls(s).map(c=>c.id));return s.messages.filter(m=>m.role==='tool'&&ids.has(m.tool_call_id)).flatMap(m=>JSON.parse(m.content).result||[]);};
+
+test('opening supplies one bounded depth-four tree before reads and resumes without repeating it',async()=>{
+ const s=setup();VFS.writeFile(s.tree,'/workspace/线索/一/二/三/四/深处.txt','内容无需预读');Core.beginRound(s,'',true,'开局');let paused=false;
+ const treeCalls=save=>save.messages.flatMap(m=>m.tool_calls||[]).filter(c=>c.function.name==='tree');
+ await assert.rejects(Core.run(s,stop,{onStep:()=>{
+  if(!paused&&s.events.some(e=>e.name==='tree'&&e.success)){paused=true;throw Error('pause-after-tree');}
+ }}),/pause-after-tree/);
+ const restored=structuredClone(s);let sent;
+ await assert.rejects(Core.run(restored,async messages=>{sent=messages;return stop();}),/test-stop/);
+ assert.equal(treeCalls(restored).length,1);assert.equal(restored.events.filter(e=>e.name==='tree').length,1);
+ assert.deepEqual(JSON.parse(treeCalls(restored)[0].function.arguments),{path:'/workspace',depth:4});
+ const record=JSON.parse(sent.find(m=>m.content.startsWith('[开局预读资料]\n')).content.split('\n').slice(1).join('\n'));
+ assert.equal(record.operations[0].name,'tree');const listing=record.operations[0].result.result;
+ assert.equal(listing.depth,4);assert.equal(listing.truncated,true);assert.match(listing.tree,/模组.md|线索/);assert.ok(!listing.tree.includes('深处.txt'));
+ assert.ok(!restored.activeRound.readState['/workspace/线索/一/二/三/四/深处.txt'],'directory listing does not authorize file overwrite');
+ assert.equal(Core.visibleEvents(restored).some(e=>e.name==='tree'),false);
+ await assert.rejects(Core.run(restored,stop),/test-stop/);assert.equal(treeCalls(restored).length,1);
+});
 test('opening preload supplies real bounded tool results before the first model request and authorizes writes',async()=>{
  const s=setup();Core.beginRound(s,'',true,'开局流程');let sent;
  await assert.rejects(Core.run(s,async messages=>{sent=messages;throw Error('test-stop');},{system:'固定系统提示词'}),/test-stop/);
@@ -20,7 +38,7 @@ test('opening preload supplies real bounded tool results before the first model 
  assert.equal(paths.length,7);assert.ok(paths.includes('/workspace/模组.md'));assert.ok(!paths.some(p=>/DISABLE|故事.txt/.test(p)));
  assert.equal(results(s).find(r=>r.path==='/workspace/模组.md').content,'模组开局信息');
  const preload=sent.find(m=>m.content.startsWith('[开局预读资料]\n'));assert.equal(preload.role,'user');
- const record=JSON.parse(preload.content.split('\n').slice(1).join('\n'));assert.deepEqual(record.operations[0].arguments,JSON.parse(calls(s)[0].function.arguments));assert.deepEqual(record.operations[0].result,JSON.parse(s.messages.find(m=>m.tool_call_id===calls(s)[0].id).content));
+ const record=JSON.parse(preload.content.split('\n').slice(1).join('\n')),read=record.operations.find(op=>op.name==='read_multiple_files');assert.deepEqual(read.arguments,JSON.parse(calls(s)[0].function.arguments));assert.deepEqual(read.result,JSON.parse(s.messages.find(m=>m.tool_call_id===calls(s)[0].id).content));
  assert.ok(!sent.some(m=>m.tool_calls||m.role==='tool'));
  const profile='/workspace/AIPC-p3/基础信息.json';assert.equal(Core.execute(s,'apply_patch',{path:profile,old_str:'10',new_str:'11'}).ok,true);
  assert.equal(s.events.filter(e=>['story','player'].includes(e.type)).length,0);
@@ -39,7 +57,7 @@ test('preload falls back to story, preserves per-file errors, and leaves large f
  const all=results(s),story=all.find(r=>r.path==='/workspace/故事.txt');assert.equal(story.truncated,true);assert.equal(story.totalLength,100000);assert.ok(all.reduce((n,r)=>n+(r.content?.length||0),0)<=64000);assert.ok(all.find(r=>r.path.endsWith('Player-p2/背包.json')).error);
  assert.ok(all.find(r=>r.path.endsWith('AIPC-p3/基础信息.json')).content);
  const message=Core.context(s,'').find(m=>m.content.startsWith('[开局预读资料]\n')),record=JSON.parse(message.content.split('\n').slice(1).join('\n'));
- assert.deepEqual(record.operations[0].result.result,all);
+ assert.deepEqual(record.operations.find(op=>op.name==='read_multiple_files').result.result,all);
 });
 test('ordinary rounds and already-running opening sessions do not receive a new preload',async()=>{
  for(const kind of ['ordinary','existing']){const s=setup();Core.beginRound(s,'行动',kind==='existing','流程');if(kind==='existing')s.messages.push({role:'assistant',content:'已经开始处理',round:1});await assert.rejects(Core.run(s,stop),/test-stop/);assert.equal(calls(s).length,0);}

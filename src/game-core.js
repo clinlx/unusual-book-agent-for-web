@@ -117,7 +117,7 @@ const GameCore = (() => {
     pruneRollback(s);
     if(!options.skip&&String(text||'').trim())inputs.record(s,inputRound,roundId,text);
     inputs.advance(s);
-    s.activeRound={id:roundId,number:inputRound,actions:copy(options.actions||[]),action:actionText,starting:isStart,triggered:isStart,published:0,initialWorldTime:data.consensusTime(s),
+    s.activeRound={id:roundId,number:inputRound,actions:copy(options.actions||[]),action:actionText,...options.skip?{skip:true}:{},starting:isStart,triggered:isStart,published:0,initialWorldTime:data.consensusTime(s),
       participantIds:s.multiplayer?.members?Object.values(s.multiplayer.members).map(m=>m.actorId).filter(Boolean):null,
       requestCount:0,readState:{},receipts:{},complete:false,summary:[]};
     s.status='running';s.error=null;s.lastChanges=[];
@@ -372,9 +372,11 @@ const GameCore = (() => {
           const participantIds=round.participantIds??(s.multiplayer?.members?Object.values(s.multiplayer.members).map(m=>m.actorId).filter(Boolean):null),participants=participantIds?new Set(participantIds):null;
           const actors=slots.scan(s.tree).filter(x=>x.kind!=='disabled'&&(x.kind!=='player'||!participants||participants.has(x.id))).map(x=>({...x,...data.actorState(readJson(s,x.path+'/基础信息.json',{}))}));
           const living=actors.filter(x=>x.kind==='player'&&x.alive),unconsciousActors=living.length&&living.every(x=>!x.enabled)?living.map(x=>x.id):[];
-          result={action:round.action,actions:round.actions||[],...round.actions?.some(a=>a.disguise)?{disguiseInstruction:'disguise=true 的 content 是角色对外公开的伪装说辞，真实行动以 privateContent 为准。按角色感知与动机决定他人能发现什么；不在公开正文中泄露真实行动或伪装标记。'}:{},player:s.hostSpectator?null:s.playerPath,actors,unconsciousActors,
-            instruction:unconsciousActors.length?(options.multiplayerPrompts?.all_unconscious||'所有存活玩家均失去意识。推进时间并描写苏醒，通过工具恢复这些存活角色的 Enabled，不恢复死亡角色。').replace('{actorIds}',unconsciousActors.join('、')):(options.multiplayerPrompts?.ai_roles||'AIPC/KPC 由主持人依照人设代为行动；死亡者不能行动，无意识者只能等待。'),
-            phase_plan:plan,warnings:round.number>3?data.references(s,plan.Pending_Triggers):[]};break;
+          const warnings=round.number>3?data.references(s,plan.Pending_Triggers):[];
+          const instruction=options.multiplayerPrompts?.ai_roles||'AIPC/KPC 由主持人依照人设代为行动；死亡者不能行动，无意识者只能等待。';
+          result={actions:recovery.actions(s),...round.actions?.some(a=>a.disguise)?{disguiseInstruction:'disguise=true 的 content 是角色对外公开的伪装说辞，真实行动以 privateContent 为准。按角色感知与动机决定他人能发现什么；不在公开正文中泄露真实行动或伪装标记。'}:{},actors,
+            instruction:instruction+(unconsciousActors.length?'\n'+(options.multiplayerPrompts?.all_unconscious||'所有存活玩家均失去意识。推进时间并描写苏醒，通过工具恢复这些存活角色的 Enabled，不恢复死亡角色。').replace('{actorIds}',unconsciousActors.join('、')):''),
+            ...(unconsciousActors.length?{unconsciousActors}:{}),...(warnings.length?{warnings}:{})};break;
         }
         case 'private_append_story':{
           if(!round.triggered)throw Error('先调用 trigger_next_round 获取玩家行动');
@@ -666,8 +668,9 @@ const GameCore = (() => {
     }
     for(const p of round.openingExtraReads||[])if(!fileValidation.retiredJournal(p)&&!paths.includes(p))paths.push(p);
     round.openingReadsPrepared=true;
-    if(!paths.length)return false;
-    const limit=Math.min(16000,Math.max(1,Math.floor(64000/paths.length))),tool_calls=[];
+    const limit=Math.min(16000,Math.max(1,Math.floor(64000/Math.max(1,paths.length)))),tool_calls=[
+      {id:uid(),type:'function',function:{name:'tree',arguments:JSON.stringify({path:'/workspace',depth:4})}}
+    ];
     for(let i=0;i<paths.length;i+=20)tool_calls.push({id:uid(),type:'function',function:{name:'read_multiple_files',arguments:JSON.stringify({paths:paths.slice(i,i+20),limit})}});
     s.messages.push({role:'assistant',content:'',tool_calls,round:round.number,internal:true,origin:'opening-preload'});
     return true;
