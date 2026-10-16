@@ -108,7 +108,12 @@ const SSE = (() => {
     if (!Array.isArray(message.tool_calls)) throw protocolError('tool_calls 必须是数组');
     for (const call of message.tool_calls) {
       if (!object(call)) throw protocolError('工具调用必须是对象');
-      if (call.type != null && call.type !== 'function') throw protocolError('工具调用 type 必须是 function');
+      // Some compatible gateways emit an empty type on argument-only deltas.
+      // Infer only an absent type; explicitly unsupported types must still stop the response.
+      if (call.type != null && call.type !== '' && call.type !== 'function') {
+        const actual = typeof call.type === 'string' ? JSON.stringify(call.type.slice(0, 64)) : typeof call.type;
+        throw protocolError('工具调用 type 必须是 function，实际收到 ' + actual);
+      }
       if (partial && call.index != null && (!Number.isSafeInteger(call.index) || call.index < 0)) throw protocolError('工具分片 index 必须是非负整数');
       if (call.id != null && typeof call.id !== 'string') throw protocolError('工具调用 id 必须是字符串');
       if (partial && call.function == null) continue;
@@ -120,6 +125,9 @@ const SSE = (() => {
       if (Object.hasOwn(fn, 'arguments') && typeof fn.arguments !== 'string') throw protocolError('function.arguments 必须是 JSON 字符串');
       if (!partial && typeof fn.arguments !== 'string') throw protocolError('工具调用缺少 arguments 字符串');
     }
+    // Normalize completed calls before storing/re-sending them, without mutating the response.
+    if (!partial && message.tool_calls.some(call => call.type !== 'function'))
+      return { ...message, tool_calls: message.tool_calls.map(call => call.type === 'function' ? call : { ...call, type: 'function' }) };
     return message;
   }
   function streamError(error) {

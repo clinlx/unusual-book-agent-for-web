@@ -28,3 +28,26 @@ test('accumulator joins streamed function-name fragments',()=>{
   assert.equal(call.function.name,'append_story');
   assert.equal(call.function.arguments,'{"content":"ab"}');
 });
+
+
+test('empty streamed type is a placeholder while unsupported later types are still rejected',()=>{
+ const acc=SSE.createAccumulator();
+ acc.add({choices:[{delta:{tool_calls:[{index:0,id:'read',type:'',function:{name:'read_file',arguments:'{"path":'}}]}}]});
+ acc.add({choices:[{delta:{tool_calls:[{index:0,type:'function',function:{arguments:'"/workspace/a"}'}}]}}]});
+ assert.equal(acc.result().tool_calls[0].type,'function');
+ assert.equal(acc.result().tool_calls[0].function.arguments,'{"path":"/workspace/a"}');
+ assert.throws(()=>acc.add({choices:[{delta:{tool_calls:[{index:0,type:'custom'}]}}]}),e=>e.code==='MODEL_PROTOCOL_ERROR'&&/"custom"/.test(e.message));
+});
+
+test('normalizing a completed call keeps the original response unchanged',()=>{
+ const message={content:'',tool_calls:[{id:'x',type:'',function:{name:'list_dir',arguments:' {} '}}]};
+ const before=structuredClone(message),normalized=SSE.checkMessage(message);
+ assert.deepEqual(message,before);
+ assert.equal(normalized.tool_calls[0].type,'function');
+ assert.equal(normalized.tool_calls[0].function.arguments,' {} ');
+});
+
+test('an inferred function must still provide its name and string arguments',()=>{
+ for(const fn of [{arguments:'{}'},{name:'list_dir',arguments:{}},{name:'list_dir'}])
+   assert.throws(()=>SSE.checkMessage({tool_calls:[{id:'x',type:'',function:fn}]}),e=>e.code==='MODEL_PROTOCOL_ERROR');
+});

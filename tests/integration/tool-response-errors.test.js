@@ -20,6 +20,40 @@ function game(){
 const stream=json=>'data: '+JSON.stringify(json)+'\n\n';
 const transports=[['designer',Agent.createHttpTransport],['game',Transport.create]];
 for(const [name,create]of transports){
+  test(name+' assembles argument deltas with empty, null or omitted type fields',async t=>{
+    const chunks=[
+      {index:0,...call('read','read_file','{"path":')},
+      {index:0,type:'',function:{arguments:'"/workspace'}},
+      {index:0,type:null,function:{arguments:'/a.txt'}},
+      {index:0,function:{arguments:'"}'}},
+    ];
+    t.mock.method(globalThis,'fetch',async()=>new Response(chunks.map(tc=>stream({choices:[{delta:{tool_calls:[tc]}}]})).join('')+
+      stream({choices:[{delta:{},finish_reason:'tool_calls'}]})));
+    const result=await create({...settings,stream:true},[])([]);
+    assert.equal(result.tool_calls[0].type,'function');
+    assert.equal(result.tool_calls[0].function.name,'read_file');
+    assert.equal(result.tool_calls[0].function.arguments,'{"path":"/workspace/a.txt"}');
+  });
+  for(const type of ['',null,undefined])test(name+' normalizes an absent completed call type: '+JSON.stringify(type),async t=>{
+    const tc={...call('read','read_file',' { "path": "/workspace/a.txt" } '),type};
+    t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({choices:[{message:{tool_calls:[tc]},finish_reason:'tool_calls'}]})));
+    const result=await create({...settings,stream:false},[])([]);
+    assert.equal(result.tool_calls[0].type,'function');
+    assert.equal(result.tool_calls[0].function.arguments,tc.function.arguments);
+    assert.equal(tc.type,type);
+  });
+  for(const streamMode of [false,true])for(const type of ['custom','tool',0,{}]){
+    test(name+' rejects an unsupported tool type in '+(streamMode?'SSE':'JSON')+': '+JSON.stringify(type),async t=>{
+      const tc={index:0,...call('read','read_file','{"path":"/workspace/a.txt"}'),type};
+      const body=streamMode?stream({choices:[{delta:{tool_calls:[tc]}}]}):JSON.stringify({choices:[{message:{tool_calls:[tc]}}]});
+      t.mock.method(globalThis,'fetch',async()=>new Response(body));
+      await assert.rejects(create({...settings,stream:streamMode},[])([]),e=>e.code==='MODEL_PROTOCOL_ERROR'&&/实际收到/.test(e.message));
+    });
+  }
+  test(name+' never infers a callable function from an empty type alone',async t=>{
+    t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({choices:[{message:{tool_calls:[{id:'empty',type:''}]}}]})));
+    await assert.rejects(create({...settings,stream:false},[])([]),e=>e.code==='MODEL_PROTOCOL_ERROR');
+  });
   test(name+' rejects malformed SSE data instead of dropping it',async t=>{
     t.mock.method(globalThis,'fetch',async()=>new Response(stream({choices:[{delta:{content:'部分正文'}}]})+'data: {"choices":\n\n'));
     await assert.rejects(create({...settings,stream:true},[])([]),e=>e.code==='MODEL_PROTOCOL_ERROR'&&/SSE/.test(e.message));
