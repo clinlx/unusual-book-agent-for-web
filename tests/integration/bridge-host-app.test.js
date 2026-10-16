@@ -7,8 +7,9 @@ function setup(t,{count=2,failInvite=false,failConnect=false,control={}}={}){
  const transport={onHost(fn){incoming=fn;return ()=>{};},async sendToClient(id,packet){sent.push({id,packet});}};
  const localRecords=new Map(),roomConfigs=new Map();
  const ctx=vm.createContext({console,structuredClone,crypto:globalThis.crypto,setTimeout,clearTimeout,setInterval,clearInterval,queueMicrotask,URL,location:{href:'http://127.0.0.1:4173/index.html'},localStorage:{getItem:key=>localRecords.get(key)??null,setItem:(key,value)=>localRecords.set(key,value)},
+ Prompts:{buildSystem:()=> '最新系统规则',roundPrompt:start=>start?'最新开局规则':'最新回合规则',flows:()=>({}),migrateText:x=>x},GameTools:{build:()=>[]},GameTransport:{inputBudget:()=>240000},
  VFS,GameCore:Core,GameSlots:require('../../src/game-slots'),GameHistory:require('../../src/game-history'),GameInputs:require('../../src/game-input-history'),GameLocalInputs:require('../../src/game-local-inputs'),GameData:require('../../src/game-data'),GamePresentation:require('../../src/game-presentation'),MultiplayerHost:require('../../src/multiplayer-host'),MultiplayerSync:require('../../src/multiplayer-sync'),
- Lease:{create:()=>({available:false,isHeldByOther:()=>false})},GameStore:{create:()=>({open:async()=>{},getRoomConfig:async id=>structuredClone(roomConfigs.get(id)||null),putRoomConfig:async(id,value)=>{if(control.failRoomConfig)throw Error("room config quota");roomConfigs.set(id,structuredClone(value));},getSettings:async()=>({}),putSettings:async()=>{},getSave:async id=>structuredClone(saved.get(id)),putSave:async s=>{if(control.failPersist)throw Error('quota');saved.set(s.id,structuredClone(s));},list:async()=>[...saved.values()]})},
+ Lease:{create:()=>({available:false,isHeldByOther:()=>false})},GameStore:{create:()=>({open:async()=>{},getRoomConfig:async id=>structuredClone(roomConfigs.get(id)||null),putRoomConfig:async(id,value)=>{if(control.failRoomConfig)throw Error("room config quota");roomConfigs.set(id,structuredClone(value));},getSettings:async()=>({}),putSettings:async()=>{},getSave:async id=>structuredClone(saved.get(id)),putSave:async s=>{if(control.failPersist)throw Error('quota');saved.set(s.id,structuredClone(s));},list:async()=>{if(control.failList)throw Error('list unavailable');return [...saved.values()];}})},
  BridgeTransport:{prepareHostAuthorization:async o=>({credentials:o.credentials||{token:'HOST-SECRET',epoch:'ROOM-EPOCH'},players:[...o.players,...o.memberIds.map(memberId=>({version:1,url:o.url,roomId:o.roomId,memberId,token:'PRIVATE-TOKEN-'+crypto.randomUUID()}))]}),parseInvitation:x=>JSON.parse(Buffer.from(x,'base64url').toString()),validateServerUrl:x=>x,encodeInvitation:x=>Buffer.from(JSON.stringify(x)).toString('base64url'),async createHost(o){calls++;options=o;if(failConnect)throw Error('connection failed');return {transport,credentials:()=>o.credentials||{token:'HOST-SECRET',epoch:'ROOM-EPOCH'},async invite(id){invites.push(id);if(failInvite)throw Error('authorization failed');return {version:1,url:o.url,roomId:o.roomId,memberId:id,token:'PRIVATE-TOKEN'};},async rotate(id){return {version:1,url:o.url,roomId:o.roomId,memberId:id,token:'PRIVATE-TOKEN-'+crypto.randomUUID()};},async revoke(id){if(control.failRevoke)throw Error('revoke failed');revoked.push(id);},async reconnect(){await o.onState({status:'connected'});},close(){closed=true;}};}}});
  vm.runInContext(fs.readFileSync(require.resolve('../../src/game-app'),'utf8'),ctx);const app=vm.runInContext('GameApp',ctx);t.after(()=>{try{app.closeSave();}catch{}});return {app,save,invites,revoked,sent,receive:(id,packet)=>incoming(id,packet),get calls(){return calls;},get closed(){return closed;},get options(){return options;}};
 }
@@ -256,4 +257,62 @@ test('spectator invitations open after player reservations and survive the watch
  await f.app.configureInvitationSlot('b','ai');await f.app.closeRoom();await f.app.connectRoom();
  assert.equal(f.app.multiplayerState().members[watcher.id].permission,'none');
  assert.equal(f.app.getState().savedInvites.find(i=>i.spectatorId).key,key);
+});
+
+
+test('DEBUG rebuild clears stale request previews and persists fresh history while keeping cache',async t=>{
+ const f=setup(t,{count:1});await f.app.init();await f.app.openSave(f.save.id);await f.app.configureSlots('a');
+ const state=f.app.getState(),s=state.active;
+ Core.beginRound(s,'',true,'旧版开局规则');
+ s.events.push({id:'published',type:'story',round:1,content:'已发布的故事'});
+ s.activeRound.published=1;
+ s.cache={Story_Phase:'游戏循环',custom:'必须保留'};
+ s.messages.push({role:'assistant',round:1,tool_calls:[{id:'stale',type:'function',function:{name:'write_file',arguments:'{"path":'}}]});
+ s.requestHistory=[{body:{messages:[{role:'user',content:'旧请求快照'}]}}];
+ state.lastRequest={messages:[{role:'user',content:'旧请求快照'}]};state.lastRequestSaveId=s.id;
+ state.usage={completion_tokens:100};
+ const tree=structuredClone(s.tree),cache=structuredClone(s.cache);
+ f.app.setMode('debug');
+ await f.app.rebuildContext(f.app.contextRebuildInfo());
+ assert.deepEqual(s.tree,tree);assert.deepEqual(s.cache,cache);assert.equal(s.snapshots.length,0);
+ assert.equal(s.messages.some(m=>m.tool_calls),false);assert.equal(s.requestHistory.length,0);
+ assert.equal(state.lastRequest,null);assert.equal(state.usage,null);assert.equal(state.rebuilding,false);
+ assert.equal(f.app.multiplayerState().status,'interrupted');
+ const context=await f.app.currentContext();
+ assert.match(JSON.stringify(context),/已发布的故事/);assert.match(JSON.stringify(context),/必须保留/);
+ assert.doesNotMatch(JSON.stringify(context),/旧请求快照|旧版开局规则/);
+ await f.app.closeSave();await f.app.openSave(s.id);
+ assert.equal(f.app.getState().active.messages.some(m=>m.tool_calls),false);
+ assert.equal(f.app.getState().active.cache.custom,'必须保留');
+});
+test('DEBUG rebuild rejects stale confirmation and restores old state after storage failure',async t=>{
+ const control={};const f=setup(t,{count:1,control});await f.app.init();await f.app.openSave(f.save.id);await f.app.configureSlots('a');
+ f.app.setMode('debug');const state=f.app.getState(),s=state.active,info=f.app.contextRebuildInfo();
+ s.updatedAt++;
+ await assert.rejects(f.app.rebuildContext(info),/存档已变化/);
+ const before=structuredClone(s);control.failPersist=true;
+ await assert.rejects(f.app.rebuildContext(f.app.contextRebuildInfo()),/quota/);
+ assert.deepEqual(s,before);assert.equal(state.rebuilding,false);assert.equal(state.switching,false);
+ control.failPersist=false;
+ await f.app.rebuildContext(f.app.contextRebuildInfo());
+ assert.equal(s.requestHistory.length,0);
+});
+test('rebuild is unavailable outside DEBUG or while the model is running',async t=>{
+ const f=setup(t,{count:1});await f.app.init();await f.app.openSave(f.save.id);await f.app.configureSlots('a');
+ assert.throws(()=>f.app.contextRebuildInfo(),/调试模式/);
+ f.app.setMode('debug');f.app.getState().running=true;
+ assert.throws(()=>f.app.contextRebuildInfo(),/先停止当前回合/);
+ f.app.getState().running=false;
+});
+
+test('DEBUG rebuild remains committed if refreshing the save list fails afterwards',async t=>{
+ const control={};const f=setup(t,{count:1,control});await f.app.init();await f.app.openSave(f.save.id);await f.app.configureSlots('a');
+ f.app.setMode('debug');const state=f.app.getState(),s=state.active;
+ s.messages.push({role:'assistant',round:1,tool_calls:[{id:'old',type:'function',function:{name:'read_file',arguments:'{}'}}]});
+ control.failList=true;
+ await f.app.rebuildContext(f.app.contextRebuildInfo());
+ assert.equal(s.messages.some(m=>m.tool_calls),false);assert.match(state.storageWarning,/上下文已保存/);
+ control.failList=false;
+ await f.app.closeSave();await f.app.openSave(s.id);
+ assert.equal(f.app.getState().active.messages.some(m=>m.tool_calls),false);
 });

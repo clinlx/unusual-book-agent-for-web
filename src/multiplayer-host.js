@@ -11,7 +11,7 @@ const MultiplayerHost=(()=>{
   const canonical=x=>JSON.stringify(sort(x));
   function sort(x){if(Array.isArray(x))return x.map(sort);if(x&&typeof x==='object')return Object.fromEntries(Object.keys(x).sort().map(k=>[k,sort(x[k])]));return x;}
   const aliases={submit:'action.submit',skip:'action.skip',start:'round.start',resume:'round.resume',advance:'round.advance',hostSkip:'action.hostSkip',requestRollback:'rollback.request',decideRollback:'rollback.decide',voteRollback:'rollback.vote',setSlotMode:'slot.mode'};
-  function create({getSave,execute,rollback,persist=async()=>{},getSettings=()=>({}),now=()=>Date.now(),uid=()=>globalThis.crypto.randomUUID()}){
+  function create({getSave,execute,rollback,persist=async()=>{},rebuildContext,getSettings=()=>({}),now=()=>Date.now(),uid=()=>globalThis.crypto.randomUUID()}){
     if(typeof getSave!=='function'||typeof execute!=='function'||typeof rollback!=='function')throw Error('缺少房主执行接口');
     let queue=Promise.resolve(),execution=null,timer=null,disposed=false,transactionState=null;
     const listeners=new Set();
@@ -292,6 +292,20 @@ const MultiplayerHost=(()=>{
       if(!execution&&shouldRun()){const automatic=!room().participants.some(p=>p.alive&&p.enabled),start=launch({automatic});await commit('round.executing');start();return true;}return false;
     });}
     return {
+      rebuildContext:expected=>transaction(async()=>{
+        const r=room();
+        if(execution||['executing','rolling_back'].includes(r.status))fail('BUSY','请先停止当前回合，再重建上下文');
+        if(r.online)fail('BUSY','请先关闭联机房间，再重建上下文');
+        if(r.vote)fail('BUSY','请先完成或取消回退决策；如需回退，请在重建前进行');
+        if(typeof rebuildContext!=='function')fail('UNAVAILABLE','当前环境不支持重建上下文');
+        const result=await rebuildContext(expected);
+        r.error=null;
+        if(save().activeRound&&!save().activeRound.complete)r.status='interrupted';
+        else if(save().status==='ended')r.status='ended';
+        else if(r.status!=='selecting')r.status='collecting';
+        await commit('context.rebuilt');
+        return result;
+      }),
       initialize:actorId=>transaction(async()=>{slots().ensure(save());slots().initializeControlState(save());const r=room();if(!r.members.host)r.members.host={actorId:null,bindingVersion:0,connected:true};
         if(r.status==='selecting'&&(actorId==='$spectator'||save().hostSpectator)){
           if(!save().hostSpectator)for(const slot of [...save().slots])if(slot.kind==='player'&&!slot.memberId)slots().setMode(save(),slot.id,'disabled');

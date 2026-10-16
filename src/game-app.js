@@ -22,12 +22,23 @@ const GameApp=(()=>{
   async function setupHost(s){
     await stopBridge();hostSession?.dispose();savedRoom=await db.getRoomConfig?.(s.id)||null;S.savedInvites=structuredClone(savedRoom?.invites||[]);S.spectators=structuredClone(savedRoom?.spectators||[]);S.openPlayerSlots=[...(savedRoom?.openSlots||S.savedInvites.filter(i=>!i.spectatorId).map(i=>i.actorId))];GameSlots.ensure(s);GameSlots.initializeControlState(s,S.openPlayerSlots);if(!s.hostSpectator)s.actorId||=s.slots.find(x=>x.path===s.playerPath)?.id;
     loadLocalInputs(s);publishedSave=structuredClone(s);
-    hostSession=MultiplayerHost.create({getSave:()=>s,getSettings:()=>S.settings,persist:async()=>{if(localInputOwner!==JSON.stringify(inputScope(s))){s.inputHistory=[];s.draft='';s.privateDraft='';s.hiddenSend=false;s.disguiseSend=false;s.draftVersion=0;loadLocalInputs(s);}await persist();saveLocalInputs();},
+    hostSession=MultiplayerHost.create({getSave:()=>s,getSettings:()=>S.settings,persist:async()=>{if(localInputOwner!==JSON.stringify(inputScope(s))){s.inputHistory=[];s.draft='';s.privateDraft='';s.hiddenSend=false;s.disguiseSend=false;s.draftVersion=0;loadLocalInputs(s);}
+        if(S.rebuilding){
+          await db.putSave(s);
+          try{S.saves=await db.list();}catch(error){S.storageWarning='上下文已保存，但存档列表刷新失败：'+error.message;}
+        }else await persist();
+        saveLocalInputs();},
       execute:async(actions,options)=>{
         publishedSave=structuredClone(s);
         const own=actions.find(x=>x.memberId==='host');
         await executeRound(options.resume?'resume':options.starting?'start':'action',own?.content||'',{...options,actions,roundId:options.roundId});
         if(s.activeRound?.complete)publishedSave=structuredClone(s);
+      },
+      rebuildContext:async expected=>{
+        if(S.active!==s||expected?.saveId!==s.id||expected.updatedAt!==s.updatedAt)throw Error('存档已变化，请重新确认重建范围');
+        const latest=await db.getSave(s.id);
+        if(latest&&latest.updatedAt>s.updatedAt)throw Error('存档已在其他页面更新，请重新打开后重建');
+        return GameCore.rebuildContext(s,{system:system({}),startPrompt:Prompts.roundPrompt(true),roundPrompt:Prompts.roundPrompt(!!s.activeRound?.starting)});
       },
       rollback:async({targetRound})=>{idle();while(s.round>targetRound||s.activeRound&&!s.activeRound.complete){GameCore.rollback(s);}GameHistory.backfill(s,true);readPlayer.clear(s);publishedSave=structuredClone(s);S.error=null;}
     });
@@ -274,7 +285,7 @@ const GameApp=(()=>{
   try{storage=globalThis.localStorage;lease=Lease.create({storage,tabId:GameCore.uid()});}catch(_){}
   function emit(){if(S.active&&hostSession){S.room=hostSession.state();}for(const fn of listeners){try{fn(S);}catch(e){console.error(e);}}}
   const subscribe=fn=>{listeners.add(fn);return()=>listeners.delete(fn);};
-  function idle(){if(S.importing)throw Error('请等待存档导入完成');if(S.running)throw Error('请先停止当前回合');}
+  function idle(){if(S.rebuilding)throw Error('正在重建上下文，请稍候');if(S.importing)throw Error('请等待存档导入完成');if(S.running)throw Error('请先停止当前回合');}
   function active(){if(!S.active)throw Error('请先选择存档');return S.active;}
   function peerCheck(s){if(lease?.isHeldByOther(s.id))throw Error('该存档正在另一个页面运行，请等待其结束');}
   async function persist(){const s=active();s.updatedAt=Date.now();await db.putSave(s);S.saves=await db.list();}
@@ -371,6 +382,27 @@ const GameApp=(()=>{
   function player(){const s=active();if(s.hostSpectator){const view=exportView();return {info:view.info,items:view.items,name:view.playerName};}const info=readInfo(s),items=readItems(s);return {info:info.info,name:info.name,items:items.items,stale:info.stale||items.stale,infoStale:info.stale,itemsStale:items.stale,error:[info.error,items.error].filter(Boolean).join('；')};}
   function setMode(mode){S.mode=mode==='debug'?'debug':'play';emit();}
   function system(overrides){let world='';try{world=rawRead('/workspace/system.md');}catch(_){}return Prompts.buildSystem(overrides,world);}
+
+  function contextRebuildInfo(){
+    idle();const s=active();peerCheck(s);
+    if(S.mode!=='debug')throw Error('请在调试模式中重建上下文');
+    if(S.switching)throw Error('请等待存档切换完成');
+    if(hostSession?.state().online)throw Error('请先关闭联机房间，再重建上下文');
+    return GameCore.contextRebuildInfo(s);
+  }
+  async function rebuildContext(expected){
+    contextRebuildInfo();const s=active();
+    if(!expected||expected.saveId!==s.id||expected.updatedAt!==s.updatedAt)throw Error('存档已变化，请重新确认重建范围');
+    if(!hostSession)throw Error('存档会话尚未准备好');
+    if(lease?.available&&!lease.acquireForRun(s.id,s.id).ok)throw Error('该存档正在另一个页面运行');
+    S.rebuilding=true;S.switching=true;emit();
+    try{
+      const result=await hostSession.rebuildContext(expected);
+      restoreLastRequest(s);readPlayer.clear(s);publishedSave=structuredClone(s);S.error=null;
+      S.stream={content:'',reasoning:'',tools:[],story:'',storyPublished:0};
+      return result;
+    }finally{S.rebuilding=false;S.switching=false;lease?.releaseLease?.(s.id);emit();}
+  }
   function currentContext(){
     if(S.lastRequest&&S.lastRequestSaveId===active().id)return GameSlots.playerContext(structuredClone(S.lastRequest.messages));
     const s=structuredClone(active()),frozen=!s.activeRound?.complete&&s.activeRound?.promptSnapshot;
@@ -471,7 +503,7 @@ const GameApp=(()=>{
   async function resolveManualDice(rolls){
     idle();const s=active();peerCheck(s);GameCore.resolveManualDice(s,rolls);await persist();emit();return s;
   }
-  function stageDraft(text,binding,options={}){if(!S.active)return false;peerCheck(S.active);if(!GameInputs.setDraft(S.active,options.private?'':text,binding))return false;S.active.privateDraft=options.private?String(text):String(options.privateContent||'');S.active.hiddenSend=options.hiddenSend??!!S.active.privateDraft;S.active.disguiseSend=options.disguiseSend??!!(S.active.privateDraft&&S.active.draft);saveLocalInputs();return true;}
+  function stageDraft(text,binding,options={}){if(!S.active||S.rebuilding)return false;peerCheck(S.active);if(!GameInputs.setDraft(S.active,options.private?'':text,binding))return false;S.active.privateDraft=options.private?String(text):String(options.privateContent||'');S.active.hiddenSend=options.hiddenSend??!!S.active.privateDraft;S.active.disguiseSend=options.disguiseSend??!!(S.active.privateDraft&&S.active.draft);saveLocalInputs();return true;}
   async function saveDraft(text,binding,options={}){if(stageDraft(text,binding,options))await persist();}
   async function cancelAction(){
     const s=active(),r=hostSession.state(),result=await roomCommand('action.cancel',{submissionRequestId:r.submissions?.[s.actorId]?.requestId});
@@ -488,7 +520,7 @@ const GameApp=(()=>{
   return {getState:()=>S,subscribe,init,importSave,importHandoff,importLink,openSave,closeSave,returnHome,returnToGame,leaveForClient,renameSave,deleteSave,exportSave,send,skip,start,resume,abort,rollback,setMode,
     configureSlots,configureNPCCards,configureInvitationSlot,configureSpectators,spectatorView:()=>S.active?.hostSpectator?exportView():null,setSpectatorView:view=>roomCommand('spectator.view',{view},{acceptOnly:true}),connectRoom,setInvitationSlot,openRoom,createInvitation,rotateInvitation,revokeInvitation,closeRoom,reconnectRoom:async()=>{if(!bridgeSession)throw Error('请先连接服务器建立房间');await bridgeSession.reconnect();},multiplayerState,roomCommand,requestRollback,decideHostRollback,exportView,attachMultiplayerTransport,
     addMember:id=>hostSession.addMember(id),setMemberConnected:(id,connected)=>hostSession.setConnected(id,connected),assignMember:(id,actor)=>hostSession.assign(id,actor),dispatchMember:(id,command)=>hostSession.handle(id,command),multiplayerSync:(id,request)=>syncHost.sync(id,request),
-    readFile,writeFile,fileOperation,player,currentContext,updateSettings,stageDraft,saveDraft,resolveManualDice,cancelAction,
+    readFile,writeFile,fileOperation,player,currentContext,contextRebuildInfo,rebuildContext,updateSettings,stageDraft,saveDraft,resolveManualDice,cancelAction,
     profile:actorId=>MultiplayerSync.profile(active(),actorId,{room:hostSession?.state(),memberId:'host'}),
     inventory:actorId=>MultiplayerSync.inventory(active(),actorId,{room:hostSession?.state(),memberId:'host'}),
     testConnection:values=>GameTransport.testConnection({...S.settings,...values}),

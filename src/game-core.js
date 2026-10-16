@@ -156,6 +156,76 @@ const GameCore = (() => {
         binary:a[p]?.encoding==='base64'||b[p]?.encoding==='base64',type:!a[p]?'add':!b[p]?'delete':'modify'});
     }return out;
   }
+
+  function contextRebuildInfo(s) {
+    if(s.pendingManualDice)throw Error('请先完成待结算的手动检定，再重建上下文');
+    return {saveId:s.id,updatedAt:s.updatedAt,name:s.name,
+      toolCalls:s.messages.reduce((n,m)=>n+(m.tool_calls?.length||0),0),
+      messages:s.messages.length,requests:s.requestHistory?.length||0,snapshots:s.snapshots?.length||0,
+      stories:s.events.filter(e=>e.type==='story').length,
+      unfinished:!!s.activeRound&&!s.activeRound.complete};
+  }
+  function rebuildContext(s,opts={}) {
+    const info=contextRebuildInfo(s),old=s.activeRound,current=old?.number||Math.max(1,s.round);
+    // Rebuild from published game events, never from arbitrary assistant text or tool arguments.
+    const common=['id','type','round','at','worldTime','content','audience','private','actorId','roundId','speaker','privateContent','disguise','skip',
+      'secret','playerRelated','roller','rollerId','rollerKind','targetPlayer','description','relatedAttr','data','manual','pending','playerState','name'];
+    const diceFields=['description','roller','related_attr','is_secret','is_private','target_player','dice_dict','calculate_only','target_value','compare_mode',
+      'critical_success_range','critical_failure_range','dice_combine_mode','left_modifiers','right_modifiers'];
+    const events=s.events.filter(e=>['player','story','dice','note','round_end'].includes(e.type)).map(e=>{
+      const event=Object.fromEntries(common.filter(k=>Object.hasOwn(e,k)).map(k=>[k,copy(e[k])]));
+      // Published roll rules are game facts used by the detail panel, including named modifiers.
+      if(e.type==='dice'&&object(e.diceArgs))event.diceArgs=Object.fromEntries(diceFields.filter(k=>Object.hasOwn(e.diceArgs,k)).map(k=>[k,copy(e.diceArgs[k])]));
+      return event;
+    });
+    const messages=[];
+    for(const e of events) {
+      const round=e.round||1,content=typeof e.content==='string'?e.content:'';
+      if(e.type==='player')messages.push({role:'user',round,origin:'rebuilt-action',
+        content:'[玩家行动'+(e.actorId?' · '+e.actorId:'')+']\n'+content+
+          (e.privateContent?'\n[该玩家的私密行动，仅主持人可见]\n'+e.privateContent:'')});
+      if(e.type==='story')messages.push({role:'assistant',round,origin:'rebuilt-story',
+        content:(e.private||e.audience&&e.audience!=='public'?'[私密剧情，受众：'+JSON.stringify(e.audience||'host')+']\n':'')+content});
+      if(e.type==='dice')messages.push({role:'user',round,origin:'rebuilt-dice',
+        content:'[已发生的检定 · 沿用结果，不要重掷；保留原受众与暗骰限制]\n'+JSON.stringify(
+          Object.fromEntries(['content','roller','description','relatedAttr','secret','audience','playerRelated','data','diceArgs'].filter(k=>Object.hasOwn(e,k)).map(k=>[k,e[k]])))});
+    }
+    const awaitingStart=s.status==='new'&&!old;
+    const state={round:current,completed_round:s.round,complete:old?.complete??true,awaiting_start:awaitingStart,
+      triggered:!!old?.triggered,published:old?.published||0,private_published:old?.privatePublished||0,
+      actions:recovery.actions(s),NEXT_TURN_CACHE:copy(s.cache||{}),
+      slots:(s.slots||[]).map(({id,path,kind})=>({id,path,kind}))};
+    if(info.unfinished&&old.starting){
+      const internal=vfs.resolve(s.tree,['workspace','开局内部说明.md']);
+      if(internal?.type==='file'&&internal.encoding!=='base64'&&typeof internal.content==='string'&&internal.content.trim())
+        messages.push({role:'user',round:current,internal:true,content:'[开局内部说明]\n'+internal.content});
+    }
+    if(info.unfinished&&opts.roundPrompt)messages.push({role:'user',round:current,content:opts.roundPrompt});
+    if(s.summaries?.length)messages.push({role:'user',round:current,origin:'rebuilt-summaries',
+      content:'[保留的前情摘要]\n'+s.summaries.slice(-30).map(e=>'第'+e.round+'回合：'+e.content).join('\n')});
+    messages.push({role:'user',round:current,origin:'context-rebuild',contextCache:copy(s.cache||{}),
+      content:'[上下文已重建]\n'+JSON.stringify(state)+'\n旧工具调用、回执、思考及文件读取依据已清除；此前未执行的调用已放弃。'+
+        '存档文件和已发布剧情代表已经发生的事实；'+(awaitingStart?'尚未正式开局，之后按正常开局流程开始。':'按当前系统规则从上述进度继续，不得重新开局、重掷已有检定或重复发布已有正文。')+
+        '已获取本轮行动时不要重复获取；已有公开正文时可继续必要的自查和回合收尾。操作文件前按需重新读取。'});
+    // Replacing the round object also expires request-local small-read advice.
+    let round=old?copy(old):null;
+    if(round){
+      round.readState={};round.fileKnowledge=fileKnowledge.create(current);round.receipts={};
+      round.requestCount=0;delete round.requestLimit;delete round.promptSnapshot;
+      if(opts.system!==undefined)round.promptSnapshot={overrides:{},system:opts.system};
+      if(info.unfinished){
+        round.contextRebuildBaseline=copy(s.tree);
+        round.openingReadsPrepared=true;
+        if(round.presetOpening&&round.published){delete round.presetOpening;delete round.presetPrepared;}
+        else if(round.presetOpening)round.presetPrepared=false;
+      }else delete round.contextRebuildBaseline;
+    }
+    if(s.openingPending&&opts.startPrompt)s.openingPending={...s.openingPending,prompt:opts.startPrompt};
+    s.messages=messages;s.events=events;s.requestHistory=[];s.snapshots=[];s.activeRound=round;
+    s.contextFromRound=1;s.lastChanges=[];s.error=null;s.updatedAt=Date.now();
+    if(info.unfinished)s.status='interrupted';
+    return info;
+  }
   function rollback(s) {
     pruneRollback(s);const snap=s.snapshots.pop();if(!snap)throw Error('没有可回退的回合');
     const input=inputs.retract(s,snap.round+1,snap.inputRoundId);
@@ -412,7 +482,7 @@ const GameCore = (() => {
           s.cache=copy(cache);s.round=round.number;s.status=cache.game_over===true?'ended':'waiting';round.complete=true;
           s.summaries.push({round:s.round,content:round.summary.join('；'),worldTime:data.worldTime(s),at:Date.now()});
           emit(s,'round_end',{content:'第 '+s.round+' 回合结束'});
-          const roundStart=s.snapshots.at(-1)?.tree;
+          const roundStart=s.snapshots.at(-1)?.tree||round.contextRebuildBaseline;
           let playerState;
           if(roundStart){
             const humans=slots.scan(s.tree).filter(actor=>actor.kind==='player');
@@ -424,7 +494,8 @@ const GameCore = (() => {
             }
           }
           history.archive(s,playerState);
-          s.lastChanges=changes(s.snapshots.at(-1).tree,s.tree).filter(c=>!history.generated(c.path));
+          s.lastChanges=roundStart?changes(roundStart,s.tree).filter(c=>!history.generated(c.path)):[];
+          delete round.contextRebuildBaseline;
           result={status:'Round ended successfully',round:s.round,warnings:data.cacheWarnings(s,cache)};break;
         }
         case 'read_file':result=read(a);break;
@@ -609,6 +680,7 @@ const GameCore = (() => {
         const m=s.messages[i],mr=m.round||1;
         if(mr>target)continue;
         if(mr<target)break;
+        if(m.origin==='context-rebuild'&&object(m.contextCache))return copy(m.contextCache);
         for(let j=(m.tool_calls||[]).length-1;j>=0;j--){
           const tc=m.tool_calls[j];
           if(tc?.function?.name!=='end_the_round')continue;
@@ -789,6 +861,6 @@ const GameCore = (() => {
       const last=s.events.at(-1);if(last?.type!=='error'||last.round!==s.activeRound.number||last.content!==e.message)emit(s,'error',{content:e.message,...(e.code?{code:e.code}:{})});
       await step();throw e;}
   }
-  return {uid,path,openingFiles,localOpening,createSave,validateTree,beginRound,execute,run,context,estimate,player,filterVisible,visibleEvents,rollback,pruneRollback,ROLLBACK_LIMIT,changes,flatten,dice,dicePlayerRelated,diceSecret,diceEventAccess,resolveManualDice,repairManualDiceEvents};
+  return {uid,path,openingFiles,localOpening,createSave,validateTree,beginRound,execute,run,context,rebuildContext,contextRebuildInfo,estimate,player,filterVisible,visibleEvents,rollback,pruneRollback,ROLLBACK_LIMIT,changes,flatten,dice,dicePlayerRelated,diceSecret,diceEventAccess,resolveManualDice,repairManualDiceEvents};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=GameCore;
