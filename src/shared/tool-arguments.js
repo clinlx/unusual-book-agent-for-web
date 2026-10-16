@@ -24,7 +24,7 @@ const ToolArguments = (() => {
   };
   const pathSchema = {type:'string',minLength:1,pattern:'\\S',description:'明确填写实际路径，不可省略或留空。/workspace 是当前虚拟工作区根目录；文件操作需指向具体文件。'};
   const fileOptional = {
-    read_file:['offset','limit'],read_multiple_files:['limit'],tree:['depth'],
+    read_file:['offset','limit','tail_chars'],read_multiple_files:['limit'],tree:['depth'],
     search:['path','target','limit'],view_image:['crop'],
     parse_document:['output_path','output_dir','start_page','end_page','offset','limit'],
     parse_tavern_card:['output_dir'],
@@ -60,9 +60,10 @@ const ToolArguments = (() => {
       if(typeof args[key]!=='string')return fail(key,'需要字符串');
       if((key==='old_str'||key==='pattern'||name==='append_file'&&key==='content')&&!args[key].length)return fail(key,'不能为空字符串');
     }
-    for(const [key,min] of Object.entries({offset:0,limit:1,depth:0,start_page:1,end_page:1}))if(supplied(key)){
+    for(const [key,min] of Object.entries({offset:0,limit:1,tail_chars:1,depth:0,start_page:1,end_page:1}))if(supplied(key)){
       if(!Number.isSafeInteger(args[key])||args[key]<min)return fail(key,'需要不小于 '+min+' 的整数；使用默认值时请省略该参数');
     }
+    if(name==='read_file'&&supplied('tail_chars')&&(Object.hasOwn(args,'offset')||Object.hasOwn(args,'limit')))return fail('tail_chars','不能与 offset 或 limit 同时使用；读取尾部时只填写 path 和 tail_chars');
     if(supplied('target')&&!['both','name','content'].includes(args.target))return fail('target','需要 both、name 或 content');
     if(name==='parse_document'){
       if(!['text','images'].includes(args.format))return fail('format','需要 text 或 images');

@@ -1,5 +1,6 @@
 'use strict';
 const VFSCore = { create({ readableRoots, writableRoots, binaryReadError }) {
+  const reads = typeof module !== 'undefined' && module.exports ? require('./file-read.js') : FileRead;
   function createTree() { return { type: 'dir', name: '', children: {} }; }
 
   function normalize(path) {
@@ -54,17 +55,7 @@ const VFSCore = { create({ readableRoots, writableRoots, binaryReadError }) {
     if (!node) throw new Error('文件不存在: ' + path);
     if (node.type !== 'file') throw new Error('不是文件: ' + path);
     if (node.encoding === 'base64') throw new Error(binaryReadError);
-    const cap = opts.cap || 8000;
-    const offset = Math.max(0, opts.offset || 0);
-    const limit = Math.min(opts.limit || cap, cap);
-    const content = node.content.slice(offset, offset + limit);
-    return {
-      content,
-      totalLength: node.content.length,
-      offset,
-      returned: content.length,
-      truncated: offset + content.length < node.content.length,
-    };
+    return reads.read(node.content, opts);
   }
 
   function writeFile(tree, path, content, opts = {}) {
@@ -232,33 +223,41 @@ const VFSCore = { create({ readableRoots, writableRoots, binaryReadError }) {
     const parts = normalize(path);
     assertReadable(parts);
     const root = resolve(tree, parts);
-    if (!root || root.type !== 'dir') throw new Error('目录不存在: ' + path);
+    if (!root) throw new Error('路径不存在: ' + path);
     const hits = [];
     let capped = false;
-    (function walk(node, prefix) {
+    function visit(child, p) {
       if (capped) return;
+      if ((target === 'name' || target === 'both') && re.test(child.name)) {
+        hits.push({ kind: 'name', path: p, type: child.type });
+        if (hits.length >= limit) { capped = true; return; }
+      }
+      if (child.type === 'file' && child.encoding !== 'base64' && (target === 'content' || target === 'both')) {
+        const lines = child.content.split('\n');
+        let n = 0, lineOffset = 0;
+        for (let i = 0; i < lines.length; i++) {
+          const match = re.exec(lines[i]);
+          if (match) {
+            const offset = lineOffset + match.index, textStart = Math.max(0, match.index - 80);
+            hits.push({ kind: 'content', path: p, line: i + 1, text: lines[i].slice(textStart, textStart + 200),
+              offset, match_length: match[0].length, read_offset: Math.max(0, offset - 400) });
+            if (hits.length >= limit) { capped = true; return; }
+            if (++n >= perFile) break;
+          }
+          lineOffset += lines[i].length + 1;
+        }
+      }
+      if (child.type === 'dir') walk(child, p);
+    }
+    function walk(node, prefix) {
       for (const name of Object.keys(node.children).sort()) {
         if (capped) return;
-        const child = node.children[name];
-        const p = prefix + '/' + name;
-        if ((target === 'name' || target === 'both') && re.test(name)) {
-          hits.push({ kind: 'name', path: p, type: child.type });
-          if (hits.length >= limit) { capped = true; return; }
-        }
-        if (child.type === 'file' && child.encoding !== 'base64' && (target === 'content' || target === 'both')) {
-          const lines = child.content.split('\n');
-          let n = 0;
-          for (let i = 0; i < lines.length; i++) {
-            if (re.test(lines[i])) {
-              hits.push({ kind: 'content', path: p, line: i + 1, text: lines[i].slice(0, 200) });
-              if (hits.length >= limit) { capped = true; return; }
-              if (++n >= perFile) break;
-            }
-          }
-        }
-        if (child.type === 'dir') walk(child, p);
+        visit(node.children[name], prefix + '/' + name);
       }
-    })(root, '/' + parts.join('/'));
+    }
+    const absolute = '/' + parts.join('/');
+    if (root.type === 'file') visit(root, absolute);
+    else walk(root, absolute);
     return { hits, capped };
   }
 
@@ -280,6 +279,6 @@ const VFSCore = { create({ readableRoots, writableRoots, binaryReadError }) {
     return lines.length ? lines.join('\n') : '(空)';
   }
 
-  return { createTree, normalize, resolve, mkdir, mkdirp, readFile, writeFile, fileBytes, listDir, deletePath, move, copy, clone, applyPatch, applyPatches, search, overview, stat };
+  return { createTree, normalize, resolve, mkdir, mkdirp, readFile, readText: reads.read, writeFile, fileBytes, listDir, deletePath, move, copy, clone, applyPatch, applyPatches, search, overview, stat };
 } };
 if (typeof module !== 'undefined' && module.exports) module.exports = VFSCore;

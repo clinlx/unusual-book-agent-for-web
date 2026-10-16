@@ -1,6 +1,7 @@
 'use strict';
 const Agent = (() => {
   const _VFS = (typeof module !== 'undefined') ? require('./vfs.js') : VFS;
+  const _Reads = (typeof module !== 'undefined') ? require('../shared/file-read.js') : FileRead;
   const _SSE = (typeof module !== 'undefined') ? require('./sse.js') : SSE;
   const _Budget = (typeof module !== 'undefined') ? require('./context-budget.js') : ContextBudget;
   const _Diff = (typeof module !== 'undefined') ? require('./diff.js') : Diff;
@@ -101,6 +102,10 @@ const Agent = (() => {
   }
 
   // 给部分读取的结果加上边界说明。
+  function fileReadHint(ctx, path, result) {
+    const node = _VFS.resolve(ctx.tree, _VFS.normalize(path));
+    return _Reads.hint(ctx.readState || ctx.tree, canonicalPath(path), node?.content, result, ctx.turn);
+  }
   // 只在末尾提一句「已截断」是不够的：从 offset 中间读时，开头省略的部分
   // 模型完全看不见，会把片段当成文件开头来理解。故首尾都显式标出省略量。
   function framePartialRead(r, path) {
@@ -260,15 +265,16 @@ const Agent = (() => {
             && ['开场说明.md', '开场白.md', '样例开场.md', '开场原文.txt', '开场剧情.txt'].includes(parts.at(-1))) {
             return { isWrite, result: '可选开场文件未提供；继续使用模组与当前世界资料。' };
           }
-          const r = _VFS.readFile(ctx.tree, args.path, { cap: readCapFor(cfg, args.path, args.limit), offset: args.offset, limit: args.limit });
+          const r = _VFS.readFile(ctx.tree, args.path, { cap: readCapFor(cfg, args.path, args.tail_chars ?? args.limit), offset: args.offset, limit: args.limit, tail_chars: args.tail_chars });
           recordRead(ctx, args.path);
-          return { isWrite, result: framePartialRead(r, args.path) };
+          const hint = fileReadHint(ctx, args.path, r);
+          return { isWrite, result: framePartialRead(r, args.path) + (hint ? '\n[读取建议] ' + hint : '') };
         }
         case 'read_multiple_files': {
           const results=args.paths.map(path=>{
             try {
               const r=_VFS.readFile(ctx.tree,path,{cap:readCapFor(cfg,path,args.limit),limit:args.limit});
-              recordRead(ctx,path);return {path,...r};
+              recordRead(ctx,path);const hint=fileReadHint(ctx,path,r);return {path,...r,...(hint?{read_hint:hint}:{})};
             } catch(error) { return {path,error:error.message}; }
           });
           return {isWrite:false,result:JSON.stringify(results)};
@@ -320,7 +326,7 @@ const Agent = (() => {
         case 'search': {
           const r = _VFS.search(ctx.tree, { pattern: args.pattern, path: args.path, target: args.target, limit: cfg.searchResultLimit });
           if (!r.hits.length) return { isWrite, result: '无匹配结果' };
-          const lines = r.hits.map(h => h.kind === 'name' ? `[名称] ${h.path}` : `${h.path}:${h.line}: ${h.text}`);
+          const lines = r.hits.map(h => h.kind === 'name' ? `[名称] ${h.path}` : `${h.path}:${h.line}: ${h.text} [offset=${h.offset}, read_offset=${h.read_offset}]`);
           if (r.capped) lines.push('[结果已达上限，请收窄模式]');
           return { isWrite, result: lines.join('\n') };
         }

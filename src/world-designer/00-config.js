@@ -90,7 +90,7 @@ const AGENT_CONFIG = {
     '- 多文件读取用 read_multiple_files，末尾追加用 append_file。局部修改用 apply_patch；单次传 old_str/new_str，多处修改用 patches 数组。每项按顺序在上一步结果中唯一匹配，全部成功才保存。',
     '- 非空 JSON 文件每次修改后须完整合法；大型 JSON 可先分段写入 .txt，完成后 move 为 .json。写入、补丁、移动和复制失败时按错误修正，原文件保留。',
     '- 背包与场景物品列表的 ID 必须唯一；多件同类物品使用数量/余量，不同实例使用不同 ID。玩家姓名、性别、年龄、职业、身份只填当前值，必要经历精简写入相关记忆或隐藏字段，不创建、追加或例行读取角色、物品、场景、世界流水日志。',
-    '- 读长文件被截断时用 offset 续读，不要基于半截内容下判断。',
+    '- 按任务读取所需内容：连续阅读长段时增大 limit，查文件末尾用 tail_chars，定位中间内容先 search 再按 read_offset 跳读。截断只表示未返回全文，不要求机械读完；需要完整资料才能判断时再续读。',
     '- search 的正则区分大小写，需忽略时写 `[Tt]odo`。',
     '- 只要有 Skill 与当前任务相关，哪怕只是部分相关，都必须先 run_skill 加载再动手。',
     '  宁可加载了用不上，也不要漏掉其中的关键步骤与坑。它的参考资料在自己的根目录下，用 read_file 取。',
@@ -380,7 +380,7 @@ const TOOL_DEFS = [
     crop: { type: 'object', description: '可选，按原图像素裁剪', properties: { x: { type: 'integer', minimum: 0 }, y: { type: 'integer', minimum: 0 }, width: { type: 'integer', minimum: 1 }, height: { type: 'integer', minimum: 1 } }, required: ['x', 'y', 'width', 'height'] },
   }, required: ['path'] } } },
   { type: 'function', function: { name: 'list_dir', description: '列出目录内容（名称、类型、大小）', parameters: { type: 'object', properties: { path: { type: 'string', description: '目录路径，如 /workspace' } }, required: ['path'] } } },
-  { type: 'function', function: { name: 'read_file', description: '读取文件内容。默认返回上限 ' + AGENT_CONFIG.readCharLimit + ' 字符（/skills/ 下为 ' + AGENT_CONFIG.skillReadCharLimit + '）。预计文件很长时可传 limit 一次读完，避免反复续读。返回的不是全文时，结果首尾会标出前后各省略了多少字符——看到这类标注说明你手里只是片段，据此判断要不要续读，不要拿半截内容下结论', parameters: { type: 'object', properties: { path: { type: 'string' }, offset: { type: 'integer', description: '起始字符位置，默认 0' }, limit: { type: 'integer', description: '本次最大字符数，上限 ' + AGENT_CONFIG.readCharLimitMax + '；不传则用默认上限' } }, required: ['path'] } } },
+  { type: 'function', function: { name: 'read_file', description: '读取文本。定位文件末尾用 tail_chars（只传 path 和 tail_chars）；定位中间内容先 search 再按 read_offset 跳读。默认返回上限 ' + AGENT_CONFIG.readCharLimit + ' 字符（/skills/ 下为 ' + AGENT_CONFIG.skillReadCharLimit + '）。需要连续阅读较长内容时主动增大 limit，避免连续几百字符地试读。返回片段会标出省略范围；truncated 不要求读完整个文件，所需资料不足时再续读，不假定未读内容', parameters: { type: 'object', properties: { path: { type: 'string' }, offset: { type: 'integer', description: '从零开始的字符位置，不是行号；可使用 search 返回的 read_offset 直接定位。与 tail_chars 互斥' }, limit: { type: 'integer', description: '本次最大字符数，上限 ' + AGENT_CONFIG.readCharLimitMax + '；不传则用默认上限。需要较长内容时可用 8000–32000，按任务调整。与 tail_chars 互斥' }, tail_chars: { type: 'integer', minimum: 1, description: '直接读取最后 N 个字符，例如 4000；超过读取上限时返回最后一个上限长度。与 offset、limit 互斥；只填写 path 和 tail_chars' } }, required: ['path'], not: { anyOf: [{ required: ['tail_chars', 'offset'] }, { required: ['tail_chars', 'limit'] }] } } } },
   { type:'function',function:{name:'read_multiple_files',description:'一次读取 1–20 个文本文件；每项分别返回内容、截断信息或错误，单个失败不影响其他项。limit 是每个文件的字符上限；较长文件按 read_file 的 offset/limit 续读。',parameters:{type:'object',properties:{paths:{type:'array',minItems:1,maxItems:20,items:{type:'string',minLength:1,pattern:'\\S'}},limit:{type:'integer',minimum:1}},required:['paths']}}},
   { type:'function',function:{name:'append_file',description:'向已存在的文本文件末尾原样追加，不自动换行。须有仍在上下文中的基础读取或完整写入及后续修改依据，内容未变时可连续追加，无须重读；追加不刷新整份覆盖期限。JSON 校验追加后的完整结果，失败不写入。',parameters:{type:'object',properties:{path:{type:'string'},content:{type:'string',minLength:1}},required:['path','content']}}},
   { type: 'function', function: { name: 'write_file', description: '创建或覆盖写文件（自动创建父目录）。内容上限 ' + AGENT_CONFIG.writeCharLimit + ' 字符，超长文本可分段追加。非空 JSON 内容每次修改后须完整合法，大型 JSON 可先在 .txt 拼接完成再改为 .json。物品列表 ID 唯一，玩家身份字段只填当前值；校验失败不写入。覆盖已存在文件前须有本轮或上一轮成功读取或完整写入的依据，且依据和后续修改仍在上下文中、内容未变。分段读取也算已读；成功覆盖建立新依据。局部替换、追加不刷新覆盖期限，已有有效依据可直接继续修改', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } } },
@@ -388,7 +388,7 @@ const TOOL_DEFS = [
   { type: 'function', function: { name: 'delete', description: '删除文件或目录（递归）', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
   { type: 'function', function: { name: 'move', description: '移动或重命名文件/目录', parameters: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } }, required: ['from', 'to'] } } },
   { type: 'function', function: { name: 'copy', description: '复制文件或目录到新路径', parameters: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } }, required: ['from', 'to'] } } },
-  { type: 'function', function: { name: 'search', description: '正则搜索（大小写敏感，忽略大小写请用 [Tt] 写法）。target: content=内容 name=文件名 both=两者（默认）', parameters: { type: 'object', properties: { pattern: { type: 'string', minLength: 1 }, path: { type: 'string', description: '搜索根目录，默认 /workspace' }, target: { type: 'string', enum: ['content', 'name', 'both'] } }, required: ['pattern'] } } },
+  { type: 'function', function: { name: 'search', description: '正则搜索（大小写敏感，忽略大小写请用 [Tt] 写法），path 可指定目录或单个文件。正文命中返回字符 offset、建议 read_offset 及附近内容；可用 read_file 的 offset 跳读。target: content=内容 name=文件名 both=两者（默认）', parameters: { type: 'object', properties: { pattern: { type: 'string', minLength: 1 }, path: { type: 'string', description: '搜索目录或单个文件，默认 /workspace' }, target: { type: 'string', enum: ['content', 'name', 'both'] } }, required: ['pattern'] } } },
   { type: 'function', function: { name: 'run_skill', description: '加载一个 Skill 的完整操作指令（Skill 清单见系统提示）', parameters: { type: 'object', properties: { name: { type: 'string', minLength: 1, pattern: '\\S' } }, required: ['name'] } } },
   { type: 'function', function: {
     name: 'goal',
@@ -444,7 +444,7 @@ const TOOL_DEFS = [
 
 // Path values must be explicit when supplied; optional paths retain their documented defaults.
 for(const tool of TOOL_DEFS)for(const [key,schema] of Object.entries(tool.function.parameters.properties||{})){
-  if(['offset','limit','start_page','end_page'].includes(key))schema.minimum=key==='offset'?0:1;
+  if(['offset','limit','tail_chars','start_page','end_page'].includes(key))schema.minimum=key==='offset'?0:1;
   if(tool.function.name==='parse_document'&&key==='limit')schema.maximum=120000;
   if(['path','from','to','output_path','output_dir'].includes(key)){
     schema.minLength=1;schema.pattern='\\S';

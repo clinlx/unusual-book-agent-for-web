@@ -26,7 +26,7 @@ function buildWorldDesigner() {
     files: Object.keys(bundled.snapshot).filter(file => file.startsWith(builderPrefix))
       .map(file => file.slice(builderPrefix.length)).filter(file => file !== 'SKILL.md' && file !== 'manifest.json'),
   });
-  const source = scripts(['vendor/marked.min.js', 'skills/game-world-builder/scripts/world-trigger-rules.js', 'skills/game-world-builder/scripts/validate_game_structure.js', 'skills/tavern-card-loader/scripts/extract-card.js', 'src/shared/file-write-validation.js', 'src/shared/api-url.js', 'src/shared/output-limit.js','src/shared/tool-arguments.js','src/shared/file-knowledge.js', 'src/shared/world-handoff.js', 'src/shared/transfer-dialog.js', 'src/shared/designer-projects.js', 'src/shared/back-navigation.js','src/shared/send-shortcut.js','src/shared/dropdown.js',
+  const source = scripts(['vendor/marked.min.js', 'src/shared/file-read.js', 'skills/game-world-builder/scripts/world-trigger-rules.js', 'skills/game-world-builder/scripts/validate_game_structure.js', 'skills/tavern-card-loader/scripts/extract-card.js', 'src/shared/file-write-validation.js', 'src/shared/api-url.js', 'src/shared/output-limit.js','src/shared/tool-arguments.js','src/shared/file-knowledge.js', 'src/shared/world-handoff.js', 'src/shared/transfer-dialog.js', 'src/shared/designer-projects.js', 'src/shared/back-navigation.js','src/shared/send-shortcut.js','src/shared/dropdown.js',
     ...modules.map(name => 'src/world-designer/' + name + '.js')]);
   const schema = JSON.parse(fs.readFileSync(path.join(root, 'skills/game-world-builder/scripts/world-schema.json'), 'utf8'));
   const prefix = 'const BUNDLED_DESIGNER_ICON = ' + safeJSON(read('assets/icons/designer.svg')) + ';\n' + 'const BUNDLED_SKILLS = ' + safeJSON(bundled.snapshot) + ';\n'

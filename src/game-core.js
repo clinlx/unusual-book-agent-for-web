@@ -3,6 +3,7 @@
 const GameCore = (() => {
   const vfs = typeof module !== 'undefined' && module.exports ? require('./vfs.js') : VFS;
   const data = typeof module !== 'undefined' && module.exports ? require('./game-data.js') : GameData;
+  const fileReads = typeof module !== 'undefined' && module.exports ? require('./shared/file-read.js') : FileRead;
   const history = typeof module !== 'undefined' && module.exports ? require('./game-history.js') : GameHistory;
   const recovery = typeof module !== 'undefined' && module.exports ? require('./game-context-recovery.js') : GameContextRecovery;
   const toolArguments = typeof module !== 'undefined' && module.exports ? require('./shared/tool-arguments.js') : ToolArguments;
@@ -353,11 +354,11 @@ const GameCore = (() => {
         const fp=path(input.path),resource=options.resource?.(fp)??options.resource?.(String(input.path));
         const n=vfs.resolve(s.tree,vfs.normalize(fp));
         
-        if(resource!==undefined){const offset=Math.max(0,Number(input.offset)||0),limit=Math.min(120000,Math.max(1,Number(input.limit)||32000));
-          return {content:resource.slice(offset,offset+limit),offset,totalLength:resource.length,truncated:offset+limit<resource.length};}
+        const finish=(content,result)=>{const hint=fileReads.hint(round,fp,content,result,round.number);return hint?{...result,read_hint:hint}:result;};
+        if(resource!==undefined)return finish(resource,vfs.readText(resource,{...input,cap:120000,defaultLimit:32000}));
         if(!n&&fp.startsWith('/workspace/')&&['开场说明.md','开场白.md','样例开场.md','开场原文.txt','开场剧情.txt'].includes(fp.split('/').at(-1)))return {content:'',offset:0,totalLength:0,truncated:false,exists:false,optional:true};
         if(!n)throw Error('文件不存在: '+fp);
-        const r=vfs.readFile(s.tree,fp,{offset:input.offset,limit:input.limit,cap:120000});record(fp);return r;
+        const r=vfs.readFile(s.tree,fp,{offset:input.offset,limit:input.limit,tail_chars:input.tail_chars,cap:120000});record(fp);return finish(n.content,r);
       };
       const writable=fp=>{
         if(fp==='/.reference'||fp.startsWith('/.reference/')||fp==='/prompts'||fp.startsWith('/prompts/')||options.resource?.(fp)!==undefined)throw Error('提示词为只读资源');
