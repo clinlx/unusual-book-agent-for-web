@@ -39,11 +39,10 @@ for(const engine of ['game','designer']){
   bad(run('apply_patch',{path:'/workspace/a.txt',old_str:'done',new_str:'x',patches:[]}),/patches|混用|同时/);
   bad(run('apply_patch',{path:'/workspace/a.txt',patches:[{old_str:'done',new_str:4}]}),/patches\[0\].new_str/);
  });
- test(engine+' distant calls expire write knowledge until reread',()=>{
-  const {run,good,bad,read}=fixture(engine);read();
+ test(engine+' unrelated tool calls do not expire unchanged file knowledge',()=>{
+  const {run,good,read}=fixture(engine);read();
   for(let i=0;i<40;i++)good(run('list_dir',{path:'/workspace'}));
-  bad(run('write_file',{path:'/workspace/a.txt',content:'overwrite'}),/read_file/);
-  read();good(run('write_file',{path:'/workspace/a.txt',content:'overwrite'}));
+  good(run('write_file',{path:'/workspace/a.txt',content:'overwrite'}));
  });
  test(engine+' batched reads provide per-file results and unlock subsequent edits',()=>{
   const {run,good,save}=fixture(engine);
@@ -65,7 +64,7 @@ for(const engine of ['game','designer']){
   bad(run('write_file',{path:'/workspace/moved/a.txt',content:'recreated'}),/read_file/);
  });
 }
-test('game knowledge expires on new rounds and when its evidence leaves the actual context',()=>{
+test('game knowledge crosses rounds but expires when its evidence leaves the actual context',()=>{
  const f=fixture('game');f.good(f.run('write_file',{path:'/workspace/new.txt',content:'created'},'known'));
  const call={id:'known',type:'function',function:{name:'write_file',arguments:JSON.stringify({path:'/workspace/new.txt',content:'created'})}};
  f.save.messages.push({role:'assistant',round:1,tool_calls:[call]},{role:'tool',round:1,tool_call_id:'known',content:JSON.stringify(f.save.activeRound.receipts.known)});
@@ -73,7 +72,7 @@ test('game knowledge expires on new rounds and when its evidence leaves the actu
  f.save.messages=[];Core.context(f.save,'规则',10000);
  f.bad(f.run('write_file',{path:'/workspace/new.txt',content:'lost'}),/read_file/);
  f.read();f.good(f.run('append_story',{content:'开局',one_line_summary_of_content:'开局'}));f.good(f.run('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}}));Core.beginRound(f.save,'继续');
- f.bad(f.run('apply_patch',{path:'/workspace/a.txt',old_str:'alpha',new_str:'new'}),/read_file/);
+ f.good(f.run('apply_patch',{path:'/workspace/a.txt',old_str:'alpha',new_str:'new'}));
 });
 test('designer retains evidence in context but cannot carry it into a different or compressed chat',async()=>{
  const {ctx}=fixture('designer');let step=0;

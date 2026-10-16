@@ -15,8 +15,10 @@ const Agent = (() => {
   const WRITE_TOOLS = new Set(['write_file', 'append_file', 'apply_patch', 'delete', 'move', 'copy']);
   const knowledgeByReads = new WeakMap();
   function knowledge(ctx) {
-    if(!knowledgeByReads.has(ctx.readState))knowledgeByReads.set(ctx.readState,_Knowledge.create());
-    return knowledgeByReads.get(ctx.readState);
+    if(!knowledgeByReads.has(ctx.readState))knowledgeByReads.set(ctx.readState,_Knowledge.create(ctx.turn));
+    const state=knowledgeByReads.get(ctx.readState);
+    _Knowledge.setTurn(state,ctx.turn);
+    return state;
   }
   const canonicalPath = path => '/' + _VFS.normalize(path).join('/');
   const _GOAL_MAX = (typeof module !== 'undefined') ? require('./00-config.js').GOAL_MAX_CHARS : GOAL_MAX_CHARS;
@@ -137,17 +139,21 @@ const Agent = (() => {
     return content.length + ':' + (h >>> 0).toString(36);
   }
   // 记录某路径「读取/写入时的内容指纹」，写入前据此判断是否被别人改动过
-  function recordRead(ctx, path) {
+  function recordRead(ctx, path, kind = 'read') {
     if (!ctx.readState) return;
     path=canonicalPath(path);
     const node = _VFS.resolve(ctx.tree, _VFS.normalize(path));
-    if (node && node.type === 'file' && node.encoding !== 'base64') {ctx.readState.set(path, fileStamp(node.content));_Knowledge.record(knowledge(ctx),path,ctx.toolCallId);}
+    if (node && node.type === 'file' && node.encoding !== 'base64') {
+      ctx.readState.set(path, fileStamp(node.content));
+      // UI acceptance synchronizes the stamp, but is not a new model read.
+      if(Object.hasOwn(ctx,'toolCallId'))_Knowledge.record(knowledge(ctx),path,ctx.toolCallId,kind);
+    }
   }
 
   // 覆盖已存在文件前的读保护：未读过→拒绝；读过但内容被改动→拒绝。
   // AI 自己的写入会同步更新指纹（见各写工具末尾的 recordRead），
   // 所以连续修改同一个文件不会被自己挡住——只拦真正来自外部的改动。
-  function assertReadBeforeWrite(ctx, path) {
+  function assertReadBeforeWrite(ctx, path, overwrite = true) {
     path=canonicalPath(path);
     const node = _VFS.resolve(ctx.tree, _VFS.normalize(path));
     if (!node || node.type !== 'file') return; // 新文件不受限
@@ -157,14 +163,15 @@ const Agent = (() => {
       throw new Error('该文件已存在，写入前必须先用 read_file 读取其最新内容: ' + path);
     if (ctx.readState.get(path) !== fileStamp(node.content))
       throw new Error('该文件的当前内容与你上次读到的不一致（用户手动编辑、拒绝了你的改动、或回滚了工作目录），请先重新 read_file 确认最新内容再写入: ' + path);
-    if(!_Knowledge.fresh(knowledge(ctx),path))throw new Error('读取记录已过期，请先 read_file 确认最新内容: '+path);
+    if(!_Knowledge.fresh(knowledge(ctx),path))throw new Error('读取依据已失效，请先 read_file 确认最新内容: '+path);
+    if(overwrite&&!_Knowledge.canOverwrite(knowledge(ctx),path))throw new Error('整份覆盖前请先 read_file：基础读取或完整写入须来自本回合或上一回合；局部替换、追加不会刷新覆盖期限: '+path);
   }
   function transferReadState(ctx,from,to,moved) {
     if(!ctx.readState)return;
     from=canonicalPath(from);to=canonicalPath(to);
     for(const [path,stamp] of [...ctx.readState])if(path===from||path.startsWith(from+'/')){
       const target=to+path.slice(from.length),node=_VFS.resolve(ctx.tree,_VFS.normalize(target));
-      if(node?.type==='file'&&fileStamp(node.content)===stamp&&_Knowledge.fresh(knowledge(ctx),path))recordRead(ctx,target);
+      if(node?.type==='file'&&fileStamp(node.content)===stamp&&_Knowledge.transfer(knowledge(ctx),path,target,ctx.toolCallId))ctx.readState.set(target,stamp);
       if(moved){ctx.readState.delete(path);delete knowledge(ctx).entries[path];}
     }
   }
@@ -208,10 +215,10 @@ const Agent = (() => {
     return out;
   }
 
-  // ctx: { tree, skills, config, readState?, askUser? }
+  // ctx: { tree, skills, config, readState?, turn?, askUser? }
   function executeTool(ctx, name, args, options = {}) {
     ctx={...ctx,toolCallId:options.callId};
-    if(ctx.readState)_Knowledge.tick(knowledge(ctx));
+    if(ctx.readState)knowledge(ctx);
     const cfg = ctx.config;
     const writeOptions = { cap: cfg.writeCharLimit, validateContent: _FileWriteValidation.validate };
     const isWrite = WRITE_TOOLS.has(name);
@@ -267,12 +274,12 @@ const Agent = (() => {
           return {isWrite:false,result:JSON.stringify(results)};
         }
         case 'append_file': {
-          assertReadBeforeWrite(ctx,args.path);
+          assertReadBeforeWrite(ctx,args.path,false);
           const node=_VFS.resolve(ctx.tree,_VFS.normalize(args.path));
           if(!node||node.type!=='file')throw Error('文件不存在: '+args.path);
           if(node.encoding==='base64')throw Error('非文本文件不能追加文本');
           _VFS.writeFile(ctx.tree,args.path,node.content+args.content,writeOptions);
-          recordRead(ctx,args.path);
+          recordRead(ctx,args.path,'weak');
           return {isWrite,change:buildChange(name,args,before,ctx.tree),result:'追加成功: '+args.path+' ('+args.content.length+' 字符)'};
         }
         case 'write_file': {
@@ -283,9 +290,9 @@ const Agent = (() => {
           return { isWrite, change, result: '写入成功: ' + args.path + ' (' + String(args.content).length + ' 字符)' };
         }
         case 'apply_patch': {
-          assertReadBeforeWrite(ctx,args.path);
+          assertReadBeforeWrite(ctx,args.path,false);
           _VFS.applyPatches(ctx.tree, args.path, args.patches||[{old_str:args.old_str,new_str:args.new_str}], writeOptions);
-          recordRead(ctx, args.path);
+          recordRead(ctx, args.path, 'weak');
           const change = buildChange(name, args, before, ctx.tree);
           return { isWrite, change, result: '补丁应用成功: ' + args.path+' ('+(args.patches?.length||1)+' 项)' };
         }
@@ -300,13 +307,13 @@ const Agent = (() => {
         }
         case 'move': {
           _VFS.move(ctx.tree, args.from, args.to, writeOptions);
-          // 目标文件的内容是自己搬过来的，等于刚读过；源路径已不存在
+          // 沿用源文件的读取依据与期限，并依赖本次移动；源路径已不存在
           transferReadState(ctx,args.from,args.to,true);
           return { isWrite, change: buildChange(name, args, before, ctx.tree), result: '已移动: ' + args.from + ' → ' + args.to };
         }
         case 'copy': {
           _VFS.copy(ctx.tree, args.from, args.to, writeOptions);
-          // 同上：副本内容就是自己刚复制的，无须再读一遍才能改
+          // 副本沿用源文件依据，不把复制操作当作一次新的读取
           transferReadState(ctx,args.from,args.to,false);
           return { isWrite, change: buildChange(name, args, before, ctx.tree), result: '已复制: ' + args.from + ' → ' + args.to };
         }

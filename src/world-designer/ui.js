@@ -2507,6 +2507,9 @@
       preTree = VFS.clone(getWorkspaceNode());
       // msgId 是稳定标识：快照靠它定位轮次，删除其他轮次后仍能对上
       const userMsg = resume ? resumingUser || { msgId: resumeRecord.userMsgId } : { role: 'user', content: text, msgId: uid() };
+      const writeGuardTurn = resume ? (resumeRecord.writeGuardTurn ?? sess.writeGuardTurn ?? 0)
+        : (Number.isSafeInteger(sess.writeGuardTurn) ? sess.writeGuardTurn : 0) + 1;
+      sess.writeGuardTurn = writeGuardTurn;
       delete sess.contextInterrupted;
       sentUserId = userMsg.msgId;
       if (!resume) {
@@ -2571,7 +2574,7 @@
           await saveSession(sess);
           renderChat();
         }
-        const ctx = { tree: S.tree, skills: cur.allSkills(), config: AGENT_CONFIG, readState: S.readState,
+        const ctx = { tree: S.tree, skills: cur.allSkills(), config: AGENT_CONFIG, readState: S.readState, turn: writeGuardTurn,
           viewImage: S.settings.imageSending ? viewImage : undefined,
           parseDocument: args => Documents.parse(S.tree, args, { signal: S.abort.signal,
             checkActive: () => { if (S.projectId !== projectId || !S.running || lease.isHeldByOther(projectId)) throw Error('文档解析任务已失效'); } }),
@@ -2707,7 +2710,7 @@
         // 挂到状态上由 renderChat 渲染，否则 finally 的 renderChat() 会清掉直接 append 的卡片
         if (ContextBudget.isLimitError(e) || e.code === 'OUTPUT_LIMIT' || resume) {
           sess.contextInterrupted = { userMsgId: [...sess.messages].reverse().find(m => m.role === 'user' && !m.displayOnly)?.msgId || sentUserId,
-            message: e.message, kind: e.code === 'OUTPUT_LIMIT' ? 'output' : 'context', at: Date.now() };
+            message: e.message, kind: e.code === 'OUTPUT_LIMIT' ? 'output' : 'context', writeGuardTurn: sess.writeGuardTurn, at: Date.now() };
         }
         S.lastError = e.code === 'OUTPUT_LIMIT'
           ? { sessionId: sess.id, message: e.message, actionLabel: '调整最大输出', retry: openSettings }

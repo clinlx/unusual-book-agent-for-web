@@ -119,7 +119,10 @@ const GameCore = (() => {
     inputs.advance(s);
     s.activeRound={id:roundId,number:inputRound,actions:copy(options.actions||[]),action:actionText,...options.skip?{skip:true}:{},starting:isStart,triggered:isStart,published:0,initialWorldTime:data.consensusTime(s),
       participantIds:s.multiplayer?.members?Object.values(s.multiplayer.members).map(m=>m.actorId).filter(Boolean):null,
-      requestCount:0,readState:{},receipts:{},complete:false,summary:[]};
+      requestCount:0,readState:s.activeRound?.fileKnowledge?.version===fileKnowledge.VERSION?copy(s.activeRound.readState||{}):{},
+      fileKnowledge:s.activeRound?.fileKnowledge?.version===fileKnowledge.VERSION?copy(s.activeRound.fileKnowledge):fileKnowledge.create(inputRound),
+      receipts:{},complete:false,summary:[]};
+    fileKnowledge.setTurn(s.activeRound.fileKnowledge,inputRound);
     s.status='running';s.error=null;s.lastChanges=[];
     if(!keepDraft){s.draft='';s.privateDraft='';}s.draftRound=inputRound+1;
     if(!isStart){if(options.actions){for(const action of options.actions)emit(s,'player',{actorId:action.actorId,content:action.content||(action.skip?'等待局势发展。':''),privateContent:action.privateContent||'',...action.disguise?{disguise:true}:{},audience:'public',skip:!!action.skip,roundId});}else emit(s,'player',{actorId:s.actorId,content:actionText,name:'player_action',args:{action:actionText},skip:!!options.skip,roundId});}
@@ -333,7 +336,7 @@ const GameCore = (() => {
   function execute(s,name,a={},callId=uid(),options={}) {
     const round=s.activeRound;if(!round)return {ok:false,error:'尚未开始回合'};
     if(Object.hasOwn(round.receipts,callId))return copy(round.receipts[callId]);
-    const knowledge=round.fileKnowledge||(round.fileKnowledge=fileKnowledge.create());fileKnowledge.tick(knowledge);
+    const knowledge=round.fileKnowledge||(round.fileKnowledge=fileKnowledge.create(round.number));fileKnowledge.setTurn(knowledge,round.number);
     
     
     const before=copy({tree:s.tree,slots:s.slots,cache:s.cache,round:s.round,status:s.status,playerPath:s.playerPath,
@@ -345,7 +348,7 @@ const GameCore = (() => {
       if(!object(a))throw Error('参数必须是对象');
       const invalidFileArgs=toolArguments.validateFiles(name,a);if(invalidFileArgs)throw Error(invalidFileArgs);
       const p=a.path===undefined?'/workspace':path(a.path);
-      const record=fp=>{const node=vfs.resolve(s.tree,vfs.normalize(fp));if(node?.type==='file'&&node.encoding!=='base64'){round.readState[fp]=node.content;fileKnowledge.record(knowledge,fp,callId);}};
+      const record=(fp,kind='read')=>{const node=vfs.resolve(s.tree,vfs.normalize(fp));if(node?.type==='file'&&node.encoding!=='base64'){round.readState[fp]=node.content;fileKnowledge.record(knowledge,fp,callId,kind);}};
       const read=(input)=>{
         const fp=path(input.path),resource=options.resource?.(fp)??options.resource?.(String(input.path));
         const n=vfs.resolve(s.tree,vfs.normalize(fp));
@@ -361,7 +364,10 @@ const GameCore = (() => {
         const role=/^\/workspace\/((Player|AIPC|DISABLE|KPC)-[^/]*)(?:\/|$)/.exec(fp);
         if(role&&(role[2]==='DISABLE'||!vfs.resolve(s.tree,['workspace',role[1]])))throw Error('角色槽位由宿主管理，不能新增槽位或修改关闭角色');
       };
-      const readFirst=fp=>{writable(fp);const n=vfs.resolve(s.tree,vfs.normalize(fp));if(n?.type==='file'&&(round.readState[fp]!==n.content||!fileKnowledge.fresh(knowledge,fp)))throw Error('修改前先 read_file 读取最新内容（未读取、内容已变化或读取记录已过期）: '+fp);};
+      const readFirst=(fp,overwrite=false)=>{writable(fp);const n=vfs.resolve(s.tree,vfs.normalize(fp));if(n?.type==='file'){
+        if(round.readState[fp]!==n.content||!fileKnowledge.fresh(knowledge,fp))throw Error('修改前先 read_file 读取最新内容（未读取、内容已变化或读取依据已离开上下文）: '+fp);
+        if(overwrite&&!fileKnowledge.canOverwrite(knowledge,fp))throw Error('整份覆盖前请先 read_file：基础读取或完整写入须来自本回合或上一回合；局部替换、追加不会刷新覆盖期限: '+fp);
+      }};
       const readSubtreeFirst=fp=>{readFirst(fp);const n=vfs.resolve(s.tree,vfs.normalize(fp));if(n?.type==='dir')for(const child of Object.values(n.children))readSubtreeFirst(fp+'/'+child.name);};
       let result;
       switch(name){
@@ -466,7 +472,7 @@ const GameCore = (() => {
           const content=node.content+a.content;vfs.writeFile(s.tree,p,content,writeOptions);
           result={path:p,appended:a.content.length,totalLength:content.length};break;
         }
-        case 'write_file':readFirst(p);if(typeof a.content!=='string')throw Error('content 必须是文本');vfs.writeFile(s.tree,p,a.content,writeOptions);result={path:p,written:a.content.length};break;
+        case 'write_file':readFirst(p,true);if(typeof a.content!=='string')throw Error('content 必须是文本');vfs.writeFile(s.tree,p,a.content,writeOptions);result={path:p,written:a.content.length};break;
         case 'apply_patch':readFirst(p);vfs.applyPatches(s.tree,p,a.patches||[{old_str:a.old_str,new_str:a.new_str}],writeOptions);result={path:p,applied:a.patches?.length||1};break;
         case 'mkdir':writable(p);vfs.mkdir(s.tree,p);result={path:p};break;
         case 'delete':if(p==='/workspace'||slots.scan(s.tree).some(x=>x.path===p))throw Error('角色目录由槽位管理，不能删除');readSubtreeFirst(p);vfs.deletePath(s.tree,p);result={path:p};break;
@@ -503,7 +509,7 @@ const GameCore = (() => {
         const old=roles(before.tree),next=roles(s.tree),shape=xs=>JSON.stringify(xs.map(([key,node])=>[key,node.type]).sort(([a],[b])=>a.localeCompare(b)));
         if(shape(old)!==shape(next))throw Error('角色根目录集合由槽位管理，文件工具不能改变');
         for(const [key,node]of old)if(key.startsWith('DISABLE-')&&JSON.stringify(node)!==JSON.stringify(vfs.resolve(s.tree,['workspace',key])))throw Error('关闭角色资料只允许通过槽位管理恢复后修改');
-        if(['write_file','append_file','apply_patch'].includes(name))record(p);
+        if(['write_file','append_file','apply_patch'].includes(name))record(p,name==='write_file'?'read':'weak');
         if(name==='delete'||name==='move'){
           const removed=name==='delete'?p:path(a.from);
           for(const fp of Object.keys(round.readState))if(fp===removed||fp.startsWith(removed+'/')){delete round.readState[fp];delete knowledge.entries[fp];}
@@ -512,7 +518,7 @@ const GameCore = (() => {
           const from=path(a.from),to=path(a.to);
           for(const [fp,content] of Object.entries(before.activeRound.readState))if(fp===from||fp.startsWith(from+'/')){
             const dest=to+fp.slice(from.length),node=vfs.resolve(s.tree,vfs.normalize(dest));
-            if(node?.content===content&&before.activeRound.fileKnowledge&&fileKnowledge.fresh(before.activeRound.fileKnowledge,fp))record(dest);
+            if(node?.content===content&&before.activeRound.fileKnowledge&&fileKnowledge.transfer(knowledge,fp,dest,callId,before.activeRound.fileKnowledge))round.readState[dest]=node.content;
           }
         }
       }
@@ -653,7 +659,7 @@ const GameCore = (() => {
     if(estimate(sent)>cap)sent=recovery.fit(s,s.messages.filter(m=>(m.round||1)>=from),current,cap,build,estimate,protectedMessages);
     const used=estimate(sent);
     if(used>cap)throw Object.assign(Error('自动整理后仍超过上下文上限（估算消息 '+used+' / 可用消息 '+cap+' tokens）。固定提示词或必须保留的输入过大，请在设置中调大上下文上限或降低输出上限，再点击“继续本轮”。'),{code:'CONTEXT_LIMIT',used,cap});
-    if(s.activeRound?.fileKnowledge)fileKnowledge.retain(s.activeRound.fileKnowledge,sent,fp=>delete s.activeRound.readState[fp]);
+    if(s.activeRound?.fileKnowledge){fileKnowledge.setTurn(s.activeRound.fileKnowledge,current);fileKnowledge.retain(s.activeRound.fileKnowledge,sent,fp=>delete s.activeRound.readState[fp]);}
     s.contextFromRound=from;return sent;
   }
   function prepareOpeningReads(s){
