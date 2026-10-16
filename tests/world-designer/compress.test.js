@@ -52,6 +52,41 @@ test('renderTranscript 暴露 apply_patch 的新旧内容', () => {
   assert.match(t, /\+ const x = 2;/);
 });
 
+test('run 将批量 patch 的每项替换按顺序交给压缩模型', async () => {
+  const patches = [{ old_str: '旧约定', new_str: '新约定' }, { old_str: '新约定', new_str: '最终约定' }, { old_str: '移除这段', new_str: '' }];
+  const msgs = [{ role: 'assistant', content: '', tool_calls: [
+    { id: 'batch', function: { name: 'apply_patch', arguments: JSON.stringify({ path: '/workspace/a.md', patches }) } },
+  ] }, { role: 'tool', tool_call_id: 'batch', content: '补丁应用成功: /workspace/a.md (3 项)' }];
+  const original = JSON.stringify(msgs);
+  await Compress.run(msgs, { keepRecentResponses: 0 }, async request => {
+    assert.ok(request[1].content.includes('【工具】apply_patch /workspace/a.md\n  - 旧约定\n  + 新约定\n  - 新约定\n  + 最终约定\n  - 移除这段\n  + \n【结果】补丁应用成功'));
+    return { content: '约定已更新并移除旧段落' };
+  });
+  assert.strictEqual(JSON.stringify(msgs), original, '只转换压缩输入，不修改历史');
+});
+
+test('run 将 append_file 的追加内容交给压缩模型', async () => {
+  const msgs = [{ role: 'assistant', content: '', tool_calls: [
+    { id: 'append', function: { name: 'append_file', arguments: JSON.stringify({ path: '/workspace/a.md', content: '新增约定\n保留后续任务' }) } },
+  ] }, { role: 'tool', tool_call_id: 'append', content: '追加成功: /workspace/a.md' }];
+  await Compress.run(msgs, { keepRecentResponses: 0 }, async request => {
+    assert.ok(request[1].content.includes('【工具】append_file /workspace/a.md\n  内容: 新增约定\n保留后续任务\n【结果】追加成功'));
+    return { content: '追加了约定和后续任务' };
+  });
+});
+
+test('批量 patch 与追加写入的长文本沿用头尾预览限制', () => {
+  const cfg = { transcriptPreviewChars: 20, transcriptHeadChars: 5, transcriptTailChars: 5 };
+  const content = 'a'.repeat(10) + 'b'.repeat(10) + 'c'.repeat(10);
+  const msgs = [{ role: 'assistant', content: '', tool_calls: [
+    { id: 'patch', function: { name: 'apply_patch', arguments: JSON.stringify({ path: '/workspace/a.md', patches: [{ old_str: content, new_str: content }] }) } },
+    { id: 'append', function: { name: 'append_file', arguments: JSON.stringify({ path: '/workspace/a.md', content }) } },
+  ] }];
+  const transcript = Compress.renderTranscript(msgs, cfg);
+  assert.strictEqual(transcript.split('aaaaa\n…(中间省略 20 字)…\nccccc').length - 1, 3);
+  assert.ok(!transcript.includes(content));
+});
+
 test('renderTranscript 头尾预览长度按配置生效', () => {
   const cfg = { transcriptPreviewChars: 20, transcriptHeadChars: 5, transcriptTailChars: 5 };
   const msgs = [{ role: 'tool', tool_call_id: 'c1', content: 'a'.repeat(10) + 'b'.repeat(10) + 'c'.repeat(10) }];

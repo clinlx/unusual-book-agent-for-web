@@ -16,20 +16,24 @@ const Compress = (() => {
     return head + '\n…(中间省略 ' + (s.length - head.length - tail.length) + ' 字)…\n' + tail;
   }
 
-  // 工具调用渲染成转录行：write_file/apply_patch 的实际内容要露出来，
+  // 工具调用渲染成转录行：写入、追加及批量替换的实际内容要露出来，
   // 否则压缩模型只看得到文件名，写不出真实的"文件与改动"一节。其余工具保留简要 brief。
   function toolCallLines(tc, cfg) {
     let a = {};
     try { a = JSON.parse(tc.function.arguments || '{}'); } catch (_) { return ['【工具】' + tc.function.name]; }
     const name = tc.function.name;
-    if (name === 'write_file' && typeof a.content === 'string')
-      return ['【工具】write_file ' + (a.path || ''), '  内容: ' + previewText(a.content, cfg)];
-    if (name === 'apply_patch' && (typeof a.old_str === 'string' || typeof a.new_str === 'string'))
+    if ((name === 'write_file' || name === 'append_file') && typeof a.content === 'string')
+      return ['【工具】' + name + ' ' + (a.path || ''), '  内容: ' + previewText(a.content, cfg)];
+    if (name === 'apply_patch' && (Array.isArray(a.patches) || typeof a.old_str === 'string' || typeof a.new_str === 'string')) {
+      const patches = Array.isArray(a.patches) ? a.patches : [a];
       return [
         '【工具】apply_patch ' + (a.path || ''),
-        '  - ' + previewText(a.old_str || '', cfg),
-        '  + ' + previewText(a.new_str || '', cfg),
+        ...patches.filter(p => p && (typeof p.old_str === 'string' || typeof p.new_str === 'string')).flatMap(p => [
+          '  - ' + previewText(p.old_str || '', cfg),
+          '  + ' + previewText(p.new_str || '', cfg),
+        ]),
       ];
+    }
     const brief = a.path || a.from || a.pattern || a.name || '';
     return ['【工具】' + name + (brief ? ' ' + brief : '')];
   }
