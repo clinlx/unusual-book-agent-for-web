@@ -250,3 +250,47 @@ test('rebuilding a new world still permits its normal first opening',()=>{
  Core.beginRound(s,'',true,'首次开局');
  assert.equal(s.activeRound.starting,true);assert.equal(s.snapshots.length,1);
 });
+
+
+test('rebuilt recap precedes historical narrative while current cache and continuation stay at the tail',()=>{
+ const s=save();story(s);end(s);
+ Core.beginRound(s,'前往街口',false,'本轮规则');
+ const summaries=structuredClone(s.summaries);rebuild(s);
+ assert.equal(s.messages[0].origin,'rebuilt-summaries');
+ assert.equal(s.messages[0].round,1);
+ assert.equal(s.messages.at(-1).origin,'context-rebuild');
+ const sent=Core.context(s,'当前系统规则');
+ assert.equal(sent[0].role,'system');
+ assert.match(sent[1].content,/保留的前情摘要/);
+ const storyIndex=sent.findIndex(m=>m.role==='assistant'&&m.content==='油布包裹出现在门边。');
+ const actionIndex=sent.findIndex(m=>m.content.includes('前往街口'));
+ assert.ok(storyIndex>1);assert.ok(actionIndex>storyIndex);
+ assert.match(sent.at(-1).content,/上下文已重建/);
+ assert.match(sent.at(-1).content,/保留的状态/);
+ assert.deepEqual(s.summaries,summaries);
+});
+
+test('existing rebuilt saves with a tail recap get corrected on the next request without clearing history again',()=>{
+ const s=save();story(s);end(s);rebuild(s);
+ const recap=s.messages.shift();recap.round=s.activeRound.number;s.messages.push(recap);
+ const original=structuredClone(s.messages);
+ const sent=Core.context(s,'当前系统规则');
+ assert.match(sent[1].content,/保留的前情摘要/);
+ assert.equal(sent.filter(m=>m.content.includes('[保留的前情摘要]')).length,1);
+ assert.match(sent.at(-1).content,/上下文已重建/);
+ assert.deepEqual(s.messages,original);
+});
+
+test('cropping old rebuilt history injects only the boundary recap, without a duplicate summary at the tail',()=>{
+ const s=save();story(s);end(s);rebuild(s);
+ // Emulate an already saved legacy recap tagged with the last completed round.
+ const recap=s.messages.shift();recap.round=2;s.messages.push(recap);
+ s.summaries.push({round:2,content:'第二轮摘要'});
+ Core.beginRound(s,'第二轮玩家行动',false,'第二轮规则');s.contextFromRound=2;
+ const sent=Core.context(s,'当前系统规则');
+ assert.match(sent[1].content,/前情提要/);
+ assert.match(sent[1].content,/第1回合：发现包裹/);
+ assert.equal(sent.filter(m=>m.content.includes('[保留的前情摘要]')).length,0);
+ assert.equal(sent.filter(m=>m.content.includes('第1回合：发现包裹')).length,1);
+ assert.ok(sent.findIndex(m=>m.content.includes('第二轮规则'))>1);
+});

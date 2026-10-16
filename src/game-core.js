@@ -201,7 +201,7 @@ const GameCore = (() => {
         messages.push({role:'user',round:current,internal:true,content:'[开局内部说明]\n'+internal.content});
     }
     if(info.unfinished&&opts.roundPrompt)messages.push({role:'user',round:current,content:opts.roundPrompt});
-    if(s.summaries?.length)messages.push({role:'user',round:current,origin:'rebuilt-summaries',
+    if(s.summaries?.length)messages.unshift({role:'user',round:1,origin:'rebuilt-summaries',
       content:'[保留的前情摘要]\n'+s.summaries.slice(-30).map(e=>'第'+e.round+'回合：'+e.content).join('\n')});
     messages.push({role:'user',round:current,origin:'context-rebuild',contextCache:copy(s.cache||{}),
       content:'[上下文已重建]\n'+JSON.stringify(state)+'\n旧工具调用、回执、思考及文件读取依据已清除；此前未执行的调用已放弃。'+
@@ -707,6 +707,9 @@ const GameCore = (() => {
     }
     function build(sourceOverride){
       const head=[{role:'system',content:system}];
+      // Older rebuilt saves stored the recap at the tail. Project it before history without requiring another destructive rebuild.
+      const rebuiltRecap=s.messages.find(m=>m.origin==='rebuilt-summaries');
+      if(from===1&&rebuiltRecap)head.push({role:'user',content:rebuiltRecap.content});
       // With complete history, end_the_round already carries NEXT_TURN_CACHE in-place.
       // Do not prepend a changing copy: keeping the prefix append-only is critical for provider prompt caching.
       // Only reconstruct summary/cache state when old rounds have actually been truncated.
@@ -716,7 +719,8 @@ const GameCore = (() => {
         const cache=boundaryCache(from);
         if(cache&&Object.keys(cache).length)head.push({role:'user',content:(opts.cachePrompt||'[NEXT_TURN_CACHE]')+'\n'+JSON.stringify(cache)});
       }
-      const source=sourceOverride||s.messages.filter(m=>(m.round||1)>=from);
+      // Once old rounds are cropped, the boundary recap above replaces the original all-history recap.
+      const source=(sourceOverride||s.messages.filter(m=>(m.round||1)>=from)).filter(m=>m.origin!=='rebuilt-summaries');
       const msgs=startupContext(compact?history.compactReads(source,current):source).map(m=>{
         const out={role:m.role,content:m.content||''};
         for(const k of ['tool_calls','tool_call_id','reasoning_content'])if(m[k]!==undefined)out[k]=copy(m[k]);return out;
