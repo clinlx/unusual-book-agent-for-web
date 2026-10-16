@@ -710,8 +710,11 @@ const GameCore = (() => {
       if(!ids.length)return;
       ids.forEach(id=>warnedArguments.add(id));
       const previous=s.events.find(e=>e.round===s.activeRound.number&&e.code==='INVALID_TOOL_ARGUMENTS');
-      if(previous)previous.callIds.push(...ids);
-      else emit(s,'warning',{code:'INVALID_TOOL_ARGUMENTS',callIds:ids,content:toolArguments.NOTICE});
+      if(previous){
+        previous.callIds.push(...ids);
+        if(previous.callIds.length>=3&&!s.events.some(e=>e.round===s.activeRound.number&&e.code==='INVALID_TOOL_ARGUMENTS'&&e.repeated))
+          emit(s,'warning',{code:'INVALID_TOOL_ARGUMENTS',callIds:[],repeated:true,content:toolArguments.REPEATED_NOTICE});
+      }else emit(s,'warning',{code:'INVALID_TOOL_ARGUMENTS',callIds:ids,repeated:ids.length>=3,content:toolArguments.warningNotice(ids.length)});
     };
     if(toolArguments.hasInvalid(s.messages))warnArguments();
     async function completeBatch(message){
@@ -739,7 +742,7 @@ const GameCore = (() => {
         catch(e){
           const rawError=e.message||String(e),name=tc.function?.name,suggestion=toolFailureSuggestion(name,a,rawError);
           const invalid=e.code==='INVALID_TOOL_ARGUMENTS';
-          out={ok:false,error:'工具参数解析失败：'+rawError+(invalid?'。'+toolArguments.HINT+'本次调用未执行，请重新生成合法参数。':''),raw_error:rawError,...(suggestion?{suggestion}:{})};
+          out={ok:false,error:(invalid?'工具参数解析失败：':'工具执行失败：')+rawError+(invalid?'。'+toolArguments.HINT+'本次调用未执行，请重新生成合法参数。':''),raw_error:rawError,...(suggestion?{suggestion}:{})};
           if(invalid)warnArguments();
           emit(s,'tool',{name,args:a??tc.function?.arguments,result:{error:out.error,raw_error:rawError,...(suggestion?{suggestion}:{})},success:false,callId:tc.id});
         }
@@ -783,7 +786,7 @@ const GameCore = (() => {
       }
       throw Error('本回合已达到工具循环上限，可继续本回合或回退');
     }catch(e){s.status=s.activeRound.complete?(s.cache.game_over?'ended':'waiting'):'interrupted';s.error=e.message;
-      const last=s.events.at(-1);if(last?.type!=='error'||last.round!==s.activeRound.number||last.content!==e.message)emit(s,'error',{content:e.message});
+      const last=s.events.at(-1);if(last?.type!=='error'||last.round!==s.activeRound.number||last.content!==e.message)emit(s,'error',{content:e.message,...(e.code?{code:e.code}:{})});
       await step();throw e;}
   }
   return {uid,path,openingFiles,localOpening,createSave,validateTree,beginRound,execute,run,context,estimate,player,filterVisible,visibleEvents,rollback,pruneRollback,ROLLBACK_LIMIT,changes,flatten,dice,dicePlayerRelated,diceSecret,diceEventAccess,resolveManualDice,repairManualDiceEvents};

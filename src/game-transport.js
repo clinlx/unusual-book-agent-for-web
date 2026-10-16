@@ -96,26 +96,24 @@ const GameTransport=(()=>{
           throw Error('API '+resp.status+'：'+text.slice(0,500));
         }
         tiers.set(key,tier);
-        if(!responseStreams){const data=await resp.json();const choice=data.choices?.[0];
-          if(data.error)throw Error(data.error.message||'模型返回错误');
-          if(!choice?.message)throw Error('模型响应缺少 message');
-          outputLimit.assertComplete(choice.finish_reason,data.usage,outputCap);
-          hooks.onUsage?.(data.usage);const m=choice.message;return {content:m.content||'',reasoning:sse.readReasoning(m),tool_calls:m.tool_calls||[]};}
-        if(!resp.body)throw Error('模型未返回流式响应体');
+        if(!responseStreams){const data=await sse.readJSON(resp);const choice=data.choices[0];
+          outputLimit.assertComplete(choice?.finish_reason,data.usage,outputCap);
+          hooks.onUsage?.(data.usage);const m=sse.checkMessage(choice?.message);return {content:m.content||'',reasoning:sse.readReasoning(m),tool_calls:m.tool_calls||[]};}
+        if(!resp.body)throw sse.protocolError('模型未返回流式响应体');
         const reader=resp.body.getReader(),decoder=new TextDecoder(),acc=sse.createAccumulator();
         let buffer='',hasData=false,finishReason=null,usage;
         function process(line){if(!line.startsWith('data:'))return;const text=line.slice(5).trim();if(!text||text==='[DONE]')return;
-          const data=JSON.parse(text);if(data.error)throw Error(data.error.message||'模型流式响应错误');hasData=true;acc.add(data);
+          const data=sse.parseData(text);hasData=hasData||data.choices.length>0;acc.add(data);
           const choice=data.choices?.[0],delta=choice?.delta;finishReason=choice?.finish_reason||finishReason;
           if(delta?.content)hooks.onDelta?.(delta.content);const reason=sse.readReasoning(delta);if(reason)hooks.onReasoningDelta?.(reason);
           if(delta?.tool_calls)hooks.onToolDelta?.(acc.partial());if(data.usage){usage=data.usage;hooks.onUsage?.(data.usage);}
         }
-        try{for(;;){if(ctrl.signal.aborted)throw ctrl.signal.reason||Error('已中止请求');const {value,done}=await reader.read();
+        try{for(;;){if(ctrl.signal.aborted)throw ctrl.signal.reason||Error('已中止请求');const {value,done}=await reader.read().catch(error=>{throw sse.streamError(error);});
           if(value?.byteLength)armTimeout();
           buffer+=decoder.decode(value||new Uint8Array(),{stream:!done});let i;while((i=buffer.indexOf('\n'))>=0){process(buffer.slice(0,i).replace(/\r$/,''));buffer=buffer.slice(i+1);}
           if(done){if(buffer.trim())process(buffer.replace(/\r$/,''));break;}
         }}finally{try{await reader.cancel();}catch(_){}}
-        if(!hasData)throw Error('模型返回了空响应');outputLimit.assertComplete(finishReason,usage,outputCap);
+        if(!hasData)throw sse.protocolError('模型返回了空响应');outputLimit.assertComplete(finishReason,usage,outputCap);
         return acc.result();
       }catch(e){if(ctrl.signal.aborted)throw ctrl.signal.reason||Object.assign(Error('已中止请求'),{name:'AbortError'});throw e;}
       finally{clearTimeout(timer);hooks.signal?.removeEventListener('abort',cancel);}

@@ -46,15 +46,15 @@ for(const [name,create] of [['designer',Agent.createHttpTransport],['game',Trans
     await create(settings,[])(messages);
   });
 }
-test('designer skips malformed writes, continues mixed batches and reports possible service problems',async()=>{
+test('designer skips malformed writes, continues mixed batches and reports recoverable argument errors',async()=>{
   const tree=VFS.createTree(),warnings=[];let n=0;
   const out=await Agent.runTurn({tree,skills:[],config:C.AGENT_CONFIG},[],async messages=>{
     if(!n++)return {tool_calls:[bad,good]};
     assert.doesNotThrow(()=>JSON.parse(messages.find(m=>m.tool_calls).tool_calls[0].function.arguments));
-    assert.match(messages.find(m=>m.tool_call_id==='bad').content,/模型.*服务/);
+    assert.match(messages.find(m=>m.tool_call_id==='bad').content,/本次调用未执行.*重新生成合法参数/);
     return {content:'ok'};
   },{onWarning:message=>warnings.push(message)});
-  assert.equal(n,2);assert.equal(warnings.length,1);assert.match(warnings[0],/可能.*模型.*服务/);
+  assert.equal(n,2);assert.equal(warnings.length,1);assert.match(warnings[0],/格式错误.*未执行.*尝试修正/);
   assert.equal(VFS.resolve(tree,['workspace','bad.txt']),null);
   assert.equal(out.newMessages[0].tool_calls[0].function.arguments,bad.function.arguments);
 });
@@ -78,7 +78,7 @@ test('game recovers a saved pending batch without repeating completed writes and
   assert.equal(VFS.resolve(s.tree,['workspace','bad.txt']),null);
   assert.equal(s.messages.find(m=>m.tool_calls).tool_calls[1].function.arguments,bad.function.arguments);
   const warning=Core.visibleEvents(s,'play').find(e=>e.code==='INVALID_TOOL_ARGUMENTS');
-  assert.ok(warning);assert.match(warning.content,/可能.*模型.*服务/);
+  assert.ok(warning);assert.match(warning.content,/格式错误.*未执行.*尝试修正/);
   assert.doesNotMatch(warning.content,/unfinished|bad.txt/);
 });
 

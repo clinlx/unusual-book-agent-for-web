@@ -419,11 +419,15 @@ const Agent = (() => {
     const newMessages = [];
     let hadWrite = false;
     const warned = new Set(h.warnedToolCallIds || []);
+    let argumentWarningCount = h.argumentWarningCount || 0;
     const warn = async () => {
       const ids = msgs.flatMap(m => m.role === 'assistant' ? (m.tool_calls || []).filter(_Arguments.invalid).map(c => c.id) : []).filter(id => !warned.has(id));
       if (!ids.length) return;
       ids.forEach(id => warned.add(id));
-      if (h.onWarning) await h.onWarning(_Arguments.NOTICE, ids);
+      const previousCount = argumentWarningCount;
+      argumentWarningCount += ids.length;
+      if (h.onWarning) await h.onWarning(_Arguments.warningNotice(argumentWarningCount), ids,
+        { count: argumentWarningCount, show: previousCount === 0 || previousCount < 3 && argumentWarningCount >= 3 });
     };
     // 中止检查点：仅靠 fetch 的 signal 不够——工具循环里可能连续多次调用工具，
     // 每次请求之间也要能停下，否则用户点了中止仍会继续跑完剩余工具。
@@ -462,12 +466,12 @@ const Agent = (() => {
           const args = _Arguments.parse(tc.function?.arguments);
           out = executeTool(ctx, tc.function.name, args, {callId:tc.id});
         } catch (e) {
-          // 参数串本身就不是合法 JSON（多为超长内容被截断，或转义写坏）。
+          // 参数 JSON 错误属于可恢复的调用失败，不据此判断模型服务有故障。
           // 把长度报给模型：它能据此判断是不是太长了，改用分次写入。
           const raw = tc.function?.arguments || '';
-          out = { isWrite: false, result: '错误: 参数解析失败 (' + e.message + ')，收到 '
-            + String(raw).length + ' 字符。' + _Arguments.HINT + '本次调用未执行，请重新生成合法参数。若因内容过长被截断，请改为分多次调用（先写一部分，再用 apply_patch 续写）。' };
-          await warn();
+          out = { isWrite: false, result: '错误: ' + (e.code === 'INVALID_TOOL_ARGUMENTS' ? '参数解析失败' : '工具执行失败') + ' (' + e.message + ')，收到 '
+            + String(raw).length + ' 字符。' + (e.code === 'INVALID_TOOL_ARGUMENTS' ? _Arguments.HINT + '本次调用未执行，请重新生成合法参数。若因内容过长被截断，请改为分多次调用（先写一部分，再用 apply_patch 续写）。' : '请根据具体错误修正调用。') };
+          if (e.code === 'INVALID_TOOL_ARGUMENTS') await warn();
         }
         // ask_user 返回 pending（Promise），需等用户作答后才有结果
         if (out.pending) {
@@ -584,15 +588,16 @@ const Agent = (() => {
       }
       _thinkTiers.set(tierKey, tier);
       if (!settings.stream) {
-        const json = await waitWithAbort(resp.json(), callbacks && callbacks.signal);
+        const json = await waitWithAbort(_SSE.readJSON(resp), callbacks && callbacks.signal);
         _OutputLimit.assertComplete(json.choices?.[0]?.finish_reason, json.usage, outputLimit);
-        const m = json.choices[0].message;
+        const m = _SSE.checkMessage(json.choices[0]?.message);
         // 非流式：思考与正文在同一条 message 里一并返回
         return { content: m.content || '', reasoning: _SSE.readReasoning(m), tool_calls: m.tool_calls || [] };
       }
       const parser = _SSE.createParser();
       const acc = _SSE.createAccumulator();
-      let finishReason = null, usage;
+      let finishReason = null, usage, hasData = false;
+      if (!resp.body) throw _SSE.protocolError('模型未返回流式响应体');
       const reader = resp.body.getReader();
       const dec = new TextDecoder();
       const sig = callbacks && callbacks.signal;
@@ -605,30 +610,31 @@ const Agent = (() => {
             cancelReader();
             throw abortError();
           }
-          const { done, value } = await waitWithAbort(reader.read(), sig);
+          const { done, value } = await waitWithAbort(reader.read().catch(error => { throw _SSE.streamError(error); }), sig);
           if (sig?.aborted) throw abortError();
           for (const data of parser.push(done ? dec.decode() + '\n\n' : dec.decode(value, { stream: true }))) {
-            try {
-              const json = JSON.parse(data);
-              acc.add(json);
-              const delta = json.choices && json.choices[0] && json.choices[0].delta;
-              finishReason = json.choices?.[0]?.finish_reason || finishReason;
-              if (json.usage) usage = json.usage;
-              const think = _SSE.readReasoning(delta);
-              if (think && callbacks && callbacks.onReasoningDelta) callbacks.onReasoningDelta(think);
-              if (delta && delta.content && callbacks && callbacks.onDelta) callbacks.onDelta(delta.content);
-              // 工具参数是逐字流式吐出来的，长内容可能要十几秒。把中间快照抛给界面，
-              // 用户才能看到「正在写 xxx」而不是一段莫名其妙的空白。
-              if (delta && delta.tool_calls && callbacks && callbacks.onToolDelta)
-                callbacks.onToolDelta(acc.partial());
-            } catch (_) { /* 忽略无法解析的分片 */ }
+            const json = _SSE.parseData(data);
+            hasData = hasData || json.choices.length > 0;
+            acc.add(json);
+            const delta = json.choices && json.choices[0] && json.choices[0].delta;
+            finishReason = json.choices?.[0]?.finish_reason || finishReason;
+            if (json.usage) usage = json.usage;
+            const think = _SSE.readReasoning(delta);
+            if (think && callbacks && callbacks.onReasoningDelta) callbacks.onReasoningDelta(think);
+            if (delta && delta.content && callbacks && callbacks.onDelta) callbacks.onDelta(delta.content);
+            // 工具参数是逐字流式吐出来的，长内容可能要十几秒。把中间快照抛给界面，
+            // 用户才能看到「正在写 xxx」而不是一段莫名其妙的空白。
+            if (delta && delta.tool_calls && callbacks && callbacks.onToolDelta)
+              callbacks.onToolDelta(acc.partial());
           }
           if (done) break;
         }
+        if (!hasData) throw _SSE.protocolError('模型返回了空响应');
         _OutputLimit.assertComplete(finishReason, usage, outputLimit);
         return acc.result();
       } finally {
         sig?.removeEventListener('abort', cancelReader);
+        try { await reader.cancel(); } catch (_) { /* 保留原始响应错误 */ }
         reader.releaseLock();
       }
     };

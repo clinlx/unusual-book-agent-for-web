@@ -4,7 +4,7 @@ const SSE = (() => {
     let buf = '';
     return {
       push(chunk) {
-        buf += chunk;
+        buf = (buf + chunk).replace(/\r\n/g, '\n');
         const out = [];
         let idx;
         while ((idx = buf.indexOf('\n\n')) !== -1) {
@@ -12,7 +12,7 @@ const SSE = (() => {
           buf = buf.slice(idx + 2);
           for (const line of block.split('\n')) {
             const m = line.match(/^data:\s?(.*)$/);
-            if (m && m[1] !== '[DONE]') out.push(m[1]);
+            if (m && m[1].trim() && m[1].trim() !== '[DONE]') out.push(m[1]);
           }
         }
         return out;
@@ -74,6 +74,59 @@ const SSE = (() => {
     return null;
   }
 
+
+  const object = value => !!value && typeof value === 'object' && !Array.isArray(value);
+  function protocolError(detail) {
+    return Object.assign(new Error('模型响应协议异常：' + detail + '。已停止处理本次响应，未执行其中的工具调用。请重试；若反复出现，请检查模型服务的工具调用格式或更换模型。'), { code: 'MODEL_PROTOCOL_ERROR' });
+  }
+  function checkResponse(json) {
+    if (!object(json)) throw protocolError('响应必须是 JSON 对象');
+    if (json.error) throw Object.assign(new Error('模型服务返回错误：' + (json.error.message || '未知错误')), { code: 'MODEL_RESPONSE_ERROR' });
+    if (!Array.isArray(json.choices)) throw protocolError('响应缺少 choices 数组');
+    if (json.choices.some(choice => !object(choice))) throw protocolError('choices 包含无效条目');
+    return json;
+  }
+  function parseData(data) {
+    let json;
+    try { json = JSON.parse(data); }
+    catch (_) { throw protocolError('SSE 数据不是合法 JSON'); }
+    return checkResponse(json);
+  }
+  async function readJSON(response) {
+    let json;
+    try { json = await response.json(); }
+    catch (error) {
+      if (error instanceof SyntaxError) throw protocolError('响应体不是合法 JSON');
+      throw error;
+    }
+    return checkResponse(json);
+  }
+  function checkMessage(message, partial = false) {
+    if (!object(message)) throw protocolError(partial ? 'delta 必须是对象' : '响应缺少有效 message');
+    if (message.content != null && typeof message.content !== 'string') throw protocolError('content 必须是字符串或 null');
+    if (message.tool_calls == null) return message;
+    if (!Array.isArray(message.tool_calls)) throw protocolError('tool_calls 必须是数组');
+    for (const call of message.tool_calls) {
+      if (!object(call)) throw protocolError('工具调用必须是对象');
+      if (call.type != null && call.type !== 'function') throw protocolError('工具调用 type 必须是 function');
+      if (partial && call.index != null && (!Number.isSafeInteger(call.index) || call.index < 0)) throw protocolError('工具分片 index 必须是非负整数');
+      if (call.id != null && typeof call.id !== 'string') throw protocolError('工具调用 id 必须是字符串');
+      if (partial && call.function == null) continue;
+      if (!object(call.function)) throw protocolError('工具调用缺少 function 对象');
+      const fn = call.function;
+      if (fn.name != null && typeof fn.name !== 'string' || !partial && (typeof fn.name !== 'string' || !fn.name.trim()))
+        throw protocolError('工具调用缺少有效函数名');
+      // JSON 字符串内部的语法错误留给工具回执处理，不能与响应结构损坏混为一谈。
+      if (Object.hasOwn(fn, 'arguments') && typeof fn.arguments !== 'string') throw protocolError('function.arguments 必须是 JSON 字符串');
+      if (!partial && typeof fn.arguments !== 'string') throw protocolError('工具调用缺少 arguments 字符串');
+    }
+    return message;
+  }
+  function streamError(error) {
+    if (error?.name === 'AbortError') return error;
+    return Object.assign(new Error('模型响应流读取失败，已停止处理本次响应，未执行其中的工具调用。请检查连接后重试。'), { code: 'MODEL_STREAM_ERROR', cause: error });
+  }
+
   function createAccumulator() {
     let content = '', reasoning = '';
     const calls = {}; 
@@ -86,8 +139,13 @@ const SSE = (() => {
     }));
     return {
       add(json) {
-        const delta = json.choices && json.choices[0] && json.choices[0].delta;
-        if (!delta) return;
+        checkResponse(json);
+        const delta = json.choices[0]?.delta;
+        if (delta == null) {
+          if (json.choices[0]?.message != null) throw protocolError('流式响应包含 message 而非 delta');
+          return;
+        }
+        checkMessage(delta, true);
         reasoning += readReasoning(delta);
         if (delta.content) content += delta.content;
         if (delta.tool_calls) for (const tc of delta.tool_calls) {
@@ -106,11 +164,11 @@ const SSE = (() => {
       },
       partial: snapshot,
       result() {
-        return { content, reasoning, tool_calls: snapshot() };
+        return checkMessage({ content, reasoning, tool_calls: snapshot() });
       },
     };
   }
 
-  return { createParser, createAccumulator, readReasoning, partialJsonString };
+  return { createParser, createAccumulator, readReasoning, partialJsonString, protocolError, parseData, readJSON, checkMessage, streamError };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = SSE;

@@ -2661,9 +2661,12 @@
           // 而不是盯着一个笼统的「处理中」等到结果出来才知道。
           onToolStart: tc => { S.activeTool = tc; renderActiveTool(); },
           warnedToolCallIds: sess.argumentWarnings || [],
-          onWarning: (message, ids) => {
+          argumentWarningCount: sess.argumentWarningTurn === writeGuardTurn ? sess.argumentWarningCount || 0 : 0,
+          onWarning: (message, ids, detail) => {
             sess.argumentWarnings = [...new Set([...(sess.argumentWarnings || []), ...ids])];
-            return pushSystemError(sess, message);
+            sess.argumentWarningTurn = writeGuardTurn;
+            sess.argumentWarningCount = detail.count;
+            return detail.show ? pushSystemError(sess, message) : saveSession(sess);
           },
           onToolEnd: (tc, res) => {
             S.activeTool = null;
@@ -2707,14 +2710,16 @@
         sess.messages.push(m);
         await saveSession(sess);
       } else {
+        // 响应格式/传输失败即使发生在“继续”时，也不误报为上下文不足。
+        const responseFailure = ['MODEL_PROTOCOL_ERROR', 'MODEL_STREAM_ERROR', 'MODEL_RESPONSE_ERROR'].includes(e.code);
         // 挂到状态上由 renderChat 渲染，否则 finally 的 renderChat() 会清掉直接 append 的卡片
-        if (ContextBudget.isLimitError(e) || e.code === 'OUTPUT_LIMIT' || resume) {
+        if (ContextBudget.isLimitError(e) || e.code === 'OUTPUT_LIMIT' || resume && !responseFailure) {
           sess.contextInterrupted = { userMsgId: [...sess.messages].reverse().find(m => m.role === 'user' && !m.displayOnly)?.msgId || sentUserId,
             message: e.message, kind: e.code === 'OUTPUT_LIMIT' ? 'output' : 'context', writeGuardTurn: sess.writeGuardTurn, at: Date.now() };
         }
         S.lastError = e.code === 'OUTPUT_LIMIT'
           ? { sessionId: sess.id, message: e.message, actionLabel: '调整最大输出', retry: openSettings }
-          : ContextBudget.isLimitError(e) || resume
+          : ContextBudget.isLimitError(e) || resume && !responseFailure
           ? { sessionId: sess.id, message: e.message.includes(ContextBudget.HINT) ? e.message : e.message + '\n' + ContextBudget.HINT,
             actionLabel: '压缩上下文', retry: () => ctxMenu() }
           : { sessionId: sess.id, message: e.message, retry: () => {

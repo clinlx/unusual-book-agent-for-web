@@ -1,7 +1,9 @@
 'use strict';
 const ToolArguments = (() => {
-  const HINT = '工具参数格式异常，可能与模型输出或模型服务兼容性有关；也可能是响应传输、处理异常。';
-  const NOTICE = HINT + '已隔离异常参数，正在尝试继续。若反复出现，请尝试更换模型或服务。';
+  const HINT = '工具参数不是合法的 JSON 对象。';
+  const NOTICE = '工具参数格式错误，本次异常调用未执行，已将具体错误反馈给 AI，正在尝试修正。';
+  const REPEATED_NOTICE = '本轮已多次出现工具参数格式错误，异常调用均未执行。AI 仍会收到具体错误并尝试修正；如持续发生，建议检查模型或服务的工具调用兼容性，或更换模型后重试。';
+  const warningNotice = count => count >= 3 ? REPEATED_NOTICE : NOTICE;
   const PLACEHOLDER = '[历史参数异常] 此调用的参数无法解析为 JSON 对象，发送时已用 {} 占位；占位内容不代表真实参数。执行状态以原始回执为准，不要重复已成功的操作；失败的调用请重新生成合法参数。\n原始回执：\n';
   function parse(raw) {
     try {
@@ -103,6 +105,6 @@ const ToolArguments = (() => {
     return out.map(m => m.role === 'tool' && changed.has(m.tool_call_id)
       ? { ...m, content: PLACEHOLDER + (typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? '')) } : m);
   }
-  return { HINT, NOTICE, parse, invalid, hasInvalid, project, validateFiles, pathSchema };
+  return { HINT, NOTICE, REPEATED_NOTICE, warningNotice, parse, invalid, hasInvalid, project, validateFiles, pathSchema };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = ToolArguments;
