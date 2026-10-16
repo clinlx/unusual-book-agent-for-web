@@ -593,16 +593,16 @@ const GameUI = (() => {
       'class="danger" title="清理旧工具历史并保留剧情与状态缓存；不可恢复，请先完成需要的回退"'+
       (s.running||s.rebuilding||s.switching?' disabled':''));
   }
-  async function confirmContextRebuild(info,confirm=appConfirm,backup=async()=>{}){
+  async function confirmContextRebuild(info,showConfirmation=appConfirm,backup=async()=>{}){
     for(;;){
-      const choice=await confirm('存档：'+info.name+'\n\n将清理 '+info.toolCalls+' 次工具调用、'+info.requests+' 条请求记录和 '+info.snapshots+' 个旧回退点，重建 AI 上下文。\n'+
+      const choice=await showConfirmation('存档：'+info.name+'\n\n将清理 '+info.toolCalls+' 次工具调用、'+info.requests+' 条请求记录和 '+info.snapshots+' 个旧回退点，重建 AI 上下文。\n'+
         '保留已发布剧情、玩家行动、检定事实、前情摘要和 NEXT_TURN_CACHE；旧文件读取依据会失效，之后需要重新读取。系统规则使用当前程序最新版。\n\n'+
         '世界文件保持现状。危险且不可逆。如需回退，请先回退，再重建。建议先导出完整存档备份。'+
         (info.unfinished?'\n\n当前回合尚未结束：未执行的旧调用将放弃；已发生的文件修改保留，尚未落盘的操作细节可能丢失。':''),
         {title:'重建上下文 · 清理范围',choices:[{value:'cancel',label:'取消'},{value:'backup',label:'导出备份'},{value:'continue',label:'继续确认'}]});
       if(choice==='backup'){await backup();continue;}
       if(choice!=='continue')return false;
-      return await confirm('确认永久清除旧工具历史和全部旧回退点？\n\n重建后无法通过回退恢复清理前的上下文。如需回退，应当现在取消并先完成回退。\n当前状态缓存 NEXT_TURN_CACHE、前情摘要和已发布剧情会保留。',
+      return await showConfirmation('确认永久清除旧工具历史和全部旧回退点？\n\n重建后无法通过回退恢复清理前的上下文。如需回退，应当现在取消并先完成回退。\n当前状态缓存 NEXT_TURN_CACHE、前情摘要和已发布剧情会保留。',
         {title:'最后确认：不可恢复',confirmLabel:'确认重建上下文',danger:true});
     }
   }
