@@ -4,6 +4,83 @@ const assert = require('node:assert/strict');
 const VFS = require('../../src/world-designer/vfs.js');
 const TempFiles = require('../../src/world-designer/temp-files.js');
 const Images = require('../../src/world-designer/images.js');
+const CardTools = require('../../src/world-designer/card-tools.js');
+const Parser = require('../../skills/tavern-card-loader/scripts/extract-card.js');
+const { card, png, metadata, chunk } = require('../integration/card-fixtures.cjs');
+
+test('PNG gate skips pixels and unrelated metadata without invoking the full parser', async t => {
+  let calls = 0;
+  t.mock.method(Parser, 'load', async () => { calls++; throw Error('ordinary image must not be parsed'); });
+  for (const bytes of [png(), png([chunk('IDAT', Buffer.from('chara\0ccv3\0{"name":"fake"}'))]),
+    png([metadata('tEXt', 'Software', 'ordinary image')]), png([metadata('tEXt', 'Comment', 'plain photo description')]),
+    Uint8Array.from([255,216,255])]) {
+    assert.equal(Parser.probePng(bytes), null);
+    assert.equal(await CardTools.inspectImage(bytes), null);
+  }
+  assert.equal(calls, 0);
+});
+
+test('PNG card detection validates text and compressed metadata, leaving ordinary comments as images', async () => {
+  const json = JSON.stringify(card());
+  for (const record of [metadata('tEXt', 'chara', Buffer.from(json).toString('base64')),
+    metadata('zTXt', 'chara', json), metadata('iTXt', 'ccv3', json, true), metadata('tEXt', 'Comment', json)]) {
+    assert.deepEqual(await Images.prepare(png([record]), { enabled: false }), { kind: 'tavern-card', status: 'confirmed' });
+  }
+  assert.equal(await CardTools.inspectImage(png([metadata('tEXt', 'Comment', 'plain photo description')])), null);
+});
+
+test('damaged card metadata and excessive chunk counts are quarantined instead of falling back to visual output', async t => {
+  const broken = png([metadata('tEXt', 'ccv3', 'broken payload')]);
+  assert.equal((await Images.prepare(broken)).status, 'suspected');
+  const corrupt = png([metadata('tEXt', 'chara', JSON.stringify(card()))]);
+  corrupt[47] ^= 1;
+  assert.equal((await Images.prepare(corrupt)).status, 'suspected');
+  const many = png(Array.from({ length: 8192 }, () => chunk('ruSt')));
+  t.mock.method(Parser, 'load', () => { throw Error('chunk limit must stop before full parsing'); });
+  assert.equal((await Images.prepare(many)).reason, 'chunk-limit');
+});
+
+test('intercepted cards preserve original bytes and emit only a file path and extraction hint', async () => {
+  const bytes = png([metadata('tEXt', 'chara', JSON.stringify(card()))]), tree = VFS.createTree();
+  const ref = Images.store(tree, '/tmp/tavern-cards/source.img', bytes, await Images.prepare(bytes));
+  assert.equal(ref.path, '/tmp/tavern-cards/source.png');
+  const node = Images.resolve(tree, ref.path);
+  assert.deepEqual(VFS.fileBytes(node), new Uint8Array(bytes));
+  assert.equal(node.image, undefined);
+  assert.equal(node.tmp.idleTurns, 0);
+  for (const enabled of [true, false]) {
+    const content = Images.messageContent({ content: '', msgId: 'card', attachments: [ref] }, tree, { enabled, activeId: 'card' });
+    assert.equal(typeof content, 'string');
+    assert.match(content, /疑似 PNG 角色卡文件/); assert.match(content, /parse_tavern_card/);
+    assert.ok(content.includes(ref.path)); assert.doesNotMatch(content, /base64|这是原卡素材|<script/);
+  }
+  const output = JSON.parse((await CardTools.parse(tree, { path: ref.path, raw_only: true })).result);
+  assert.equal(output.card_found, true);
+  VFS.deletePath(tree, ref.path);
+  assert.match(Images.messageContent({ attachments: [ref] }, tree), /过期/);
+});
+
+test('old visual previews are reclassified once, and mixed messages only send ordinary image pixels', async () => {
+  const tree = VFS.createTree(), bytes = png([metadata('tEXt', 'ccv3', JSON.stringify(card()))]);
+  VFS.writeFile(tree, '/tmp/old-card.png', Images.base64(bytes), { encoding: 'base64' });
+  Images.resolve(tree, '/tmp/old-card.png').image = { dataUrl: 'data:image/png;base64,OLD_CARD_COVER' };
+  const ref = { path: '/tmp/old-card.png' };
+  assert.equal(await Images.checkReference(tree, ref), true);
+  assert.equal(await Images.checkReference(tree, ref), false);
+  assert.equal(ref.kind, 'tavern-card');
+  const photo = Images.store(tree, '/tmp/photo.png', png(), { dataUrl: 'data:image/png;base64,PHOTO', cardCheckVersion: 1 });
+  const content = Images.messageContent({ msgId: 'mixed', attachments: [ref, photo] }, tree, { enabled: true, activeId: 'mixed' });
+  assert.equal(content.length, 2);
+  assert.equal(content[1].image_url.url, 'data:image/png;base64,PHOTO');
+  assert.doesNotMatch(JSON.stringify(content), /OLD_CARD_COVER/);
+});
+
+test('card inspection aborts propagate and never turn cancelled work into a suspicious file', async () => {
+  let checks = 0;
+  await assert.rejects(CardTools.inspectImage(png([metadata('zTXt', 'chara', JSON.stringify(card()))]), {
+    check: () => { if (++checks > 1) throw new DOMException('cancelled', 'AbortError'); },
+  }), { name: 'AbortError' });
+});
 
 test('tmp age survives serialization, reads reset it, workspace stays intact', () => {
   let tree = VFS.createTree();

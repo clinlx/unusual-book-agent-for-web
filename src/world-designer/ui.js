@@ -20,6 +20,7 @@
     repairSending: false,
     continuing: false,
     storageBusy: false,
+    checkingAttachments: false,
     activeTmpPaths: new Set(),  // 正在运行的轮次需要的临时文件，容量清理时暂时保留
     readState: new Map(),       // 写保护：规范路径 → 最近成功读写的内容指纹
     running: false,             // 本页正在跑 Agent 轮次
@@ -867,6 +868,8 @@
               onkeydown: chatInputKeydown,
               oninput: onChatInput,
               onpaste: onChatPaste,
+              ondragover: e => { if ([...e.dataTransfer.types].includes('Files')) e.preventDefault(); },
+              ondrop: onChatImageDrop,
               onblur: () => setTimeout(() => { if (!S.skillPopHover) hideSkillPop(); }, 120) }),
             el('button', { class: 'primary', id: 'sendBtn', title: '发送', onclick: sendOrAbort }, icon('send'))))),
       el('div', { id: 'splitR', class: 'splitter', title: '拖动调整宽度（双击复位）' }),
@@ -1252,6 +1255,7 @@
     const bubble = el('div', { class: 'bubble' });
     const images = (m.attachments || []).map(ref => {
       const node = Images.resolve(S.tree, ref.path);
+      if (Images.isCardRef(ref, S.tree)) return el('div', { class: 'expired-image', text: 'PNG 角色卡文件 · ' + ref.path + (node ? '' : '（已过期或已删除）') });
       return node?.image ? el('img', { class: 'message-image', src: node.image.dataUrl, alt: '用户发送的图片', title: ref.path })
         : el('div', { class: 'expired-image', text: (node ? '图片暂时无法预览 · ' : '图片已过期或已删除 · ') + (ref.name || ref.path.split('/').pop()) });
     });
@@ -1906,10 +1910,14 @@
     if (ref) {
       card.dataset.path = ref.path; card.dataset.ref = JSON.stringify(ref);
       const node = Images.resolve(S.tree, ref.path);
-      if (node && node.image) card.append(el('img', { src: node.image.dataUrl, alt: '待发送图片' }));
+      if (Images.isCardRef(ref, S.tree)) {
+        card.classList.add('file-attachment');
+        card.append(el('span', { text: (node ? 'PNG 角色卡文件 · ' : '角色卡文件已过期 · ') + (ref.name || ref.path), title: ref.path }));
+      } else if (node && node.image) card.append(el('img', { src: node.image.dataUrl, alt: '待发送图片' }));
       else card.append(el('span', { text: node ? '图片无法预览，请转换格式后重新粘贴' : '图片已过期，请移除后重新粘贴' }));
     } else { card.dataset.pending = '1'; card.append(el('span', { text: '正在处理图片…' })); }
-    card.append(el('button', { type: 'button', text: '×', title: '移除图片', 'aria-label': '移除图片',
+    const removeLabel = ref && Images.isCardRef(ref, S.tree) ? '移除附件' : '移除图片';
+    card.append(el('button', { type: 'button', text: '×', title: removeLabel, 'aria-label': removeLabel,
       onclick: e => { e.preventDefault(); card.cancelled = true; card.remove(); scheduleDraftSave(); } }));
     return card;
   }
@@ -1994,9 +2002,19 @@
     if (input.contentEditable === 'false') return;
     const t = clipboard.getData('text/plain');
     if (t) document.execCommand('insertText', false, t);
-    const files = [...(clipboard.items || [])].filter(i => i.kind === 'file' && i.type.startsWith('image/'))
-      .map(i => i.getAsFile()).filter(Boolean);
-    if (files.length && !S.settings.imageSending) { toast('请先在设置中将“视觉模型”设为“是”'); return; }
+    const files = [...(clipboard.items || [])].filter(i => i.kind === 'file').map(i => i.getAsFile()).filter(chatImageFile);
+    await attachChatImages(files, input);
+  }
+  function chatImageFile(file) {
+    return file && (file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(file.name));
+  }
+  async function onChatImageDrop(e) {
+    const files = [...(e.dataTransfer.files || [])].filter(chatImageFile);
+    if (!files.length) return;
+    e.preventDefault(); e.stopPropagation();
+    if (e.currentTarget.contentEditable !== 'false') await attachChatImages(files, e.currentTarget);
+  }
+  async function attachChatImages(files, input) {
     const sess = cur.session(), projectId = S.projectId;
     const cards = files.map(() => { const card = imageAttachment(null); input.append(card); return card; });
     for (let i = 0; i < files.length; i++) {
@@ -2004,11 +2022,16 @@
       try {
         if (file.size > Images.MAX_INPUT_BYTES) throw new Error('图片超过本地处理上限 32 MiB');
         const bytes = new Uint8Array(await file.arrayBuffer());
-        const prepared = await Images.prepare(bytes);
+        const check = () => {
+          if (S.projectId !== projectId || !sess || card.cancelled || (!card.isConnected && cur.session() === sess))
+            throw new DOMException('附件处理已取消', 'AbortError');
+        };
+        const prepared = await Images.prepare(bytes, { enabled: S.settings.imageSending, check });
         if (S.projectId !== projectId || !sess || card.cancelled || (!card.isConnected && cur.session() === sess)) continue;
         if (lease.isHeldByOther(projectId)) throw new Error('项目正在其他窗口执行，请稍后重新粘贴');
         const ext = Images.detectMime(bytes).split('/')[1].replace('jpeg', 'jpg');
-        const ref = Images.store(S.tree, '/tmp/images/' + uid() + '.' + ext, bytes, prepared);
+        const folder = prepared.kind === 'tavern-card' ? '/tmp/tavern-cards/' : '/tmp/images/';
+        const ref = Images.store(S.tree, folder + uid() + '.' + ext, bytes, prepared);
         ref.name = file.name || ref.name;
         const currentRefs = new Set([...S.activeTmpPaths, ...inputImages(input).map(r => r.path), ref.path]);
         const cleanup = TempFiles.sweep(S.tree, { ...tmpOptions(), protect: currentRefs });
@@ -2020,9 +2043,10 @@
         if (cleanup.removed.length) renderChat();
         await saveTree();
         if (S.projectId !== projectId) continue;
+        if (ref.kind === 'tavern-card') { renderFileTree(); toast('PNG 角色卡已转存为文件：' + ref.path); }
         if (card.isConnected && cur.session() === sess) { card.replaceWith(imageAttachment(ref)); scheduleDraftSave(); }
         else if (!card.cancelled) { sess.draft = [...(sess.draft || []), { t: 'image', v: ref }]; await saveSession(sess); }
-      } catch (err) { toast('图片处理失败：' + err.message); }
+      } catch (err) { if (err.name !== 'AbortError') toast('附件处理失败：' + err.message); }
       finally { if (card.isConnected) card.remove(); }
     }
     scheduleDraftSave();
@@ -2229,7 +2253,14 @@
     if (cleanup.changed) await saveTree();
     const node = Images.resolve(S.tree, args.path);
     if (!node) throw new Error('图片已过期、已删除或不存在，请让用户重新提供: ' + args.path);
-    const image = !args.crop && node.image ? node.image : await Images.prepare(VFS.fileBytes(node), { crop: args.crop });
+    const projectId = S.projectId, tree = S.tree;
+    const check = () => { if (S.projectId !== projectId || S.tree !== tree) throw new DOMException('图片处理已取消', 'AbortError'); };
+    if (await Images.checkReference(tree, { path: args.path }, { check })) await saveTree();
+    check();
+    if (node.tavernCard) throw new Error('疑似 PNG 角色卡，请使用 parse_tavern_card 提取文件：' + args.path);
+    const image = !args.crop && node.image ? node.image : await Images.prepare(VFS.fileBytes(node), { crop: args.crop, check });
+    check();
+    if (image.kind === 'tavern-card') throw new Error('疑似 PNG 角色卡，请使用 parse_tavern_card 提取文件：' + args.path);
     if (!S.settings.imageSending) throw new Error('图片发送已关闭');
     TempFiles.touch(S.tree, args.path);
     if (args.path.startsWith('/tmp/')) S.activeTmpPaths.add(args.path);
@@ -2313,6 +2344,7 @@
     finally { S.continuing = false; renderChat(); }
   }
   async function send(repair = null, resume = false) {
+    if (S.checkingAttachments) return;
     if (S.continuing && !resume) return;
     if (S.storageBusy) return toast('正在清理项目数据，请稍后发送');
     if (S.repairSending && !repair) return;
@@ -2334,8 +2366,23 @@
     const images = resume ? (resumingUser?.attachments || []) : repair ? [] : inputImages(input);
     if (!resume && !repair && input.querySelector('.image-attachment[data-pending="1"]')) { toast('图片读取中，请稍候再发送'); return; }
     if ((!resume && !text && !images.length) || S.running) return;
-    if (!resume && images.length && !S.settings.imageSending) { toast('请将“视觉模型”设为“是”，或移除输入框中的图片'); return; }
-    if (!resume && images.some(ref => !Images.resolve(S.tree, ref.path)?.image)) { toast('图片已过期或无法预览，请移除后重新粘贴'); return; }
+    // Also inspect restored drafts and resumed messages that may contain an old visual preview.
+    if (images.length) {
+      const projectId = S.projectId, tree = S.tree;
+      const check = () => { if (S.projectId !== projectId || S.tree !== tree || cur.session() !== sess || S.running)
+        throw new DOMException('附件检查已取消', 'AbortError'); };
+      S.checkingAttachments = true;
+      try {
+        let changed = false;
+        for (const ref of images) changed = await Images.checkReference(tree, ref, { check }) || changed;
+        check();
+        if (changed) await saveTree();
+        check();
+      } catch (error) { if (error.name !== 'AbortError') toast('附件检查失败：' + error.message); return; }
+      finally { S.checkingAttachments = false; }
+    }
+    if (!resume && images.some(ref => !Images.isCardRef(ref, S.tree)) && !S.settings.imageSending) { toast('请将“视觉模型”设为“是”，或移除输入框中的图片'); return; }
+    if (!resume && images.some(ref => { const node = Images.resolve(S.tree, ref.path); return !node || (!Images.isCardRef(ref, S.tree) && !node.image); })) { toast('附件已过期或无法读取，请移除后重新提供'); return; }
     const chips = resume || repair ? [] : inputChips(input);
     const goalChip = chips.find(c => c.kind === 'feature' && c.name === 'goal');
     const skillChips = chips.filter(c => c.kind === 'skill');
@@ -2620,7 +2667,7 @@
             // 记录本轮读过的 /tmp 文件，用于刷新其 TTL
             try {
               const a = JSON.parse(tc.function.arguments || '{}');
-              if (['read_file', 'view_image', 'parse_document'].includes(tc.function.name) && !/^错误/.test(res.result) && a.path && String(a.path).startsWith('/tmp/')) readPaths.add(a.path);
+              if (['read_file', 'view_image', 'parse_document', 'parse_tavern_card'].includes(tc.function.name) && !/^错误/.test(res.result) && a.path && String(a.path).startsWith('/tmp/')) readPaths.add(a.path);
               if(tc.function.name==='read_multiple_files'&&!/^错误/.test(res.result))for(const item of JSON.parse(res.result))if(!item.error&&String(item.path).startsWith('/tmp/'))readPaths.add(item.path);
             } catch (_) { /* 参数非法时忽略 */ }
             recordPendingChange(res, turnNo);

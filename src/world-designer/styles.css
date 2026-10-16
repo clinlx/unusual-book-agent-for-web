@@ -1180,6 +1180,7 @@ textarea.sys-prompt {
 .skill-card.reading .sc-icon { color: var(--fg-2); }
 .image-attachment { display:inline-flex; position:relative; vertical-align:middle; margin:4px; padding:4px; border:1px solid var(--sep); border-radius:8px; }
 .image-attachment img { max-width:140px; max-height:100px; object-fit:contain; border-radius:4px; }
+.image-attachment.file-attachment { max-width:100%; padding:7px 24px 7px 9px; font-size:12px; overflow-wrap:anywhere; }
 .image-attachment button { position:absolute; top:0; right:0; padding:0 5px; background:var(--bg); border-radius:50%; }
 .message-image { display:block; max-width:min(100%, 360px); max-height:320px; object-fit:contain; margin-top:8px; border-radius:8px; }
 .expired-image { margin-top:8px; padding:8px; border:1px dashed var(--sep); border-radius:8px; font-size:12px; color:var(--fg-2); }

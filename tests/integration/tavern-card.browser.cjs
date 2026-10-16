@@ -55,10 +55,62 @@ const root = path.resolve(__dirname, '../..');
     await page.reload(); await ready(page);
     assert.equal(await page.evaluate(() => JSON.parse(VFS.readFile(__UI_STATE__.tree, '/workspace/解析材料/normalized-card.json', { cap: Infinity }).content).identity.name), '林青');
     assert.deepEqual(errors, []);
+    for (const imageSending of [false, true]) {
+      const pastedContext = await browser.newContext();
+      try {
+        const pasted = await pastedContext.newPage(), sent = [], pageErrors = [];
+        pasted.setDefaultTimeout(15000); pasted.on('pageerror', e => pageErrors.push(e.message));
+        let cardPath;
+        await pastedContext.route('https://**/*', route => {
+          if (!route.request().url().startsWith('https://card-paste.test/')) return route.abort();
+          const body = route.request().postDataJSON(); sent.push(body);
+          assert.ok(!body.messages.some(m => Array.isArray(m.content) && m.content.some(p => p.type === 'image_url')), 'card cover never enters multimodal requests');
+          if (!cardPath) {
+            const user = body.messages.findLast(m => m.role === 'user');
+            assert.equal(typeof user.content, 'string');
+            assert.match(user.content, /疑似 PNG 角色卡文件/); assert.match(user.content, /parse_tavern_card/);
+            cardPath = /"(\/tmp\/tavern-cards\/[^"\n]+\.png)"/.exec(user.content)?.[1];
+            assert.ok(cardPath); assert.ok(!user.content.includes('这是原卡素材'));
+          }
+          const attemptView = imageSending && sent.length === 1;
+          const parse = sent.length === (imageSending ? 2 : 1);
+          const message = attemptView || parse ? { role: 'assistant', content: '', tool_calls: [{
+            id: 'paste-' + sent.length, type: 'function', function: { name: attemptView ? 'view_image' : 'parse_tavern_card',
+              arguments: JSON.stringify(attemptView ? { path: cardPath } : { path: cardPath, output_dir: '/workspace/粘贴提取', raw_only: true }) },
+          }] } : { role: 'assistant', content: '已从临时文件提取原卡。' };
+          return route.fulfill({ json: { choices: [{ message }] } });
+        });
+        await pasted.goto(pathToFileURL(path.join(root, 'dist/designer.html')).href); await ready(pasted);
+        await pasted.evaluate(({ data, imageSending }) => {
+          Object.assign(__UI_STATE__.settings, { apiKey: 'test-only', baseUrl: 'https://card-paste.test/v1', stream: false, imageSending });
+          const clipboard = new DataTransfer();
+          clipboard.items.add(new File([Uint8Array.from(atob(data), c => c.charCodeAt(0))], '粘贴角色卡.png', { type: 'image/png' }));
+          document.querySelector('#chatInput').dispatchEvent(new ClipboardEvent('paste', { clipboardData: clipboard, bubbles: true, cancelable: true }));
+        }, { data: bytes, imageSending });
+        await pasted.locator('#chatInput .file-attachment[data-ref]').waitFor();
+        assert.equal(await pasted.locator('#chatInput .image-attachment img').count(), 0);
+        const source = await pasted.evaluate(() => {
+          const ref = JSON.parse(document.querySelector('#chatInput .file-attachment').dataset.ref);
+          const node = Images.resolve(__UI_STATE__.tree, ref.path);
+          return { ref, content: node.content, image: node.image, status: node.tavernCard.status };
+        });
+        assert.equal(source.content, bytes); assert.equal(source.image, undefined); assert.equal(source.status, 'confirmed');
+        assert.equal(source.ref.kind, 'tavern-card');
+        await pasted.locator('#sendBtn').click();
+        await pasted.waitForFunction(() => !__UI_STATE__.running && __UI_STATE__.sessions.find(s => s.id === __UI_STATE__.sessionId).messages.at(-1)?.content === '已从临时文件提取原卡。');
+        assert.equal(sent.length, imageSending ? 3 : 2);
+        if (imageSending) assert.match(sent[1].messages.find(m => m.tool_call_id === 'paste-1').content, /角色卡.*parse_tavern_card/);
+        const parsed = sent.at(-1).messages.find(m => m.tool_call_id === 'paste-' + (imageSending ? 2 : 1));
+        assert.equal(JSON.parse(parsed.content).card_found, true);
+        assert.deepEqual(await pasted.evaluate(() => JSON.parse(VFS.readFile(__UI_STATE__.tree, '/workspace/粘贴提取/raw-card.json', { cap: Infinity }).content)), card());
+        assert.deepEqual(pageErrors, []);
+      } finally { await pastedContext.close(); }
+    }
     for (const name of ['index', 'client']) {
       const html = fs.readFileSync(path.join(root, 'dist', name + '.html'), 'utf8');
-      assert.doesNotMatch(html, /parse_tavern_card|TavernCard|CardTools|tavern-card-loader/);
+      // Shared argument validation lists tool names; the parser and skill must stay designer-only.
+      assert.doesNotMatch(html, /TavernCard|CardTools|tavern-card-loader/);
     }
-    console.log('PASS: offline PNG metadata extraction through real designer tool loop with vision disabled; raw/settings preserved; reload and play-page isolation verified');
+    console.log('PASS: raw PNG card extraction; chat paste redirects to local files with vision on/off; view_image cannot leak the cover; reload and play-page isolation verified');
   } finally { await browser.close(); }
 })().catch(e => { console.error(e); process.exitCode = 1; });

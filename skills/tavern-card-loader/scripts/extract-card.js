@@ -7,6 +7,41 @@ const TavernCard = (() => {
   const text = x => x == null ? '' : typeof x === 'string' ? x.trim() : Array.isArray(x) ? x.map(text).filter(Boolean).join('\n') : typeof x === 'object' ? JSON.stringify(x, null, 2) : String(x);
   const plain = x => text(x).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   const KEYS = ['ccv3', 'chara', 'Comment', 'Description'];
+  const isPng = bytes => [137,80,78,71,13,10,26,10].every((b, i) => bytes[i] === b);
+  // Skip pixel payloads; only likely metadata candidates need the full bounded parser.
+  function probePng(bytes) {
+    if (!isPng(bytes)) return null;
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    let offset = 8, count = 0;
+    while (offset + 12 <= bytes.length) {
+      if (++count > 8192) return { reason: 'chunk-limit' };
+      const length = view.getUint32(offset), end = offset + 12 + length;
+      if (end > bytes.length) return null;
+      const type = String.fromCharCode(...bytes.subarray(offset + 4, offset + 8));
+      if (type === 'IEND') return null;
+      if (['tEXt', 'zTXt', 'iTXt'].includes(type)) {
+        const head = bytes.subarray(offset + 8, Math.min(offset + 8 + length, offset + 88)), nul = head.indexOf(0);
+        if (nul > 0 && nul < 80) {
+          const key = String.fromCharCode(...head.subarray(0, nul));
+          if (KEYS.includes(key)) {
+            if (type === 'tEXt' && ['Comment', 'Description'].includes(key)) {
+              const start = offset + 9 + nul;
+              const sample = String.fromCharCode(...bytes.subarray(start, Math.min(end - 4, start + 128)));
+              if (!sample.replace(/^\xEF\xBB\xBF/, '').trimStart().startsWith('{')) {
+                try {
+                  const decoded = fromBase64(sample.replace(/\s+/g, '').slice(0, 64));
+                  if (decoded[0] !== 0x78 && !String.fromCharCode(...decoded).replace(/^\xEF\xBB\xBF/, '').trimStart().startsWith('{')) { offset = end; continue; }
+                } catch (_) { offset = end; continue; }
+              }
+            }
+            return { key };
+          }
+        }
+      }
+      offset = end;
+    }
+    return null;
+  }
   const FIELDS = ['name', 'description', 'personality', 'scenario', 'first_mes', 'mes_example', 'creator_notes', 'system_prompt', 'post_history_instructions'];
   const LABELS = { world_rules: '世界规则', start_rules: '开局与初始道具', data_panel: '数据面板', encounter_rules: '遭遇规则', locations: '地点',
     runtime_protocol: '运行协议候选（须复核）', lore: '设定与剧情' };
@@ -130,7 +165,7 @@ const TavernCard = (() => {
     if (!(bytes instanceof Uint8Array)) bytes = new Uint8Array(bytes);
     if (bytes.length > MAX_INPUT_BYTES) throw Error('角色卡文件超过 32 MiB 上限');
     const check = options.check || (() => {}); check();
-    if (/\.png$/i.test(name)) return png(bytes, check);
+    if (/\.png$/i.test(name) || isPng(bytes)) return png(bytes, check);
     if (!/\.json$/i.test(name)) throw Error('角色卡解析仅支持 PNG 和 JSON；JPEG/WebP 不保证保留卡元数据');
     const raw = json(decode(bytes));
     if (!isCard(raw)) throw Error('JSON 不是可识别的角色卡；不会把普通配置当作解析成功');
@@ -221,6 +256,6 @@ const TavernCard = (() => {
         '\n\n工具只提取，不翻译。由 AI 根据 localize.md 维护译名、语气与文化事实，完成后再交接。\n' });
     return { normalized: n, files };
   }
-  return { MAX_INPUT_BYTES, MAX_TEXT_BYTES, MAX_METADATA_BYTES, load, normalize, packageFiles, crc32, inflate, isCard };
+  return { MAX_INPUT_BYTES, MAX_TEXT_BYTES, MAX_METADATA_BYTES, probePng, load, normalize, packageFiles, crc32, inflate, isCard };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = TavernCard;
