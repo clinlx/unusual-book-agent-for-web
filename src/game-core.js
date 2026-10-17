@@ -237,7 +237,7 @@ const GameCore = (() => {
     if(snap.slotControlState)s.slotControlState=copy(snap.slotControlState);else delete s.slotControlState;
     s.draft=input?.text??(snap.draftRound==null||snap.draftRound===snap.round+1?snap.draft||'':'');s.draftRound=snap.round+1;inputs.advance(s);
     if(input?.draftState)Object.assign(s,input.draftState);
-    s.contextFromRound=snap.contextFromRound;s.lastChanges=copy(snap.lastChanges);s.activeRound=null;s.error=null;
+    s.contextFromRound=snap.contextFromRound;s.lastChanges=copy(snap.lastChanges);s.activeRound=null;s.error=null;delete s.pendingManualDice;
     const previous=s.snapshots.at(-1);
     if(previous&&!previous.tree){previous.tree=restoreTreeDelta(s.tree,previous.reverseDelta);delete previous.reverseDelta;}
     s.slots=snap.slots||s.slots;s.actorId=snap.actorId||s.actorId;slots.ensure(s);s.playerPath=validateTree(s.tree,snap.playerPath||s.playerPath);s.updatedAt=Date.now();
@@ -614,9 +614,19 @@ const GameCore = (() => {
     delete s.pendingManualDice;s.status='interrupted';s.error=null;s.updatedAt=Date.now();return out;
   }
   function repairManualDiceEvents(s){
+    let changed=false;
+    const pending=s.pendingManualDice;
+    if(pending){
+      const call=s.messages?.some(m=>m.role==='assistant'&&m.round===pending.round&&m.tool_calls?.some(tc=>tc.id===pending.callId&&tc.function?.name==='roll_dice'));
+      const event=s.events?.some(e=>e.id===pending.eventId&&e.type==='dice'&&e.round===pending.round&&e.callId===pending.callId&&e.pending===true);
+      const resolved=s.messages?.some(m=>m.role==='tool'&&m.round===pending.round&&m.tool_call_id===pending.callId);
+      // Rollback in older saves could leave a marker after removing its call and event.
+      if(!s.activeRound||s.activeRound.complete||pending.round!==s.activeRound.number||resolved||(!call&&!event)){
+        delete s.pendingManualDice;changed=true;
+      }
+    }
     const currentPending=s.pendingManualDice?.eventId||null,tools=new Map();
     for(const e of s.events||[])if(e?.type==='tool'&&e.name==='roll_dice'&&e.success!==false&&e.callId)tools.set(e.callId,e);
-    let changed=false;
     for(const e of s.events||[]){
       if(e?.type!=='dice'||e.pending!==true||!e.callId||e.id===currentPending)continue;
       const tool=tools.get(e.callId),result=tool?.result;
@@ -831,7 +841,8 @@ const GameCore = (() => {
       return false;
     }
     try{
-      abort();if(preparePresetOpening(s)||(opts.openingPreload!==false&&prepareOpeningReads(s)))await step();
+      abort();if(repairManualDiceEvents(s))await step();
+      if(preparePresetOpening(s)||(opts.openingPreload!==false&&prepareOpeningReads(s)))await step();
       const pending=s.messages.filter(m=>m.role==='assistant'&&m.tool_calls&&m.round===s.activeRound.number);
       for(const m of pending)if(await completeBatch(m))return;
       if(s.activeRound.complete){s.status=s.cache.game_over===true?'ended':'waiting';await step();return;}
