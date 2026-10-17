@@ -200,6 +200,12 @@
 
 .topbar .home-join-button,.topbar .page-switch{display:inline-flex;align-items:center;justify-content:center;height:34px;padding:0 10px;font:12px/1 var(--sans)}#home-join-form input{display:block;width:100%;margin:8px 0 12px}#home-join-form .muted{font-size:12px}#home-join-form [hidden]{display:none}
 @media(max-width:768px){.topbar .home-join-button,.topbar .page-switch{height:30px;padding:0 8px;font-size:11px}}
+.home-tagline-short{display:none}
+@media(max-width:768px){
+  .home-tagline-full{display:none}.home-tagline-short{display:inline}
+  .topbar:not(.has-active-game) .home-navigation{width:auto;flex:0 0 auto;justify-content:flex-start}
+  .topbar:not(.has-active-game) nav{width:auto;max-width:100%;gap:6px;margin-left:auto}
+}
 
 .join-progress{display:flex;flex-direction:column;justify-content:center;align-items:center;min-height:250px}.join-progress p{color:#b8aa8b;font-size:13px;line-height:1.8}.join-progress-track{width:min(320px,80vw);height:4px;border-radius:2px;overflow:hidden;background:#b79b6228;margin:18px 0 24px}.join-progress-track span{display:block;width:40%;height:100%;background:var(--gold);animation:join-progress 1.5s ease-in-out infinite}@keyframes join-progress{from{transform:translateX(-100%)}to{transform:translateX(350%)}}
 .pending-actions{margin:16px 0;padding:10px 14px;border:1px dashed var(--rule);border-radius:6px}.pending-actions>small{color:var(--muted);font-size:11px}.pending-actions .player-action,.pending-actions .player-event{margin:10px 0}.submission-status{padding:7px 16px 0;color:var(--muted);font-size:11px}.connection-lamp[data-turn-state="waiting"] span{animation:turn-waiting 2s ease-in-out infinite}.connection-lamp[data-turn-state="thinking"] span{animation:turn-waiting 1s ease-in-out infinite}@keyframes turn-waiting{50%{opacity:.4;box-shadow:0 0 2px var(--lamp)}}
