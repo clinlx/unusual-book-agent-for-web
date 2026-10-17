@@ -1,6 +1,6 @@
 'use strict';
 const GameApp=(()=>{
-  const S={client:true,active:null,home:false,room:null,settings:{reverseSendNewline:false},mode:'play',running:false,saves:[],stream:{},error:null};
+  const S={client:true,active:null,home:false,room:null,settings:FrontendConfig.defaults('client'),mode:'play',running:false,saves:[],stream:{},error:null};
   const listeners=new Set(),pending=new Map(),recoveryRequests=new Set();let transport=null,memberId=null,stop=null,closedRoomId=null,bridgeSession=null,joinGeneration=0,cache=MultiplayerSync.createClient();
   const local=GameLocalInputs.create(localStorage);
   const emit=()=>{for(const fn of listeners)fn(S);};
@@ -129,7 +129,7 @@ const GameApp=(()=>{
     }catch(error){if(generation===joinGeneration){stopNetwork();S.joining=null;S.active=null;S.room=null;S.network={status:'disconnected',message:error.message,code:error.code};S.error=error.message;S.joinFailure={message:error.message,code:error.code};emit();}throw error;}
   }
   async function reconnectRoom(){if(!bridgeSession)throw Error('请重新粘贴邀请链接加入房间');await bridgeSession.reconnect();}
-  return {getState:()=>S,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},init:async()=>{try{S.settings={reverseSendNewline:JSON.parse(localStorage.getItem('trpg-client-settings')||'{}')?.reverseSendNewline===true};}catch(_){}},
+  return {getState:()=>S,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},init:async()=>{try{const saved=JSON.parse(localStorage.getItem('trpg-client-settings')||'{}');S.settings={...FrontendConfig.defaults('client'),...(typeof saved?.reverseSendNewline==='boolean'?{reverseSendNewline:saved.reverseSendNewline}:{})};}catch(_){}},
     connect:async(t,id)=>{stopNetwork();S.joinFailure=null;S.network=null;await attach(t,id);},joinRoom,reconnectRoom,receive,sync,
     preSubmit,send:(text,privateContent,options)=>submitInput(text,privateContent,options),cancelAction,profile:async actorId=>(await command('profile.request',{actorId})).profile,inventory:async actorId=>(await command('inventory.request',{actorId})).inventory,skip:(options={})=>submitInput('','',{draftState:GameInputs.draftState(S.active||{}),...options},true),requestRollback:()=>command('rollback.request',{targetRound:S.active.rollbackTargetRound??Math.max(0,S.active.round-1)}),roomCommand:command,
     player:()=>({info:S.active?.info||{},items:S.active?.items||[],name:S.active?.playerName}),exportView:()=>cache.getState()?.view,setSpectatorView:async view=>{await command('spectator.view',{view});await sync();},

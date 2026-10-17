@@ -1,6 +1,7 @@
 'use strict';
 const OutputLimit=(()=>{
-  const DEFAULT_TOKENS=16384;
+  const config=typeof module!=='undefined'&&module.exports?require('../frontend-config'):FrontendConfig;
+  const DEFAULT_TOKENS=config.common.maxOutputTokens;
   function tokens(value){
     if(value==null||String(value).trim()==='')return DEFAULT_TOKENS;
     const n=Number(value);

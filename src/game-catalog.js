@@ -3,7 +3,8 @@ const GameCatalog=(()=>{
   const zip=typeof module!=='undefined'&&module.exports?require('./zip.js'):ZIP;
   const MAX_BYTES=100*1024*1024;
   const MAX_COVER_BYTES=8*1024*1024;
-  const DEFAULT_SOURCE='./modules.json';
+  const config=typeof module!=='undefined'&&module.exports?require('./frontend-config'):FrontendConfig;
+  const DEFAULT_SOURCE=config.links.worldCatalog;
   class DownloadError extends Error {constructor(code,message){super(message);this.name='DownloadError';this.code=code;}}
   const failure=(code,message)=>new DownloadError(code,message);
   function link(value){

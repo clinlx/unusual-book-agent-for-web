@@ -5,6 +5,7 @@ const GameTransport=(()=>{
   const outputLimit=typeof module!=='undefined'&&module.exports?require('./shared/output-limit.js'):OutputLimit;
   const toolArguments=typeof module!=='undefined'&&module.exports?require('./shared/tool-arguments.js'):ToolArguments;
   const core=typeof module!=='undefined'&&module.exports?require('./game-core.js'):GameCore;
+  const defaults=typeof module!=='undefined'&&module.exports?require('./frontend-config').game:FrontendConfig.game;
   const tiers=new Map();
   const object=x=>!!x&&typeof x==='object'&&!Array.isArray(x);
   function customBody(settings){
@@ -37,10 +38,10 @@ const GameTransport=(()=>{
     return cap-outputReservation(body)-core.estimate(body.tools||[]);
   }
   function inputBudget(settings,tools=[]){
-    return bodyBudget(settings,mergeBody({tools,max_tokens:settings.maxOutputTokens||16384},customBody(settings)));
+    return bodyBudget(settings,mergeBody({tools,max_tokens:settings.maxOutputTokens||defaults.maxOutputTokens},customBody(settings)));
   }
   function budgetDetails(settings,tools,input){
-    const body=mergeBody({tools,max_tokens:settings.maxOutputTokens||16384},customBody(settings));
+    const body=mergeBody({tools,max_tokens:settings.maxOutputTokens||defaults.maxOutputTokens},customBody(settings));
     const available=bodyBudget(settings,body),output=outputReservation(body),toolTokens=core.estimate(body.tools||[]);
     if(body.messages)input=core.estimate(body.messages);
     return {input,tools:toolTokens,output,available,limit:settings.maxContextK==null?Infinity:Number(settings.maxContextK)*1000,total:input+toolTokens+output};
@@ -60,18 +61,18 @@ const GameTransport=(()=>{
       const ctrl=new AbortController();
       const cancel=()=>ctrl.abort(hooks.signal?.reason);hooks.signal?.addEventListener('abort',cancel,{once:true});
       if(hooks.signal?.aborted)cancel();
-      const timeoutMs=Math.max(1,settings.httpTimeoutSeconds||180)*1000;
+      const timeoutMs=Math.max(1,settings.httpTimeoutSeconds||defaults.httpTimeoutSeconds)*1000;
       let timer;
       const armTimeout=()=>{clearTimeout(timer);timer=setTimeout(()=>ctrl.abort(Error('模型请求超时，请重试本回合')),timeoutMs);};
       armTimeout();
       try{
         let resp,responseStreams=!!settings.stream,outputCap;
         for(let attempt=0;;){
-          let body={model:settings.model,messages,stream:!!settings.stream,max_tokens:settings.maxOutputTokens||16384};
+          let body={model:settings.model,messages,stream:!!settings.stream,max_tokens:settings.maxOutputTokens||defaults.maxOutputTokens};
           if(tools?.length)body.tools=tools;
-          const effort=settings.reasoningEffort||'high';
+          const effort=settings.reasoningEffort||defaults.reasoningEffort;
           const deepseek=/deepseek/i.test(base+' '+settings.model);
-          if(!deepseek||effort==='none')body.temperature=Number(settings.temperature??0.7);
+          if(!deepseek||effort==='none')body.temperature=Number(settings.temperature??defaults.temperature);
           const topP=optionalNumber(settings.topP,0,1,'top_p'),frequencyPenalty=optionalNumber(settings.frequencyPenalty,-2,2,'frequency_penalty'),presencePenalty=optionalNumber(settings.presencePenalty,-2,2,'presence_penalty'),seed=optionalNumber(settings.seed,-2147483648,2147483647,'seed',{integer:true});
           if(topP!==null)body.top_p=topP;if(frequencyPenalty!==null)body.frequency_penalty=frequencyPenalty;if(presencePenalty!==null)body.presence_penalty=presencePenalty;if(seed!==null)body.seed=seed;
           if(tier===0){if(deepseek){body.thinking={type:effort==='none'?'disabled':'enabled'};if(effort!=='none')body.reasoning_effort=effort==='max'?'max':'high';}else body.reasoning_effort=effort;}
@@ -90,7 +91,7 @@ const GameTransport=(()=>{
           if(/context_length_exceeded|maximum context length|context window|context length.{0,80}(exceed|limit|long)|上下文.{0,8}(超|满)/is.test(text))
             throw Object.assign(Error('API '+resp.status+'：'+text.slice(0,500)+'\n'+contextHint),{code:'CONTEXT_LIMIT',contextSource:Object.hasOwn(customBody(settings),'messages')?'custom':'provider'});
           if(tier===0&&[400,422].includes(resp.status)&&/reasoning|thinking/i.test(text)){tier=1;continue;}
-          if([429,500,502,503,504].includes(resp.status)&&attempt<(settings.maxRetries??2)){
+          if([429,500,502,503,504].includes(resp.status)&&attempt<(settings.maxRetries??defaults.maxRetries)){
             attempt++;await new Promise((resolve,reject)=>{const stop=()=>{clearTimeout(t);reject(Error('已中止请求'));};const t=setTimeout(()=>{ctrl.signal.removeEventListener('abort',stop);resolve();},Math.min(1000*attempt,3000));ctrl.signal.addEventListener('abort',stop,{once:true});});continue;
           }
           throw Error('API '+resp.status+'：'+text.slice(0,500));

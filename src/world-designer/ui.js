@@ -5208,7 +5208,7 @@
     const field = (labelText, inputEl, helpKey) => el('div', { class: 'row' },
       el('label', { text: labelText }), inputEl, helpKey ? helpBtn(helpKey) : null);
 
-    const baseUrl = el('input', { value: s.baseUrl, placeholder: 'https://api.deepseek.com/v1', 'aria-label': 'API Base URL' });
+    const baseUrl = el('input', { value: s.baseUrl, placeholder: DEFAULT_SETTINGS.baseUrl, 'aria-label': 'API Base URL' });
     const baseUrlWrap = el('div', { class: 'api-base-setting' }, baseUrl);
     const apiKey = el('input', { value: s.apiKey, type: 'password' });
     // 模型：可输入 + 可从 /models 拉取后下拉选择
@@ -5337,7 +5337,7 @@
     const apiHelp = el('div', { id: 'api-options-help', class: 'api-options-help', hidden: true },
       el('p', { text: 'API 地址可填写基础地址（如 https://api.example.com/v1），也可填写完整的 /chat/completions 地址。模型请求、测试连接和模型列表都会自动处理路径。' }),
       el('p', { text: '温度控制输出的随机性，数值越低越稳定；思考强度控制模型推理投入，是否支持以及实际效果取决于服务商和模型。' }),
-      el('p', { text: '最大输出默认 16384 tokens，普通对话与上下文压缩共用此设置。它限制单次模型输出；部分模型的思考也占用该额度。摘要篇幅由压缩提示词单独控制。' }),
+      el('p', { text: `最大输出默认 ${DEFAULT_SETTINGS.maxOutputTokens} tokens，普通对话与上下文压缩共用此设置。它限制单次模型输出；部分模型的思考也占用该额度。摘要篇幅由压缩提示词单独控制。` }),
       el('p', { text: '流式输出会逐步接收正文、思考过程和工具调用；视觉模型设为“是”时可发送图片，需要接口与模型支持图片输入。' }),
       el('p', { text: '测试连接会使用当前表单中的地址、API Key 和模型发送一条简短消息。参数修改后请点击“保存”。' }));
     const apiHelpButton = el('button', { class: 'help-btn settings-info-button', type: 'button', text: 'i',
@@ -5481,7 +5481,7 @@
     ov.append(el('div', { class: 'modal' },
       el('h3', { text: '设置' }),
       el('div', { class: 'settings-project' },
-        el('a', { class: 'github-link', href: 'https://github.com/clinlx/unusual-book-agent-for-web', target: '_blank', rel: 'noopener noreferrer', title: '在 GitHub 查看项目', 'aria-label': '在 GitHub 查看异闻手记项目' }, icon('github'), el('span', { text: 'GitHub' }))),
+        el('a', { class: 'github-link', href: FrontendConfig.links.github, target: '_blank', rel: 'noopener noreferrer', title: '在 GitHub 查看项目', 'aria-label': '在 GitHub 查看异闻手记项目' }, icon('github'), el('span', { text: 'GitHub' }))),
       apiHeading, apiHelp,
       field('API Base URL', baseUrlWrap), field('API Key', apiKey), field('模型', modelWrap),
       field('温度', temp), field('思考强度', effortWrap), field('流式输出', stream),

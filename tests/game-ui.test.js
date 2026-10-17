@@ -2,10 +2,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-function ui() { const ctx = vm.createContext({}); vm.runInContext(fs.readFileSync('src/game-ui.js','utf8') + '\nthis.api = GameUI;',ctx); return ctx.api; }
+function ui() { const ctx = vm.createContext({FrontendConfig:require('../src/frontend-config'),}); vm.runInContext(fs.readFileSync('src/game-ui.js','utf8') + '\nthis.api = GameUI;',ctx); return ctx.api; }
 
 test('hidden composer uses private styling and placeholders, a public disguise and grouped controls',()=>{
- const ctx=vm.createContext({GameInputs:require('../src/game-input-history'),SendShortcut:require('../src/shared/send-shortcut')});
+ const ctx=vm.createContext({FrontendConfig:require('../src/frontend-config'),GameInputs:require('../src/game-input-history'),SendShortcut:require('../src/shared/send-shortcut')});
  vm.runInContext(fs.readFileSync('src/game-ui.js','utf8')+'\nthis.api=GameUI;',ctx);
  const s={client:true,active:{id:'save',actorId:'a',status:'waiting'},room:{online:true,status:'collecting',submitted:true},settings:{}};
  const html=ctx.api.composerHTML(s,{hiddenSend:true,disguiseSend:true,draft:'公开说辞',privateDraft:'秘密行动',flags:{alive:true,enabled:true}});
@@ -16,7 +16,7 @@ test('hidden composer uses private styling and placeholders, a public disguise a
  s.room.submitted=false;assert.match(ctx.api.composerHTML(s,{flags:{alive:true,enabled:true}}),/placeholder="写下你的行动与言语/);
 });
 test('round end uses a single timestamp without repeated round or world time',()=>{
- const ctx=vm.createContext({GamePresentation:require('../src/game-presentation')});vm.runInContext(fs.readFileSync('src/game-ui.js','utf8')+'\nthis.api=GameUI;',ctx);
+ const ctx=vm.createContext({FrontendConfig:require('../src/frontend-config'),GamePresentation:require('../src/game-presentation')});vm.runInContext(fs.readFileSync('src/game-ui.js','utf8')+'\nthis.api=GameUI;',ctx);
  const html=ctx.api.eventHTML({type:'round_end',round:12,worldTime:'深夜',at:Date.UTC(2026,8,21)},'play');
  assert.match(html,/回合结束：/);assert.match(html,/2026/);assert.doesNotMatch(html,/第|深夜|event-meta/);
 });

@@ -1,6 +1,7 @@
 'use strict';
 
 const GameCore = (() => {
+  const defaults = typeof module !== 'undefined' && module.exports ? require('./frontend-config').game : FrontendConfig.game;
   const vfs = typeof module !== 'undefined' && module.exports ? require('./vfs.js') : VFS;
   const data = typeof module !== 'undefined' && module.exports ? require('./game-data.js') : GameData;
   const fileReads = typeof module !== 'undefined' && module.exports ? require('./shared/file-read.js') : FileRead;
@@ -660,7 +661,7 @@ const GameCore = (() => {
       return [{role:'user',content:(preload?'[开局预读资料]':'[预设开场执行记录]')+'\n'+JSON.stringify(record)}];
     });
   }
-  function context(s,system,cap=240000,opts={}) {
+  function context(s,system,cap=defaults.maxContextK*1000,opts={}) {
     const triggerMessage=worldTriggers.prepare(s,estimate),protectedMessages=new WeakSet();
     const current=s.activeRound?.number||Math.max(1,s.round);
     let from=s.contextFromRound||1,compact=false;
@@ -836,8 +837,8 @@ const GameCore = (() => {
       if(s.activeRound.complete){s.status=s.cache.game_over===true?'ended':'waiting';await step();return;}
       if(s.activeRound.presetOpening)throw Error('预设第一回合未能完成，请检查工具回执并修复世界文件后继续或回退');
       if(opts.resumePrompt&&!(s.messages.at(-1)?.role==='user'&&s.messages.at(-1).content===opts.resumePrompt)){s.messages.push({role:'user',content:opts.resumePrompt,round:s.activeRound.number});await step();}
-      let requestCap=opts.cap??240000,recoveries=0;
-      for(let loop=0;loop<(opts.maxToolLoops||60);loop++){
+      let requestCap=opts.cap??defaults.maxContextK*1000,recoveries=0;
+      for(let loop=0;loop<(opts.maxToolLoops||defaults.maxToolLoops);loop++){
         let resp;
         for(;;){
           abort();const messages=context(s,opts.system||'',requestCap,opts);await step();

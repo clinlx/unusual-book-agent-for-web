@@ -1,7 +1,6 @@
 'use strict';
 const GameApp=(()=>{
-  const defaults={baseUrl:'https://api.deepseek.com/v1',apiKey:'',model:'deepseek-flash',stream:true,temperature:0.7,topP:'',frequencyPenalty:'',presencePenalty:'',seed:'',customRequestBody:'',maxContextK:240,maxOutputTokens:16384,
-    reasoningEffort:'high',maxToolLoops:60,httpTimeoutSeconds:180,maxRetries:2,worldListSource:'',bridgeUrl:'wss://mc.birdry.cn:8443/',manualDice:false,openingPreload:true,autoAdvanceUnconscious:true,reverseSendNewline:false,promptOverrides:{}};
+  const defaults=FrontendConfig.defaults('game');
   const S={saves:[],active:null,home:false,switching:false,settings:{...defaults},mode:'play',running:false,importing:null,stream:{content:'',reasoning:'',tools:[],story:'',storyPublished:0},error:null,storageWarning:null,usage:null};
   const db=GameStore.create();const listeners=new Set();let controller=null,initialized=false,storage=null,lease=null;
   let hostSession=null,syncHost=null,roomTransport=null,transportStop=null,publishedSave=null,localInputOwner='',bridgeSession=null,bridgeGeneration=0,invitationQueue=Promise.resolve(),savedRoom=null,bridgeClosing=Promise.resolve();

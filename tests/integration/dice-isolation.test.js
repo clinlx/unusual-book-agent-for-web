@@ -47,7 +47,7 @@ test('separate SAN and loss tool calls do not carry critical state into calculat
   const s=save();const check=Core.execute(s,'roll_dice',args({dice_dict:{SAN:'set-force:1'}}),'san');
   const loss=Core.execute(s,'roll_dice',args({description:'理智损失',calculate_only:true,dice_dict:{损失量:'set-force:1'},target_value:null,compare_mode:null}),'loss');
   assert.equal(check.ok,true);assert.equal(check.result.data.special,true);assert.equal(loss.ok,true);assert.equal(loss.result.data.special,false);assert.deepEqual(loss.result.data.criticalHints,[]);
-  const ctx=vm.createContext({});vm.runInContext(fs.readFileSync(require.resolve('../../src/game-ui'),'utf8')+'\nthis.api=GameUI;',ctx);
+  const ctx=vm.createContext({FrontendConfig:require('../../src/frontend-config'),});vm.runInContext(fs.readFileSync(require.resolve('../../src/game-ui'),'utf8')+'\nthis.api=GameUI;',ctx);
   const html=ctx.api.eventHTML(s.events.find(e=>e.type==='dice'&&e.callId==='loss'),'play');
   assert.match(html,/仅计算/);assert.doesNotMatch(html,/大成功|大失败|通过/);
 });
@@ -59,7 +59,7 @@ test('aggregate damage with different components still supports sum',()=>{
 
 test('independent UI shows row comparison modifiers only when they apply',()=>{
   const r=Core.dice(args({dice_dict:{甲:'1d100',乙:'1d100'},dice_combine_mode:'independent',left_modifiers:{修正:10}}),()=>.5,[1,42]).data;
-  const ctx=vm.createContext({});vm.runInContext(fs.readFileSync(require.resolve('../../src/game-ui'),'utf8')+'\nthis.api=GameUI;',ctx);
+  const ctx=vm.createContext({FrontendConfig:require('../../src/frontend-config'),});vm.runInContext(fs.readFileSync(require.resolve('../../src/game-ui'),'utf8')+'\nthis.api=GameUI;',ctx);
   const html=ctx.api.eventHTML({type:'dice',playerRelated:true,data:r},'play');
   assert.equal((html.match(/class="dice-modifier"/g)||[]).length,1);
   assert.match(html,/52/);assert.match(html,/dice-compare/);assert.match(html,/大成功/);

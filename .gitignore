@@ -3,6 +3,7 @@ dist/
 others/
 tests/*
 !tests/build.test.js
+!tests/frontend-config.test.js
 !tests/readme-protection.test.js
 !tests/game-core-review.test.js
 !tests/game-core.test.js

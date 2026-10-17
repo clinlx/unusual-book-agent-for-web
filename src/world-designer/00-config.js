@@ -328,40 +328,8 @@ const GLOSSARY = {
   },
 };
 
-const DEFAULT_SETTINGS = {
-  baseUrl: 'https://api.deepseek.com/v1',
-  apiKey: '',
-  model: 'deepseek-flash',
-  imageSending: true,
-  temperature: 0.7,
-  maxOutputTokens: 16384,
-  stream: true,
-  // 上下文超限时的处理方式：
-  //   disabled  拒绝发送，提示用户手动处理
-  //   sliding   滑动窗口——逐轮丢弃最早的对话，丢到刚好装得下为止
-  //   truncate  切断——一次性砍掉前一半轮次，之后很久不必再裁
-  //   compress  把早期对话交给模型总结成摘要（不可恢复）
-  // 前三种只影响发给模型的内容，本地对话记录完整保留。
-  contextOverflow: 'disabled',
-  maxContextK: 256,              // 128 | 256 | 512 | 1024 | 自定义正整数
-  contextLimitMode: 'preset',
-  editorPosition: 'right',       // right | center | left | float（窄屏忽略此项）
-  panes: null,                   // 桌面三栏宽度 [左, 右]（px），null = 用默认值
-  // 变更追踪范围：last=只显示最后一轮的改动（默认）；accumulate=累积到手动接受为止
-  changeScope: 'last',
-  // 思考过程（reasoning_content）的展示方式：
-  //   collapsed        思考时展开直播，正文一开始吐字（或开始调工具）立即折起（默认）
-  //   alwaysCollapsed  全程折叠，思考过程中也不展开，只留一行标题
-  //   expanded         始终展开
-  //   hidden           完全不显示（内容仍然保存，改回来就能看到）
-  reasoningDisplay: 'collapsed',
-  // 思考强度：none 关闭思考 / low / high（默认，界面显示「中」）/ xhigh / max。
-  // 发请求时会同时带上多家 API 的开关与强度字段，见 agent.js applyThinkingFields
-  reasoningEffort: 'high',
-  // 留空即沿用代码里的默认系统提示词
-  systemPromptOverride: '',
-  reverseSendNewline: false,
-};
+const DEFAULT_SETTINGS = (typeof module !== 'undefined' && module.exports
+  ? require('../frontend-config') : FrontendConfig).defaults('designer');
 
 const TOOL_DEFS = [
   { type: 'function', function: { name: 'parse_document', description: '解析 /workspace/ 或 /tmp/ 中的 PDF、DOCX，仅支持这两种文档。format=text 提取纯文字（不做 OCR），format=images 生成页图。output=return 直接返回文字或真实图片（图片需开启多模态）；output=file 保存文字到 output_path，或保存图片到 output_dir。PDF 页码从 1 开始；DOCX 图片按浏览器排版分页，可能与 Word 不同。每次默认最多 20 页文字或 5 页图片，按 next_page 继续。DOCX 文字不支持页码。解析文本超过 16000 字符时，output=return 会自动将完整文本保存到 /tmp/ 临时文件，并返回最多前 8000 字符预览（limit 较小时按 limit），以及路径、长度和 next_offset；预览从开头开始，其余内容使用 read_file 按返回的 next_offset 和 limit 分段读取。较短文字可用 offset/limit 直接返回。保存不覆盖已有文件。', parameters: { type: 'object', properties: {

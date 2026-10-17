@@ -6,11 +6,20 @@ function setup(t){
  const save={id:'game',name:'世界',slots:['a','b'].map(id=>({id,path:'/workspace/Player-'+id,kind:'player'})),tree,round:1,status:'waiting',events:[{type:'story',round:1,content:'start'}]};
  const room={roomId:'room',roundId:'r2',round:2,epoch:0,status:'collecting',members:{guest:{actorId:'a',bindingVersion:1}}},host=Sync.createHost({getSave:()=>save,getRoom:()=>room});
  const entries=new Map(),storage={getItem:k=>entries.get(k)??null,setItem:(k,v)=>entries.set(k,v)};
- const ctx=vm.createContext({GamePreSubmit:require('../../src/game-pre-submit'),GameData:require('../../src/game-data'),MultiplayerSync:Sync,GameLocalInputs:Local,GameInputs:Inputs,localStorage:storage,crypto:globalThis.crypto,setTimeout,clearTimeout});
+ const ctx=vm.createContext({FrontendConfig:require('../../src/frontend-config'),GamePreSubmit:require('../../src/game-pre-submit'),GameData:require('../../src/game-data'),MultiplayerSync:Sync,GameLocalInputs:Local,GameInputs:Inputs,localStorage:storage,crypto:globalThis.crypto,setTimeout,clearTimeout});
  vm.runInContext(fs.readFileSync(require.resolve('../../src/client-app'),'utf8'),ctx);const app=vm.runInContext('GameApp',ctx);t.after(()=>app.closeSave());
  let receiver,action;let syncs=0;const transport={onClient(id,fn){receiver=fn;return ()=>{};},async sendToHost(id,command){if(command.type==='sync.request'){syncs++;return receiver(await host.sync(id,command.payload));}if(command.type==='sync.ack')return;if(action)return action(command);}};
  return {ctx,app,save,room,host,storage,entries,transport,get syncs(){return syncs;},setAction:fn=>{action=fn;},receive:packet=>receiver(packet),scope:{gameId:'game',memberId:'guest',actorId:'a'}};
 }
+
+test('client uses configured input defaults while preserving an explicitly saved false',async t=>{
+ const f=setup(t),config=require('../../src/frontend-config');
+ f.ctx.FrontendConfig={...config,defaults:profile=>({...config.defaults(profile),reverseSendNewline:true})};
+ await f.app.init();assert.equal(f.app.getState().settings.reverseSendNewline,true);
+ f.storage.setItem('trpg-client-settings',JSON.stringify({reverseSendNewline:false,bridgeUrl:'wss://ignored.example/'}));
+ await f.app.init();assert.equal(f.app.getState().settings.reverseSendNewline,false);
+ assert.equal(f.app.getState().settings.bridgeUrl,undefined);
+});
 
 test('a submission immediately exposes scoped feedback and blocks resubmitting or skipping until retracted',async t=>{
  const f=setup(t);await f.app.connect(f.transport,'guest');let command;

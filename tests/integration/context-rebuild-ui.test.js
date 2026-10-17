@@ -4,7 +4,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
 function ui(){
-  const ctx=vm.createContext({});
+  const ctx=vm.createContext({FrontendConfig:require('../../src/frontend-config'),});
   vm.runInContext(fs.readFileSync('src/game-ui.js','utf8')+'\nthis.api=GameUI;',ctx);
   return ctx.api;
 }
