@@ -34,7 +34,7 @@ const FrontendConfig=(()=>{
     systemPromptOverride:'', // 留空使用设计师配置中的系统提示词。
   };
   // 加入者只保留本地输入与提醒偏好；中转地址由邀请信息提供。
-  const client={reverseSendNewline:common.reverseSendNewline,roundNotifications:false};
+  const client={reverseSendNewline:common.reverseSendNewline,roundNotifications:false,skipMultiplayerManualDice:false};
   const profiles={game,designer,client};
   function freeze(value){
     for(const child of Object.values(value))if(child&&typeof child==='object')freeze(child);

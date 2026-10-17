@@ -6,11 +6,52 @@ function setup(t){
  const save={id:'game',name:'世界',slots:['a','b'].map(id=>({id,path:'/workspace/Player-'+id,kind:'player'})),tree,round:1,status:'waiting',events:[{type:'story',round:1,content:'start'}]};
  const room={roomId:'room',roundId:'r2',round:2,epoch:0,status:'collecting',members:{guest:{actorId:'a',bindingVersion:1}}},host=Sync.createHost({getSave:()=>save,getRoom:()=>room});
  const entries=new Map(),storage={getItem:k=>entries.get(k)??null,setItem:(k,v)=>entries.set(k,v)};
- const ctx=vm.createContext({FrontendConfig:require('../../src/frontend-config'),GamePreSubmit:require('../../src/game-pre-submit'),GameData:require('../../src/game-data'),MultiplayerSync:Sync,GameLocalInputs:Local,GameInputs:Inputs,localStorage:storage,crypto:globalThis.crypto,setTimeout,clearTimeout});
+ const storageListeners=[];
+ const ctx=vm.createContext({addEventListener:(name,fn)=>{if(name==='storage')storageListeners.push(fn);},FrontendConfig:require('../../src/frontend-config'),GamePreSubmit:require('../../src/game-pre-submit'),GameData:require('../../src/game-data'),MultiplayerSync:Sync,GameLocalInputs:Local,GameInputs:Inputs,localStorage:storage,crypto:globalThis.crypto,setTimeout,clearTimeout});
  vm.runInContext(fs.readFileSync(require.resolve('../../src/client-app'),'utf8'),ctx);const app=vm.runInContext('GameApp',ctx);t.after(()=>app.closeSave());
  let receiver,action;let syncs=0;const transport={onClient(id,fn){receiver=fn;return ()=>{};},async sendToHost(id,command){if(command.type==='sync.request'){syncs++;return receiver(await host.sync(id,command.payload));}if(command.type==='sync.ack')return;if(action)return action(command);}};
- return {ctx,app,save,room,host,storage,entries,transport,get syncs(){return syncs;},setAction:fn=>{action=fn;},receive:packet=>receiver(packet),scope:{gameId:'game',memberId:'guest',actorId:'a'}};
+ return {ctx,app,save,room,host,storage,entries,transport,storageEvent:event=>storageListeners.forEach(fn=>fn(event)),get syncs(){return syncs;},setAction:fn=>{action=fn;},receive:packet=>receiver(packet),scope:{gameId:'game',memberId:'guest',actorId:'a'}};
 }
+
+test('dice opt-out shares origin storage, synchronizes once in flight, and restores on reconnect',async t=>{
+ const f=setup(t);await f.app.init();await f.app.connect(f.transport,'guest');
+ assert.equal(f.app.getState().settings.skipMultiplayerManualDice,false);
+ let commands=[];f.setAction(c=>{commands.push(c);});
+ await f.app.updateSettings({skipMultiplayerManualDice:true});
+ assert.equal(commands.length,1);assert.equal(commands[0].type,'dice.preference');assert.equal(commands[0].payload.skip,true);
+ await f.receive(await f.host.sync('guest'));await f.app.updateSettings({roundNotifications:true});
+ assert.equal(commands.length,1,'does not duplicate an unacknowledged request');
+ // Another tab can turn the preference off while its first request is in flight.
+ f.storage.setItem('trpg-client-settings',JSON.stringify({skipMultiplayerManualDice:false}));
+ f.storageEvent({key:'trpg-client-settings',storageArea:f.storage});
+ await f.receive({type:'command.result',requestId:commands[0].requestId,ok:true});
+ await new Promise(r=>setImmediate(r));assert.equal(commands.length,2);assert.equal(commands[1].payload.skip,false);
+ f.room.members.guest.skipManualDice=false;
+ await f.receive({type:'command.result',requestId:commands[1].requestId,ok:true});await new Promise(r=>setImmediate(r));
+ await f.app.closeSave();await f.app.updateSettings({skipMultiplayerManualDice:true});
+ f.setAction(c=>{commands.push(c);f.room.members.guest.skipManualDice=c.payload.skip;return f.receive({type:'command.result',requestId:c.requestId,ok:true});});
+ await f.app.connect(f.transport,'guest');await new Promise(r=>setImmediate(r));
+ assert.equal(commands.length,3);assert.equal(f.room.members.guest.skipManualDice,true);
+ assert.equal(JSON.parse(f.storage.getItem('trpg-client-settings')).skipMultiplayerManualDice,true);
+});
+
+test('dice preference survives hidden settings saves and spectators never send it',async t=>{
+ const f=setup(t);await f.app.init();await f.app.updateSettings({skipMultiplayerManualDice:true});
+ await f.app.updateSettings({reverseSendNewline:true});assert.equal(f.app.getState().settings.skipMultiplayerManualDice,true);
+ f.room.members.guest={actorId:null,role:'spectator',permission:'all',view:'all',bindingVersion:2};
+ let requests=0;f.setAction(()=>{requests++;});await f.app.connect(f.transport,'guest');
+ assert.equal(requests,0);
+});
+
+test('a stale-round dice preference fetches current scope before retrying',async t=>{
+ const f=setup(t);await f.app.init();await f.app.connect(f.transport,'guest');let requests=0;
+ f.setAction(c=>{
+   requests++;if(requests===1){f.room.roundId='new-round';return f.receive({type:'command.result',requestId:c.requestId,ok:false,error:'STALE_ROUND'});}
+   assert.equal(c.roundId,'new-round');f.room.members.guest.skipManualDice=true;return f.receive({type:'command.result',requestId:c.requestId,ok:true});
+ });
+ await f.app.updateSettings({skipMultiplayerManualDice:true});await new Promise(r=>setTimeout(r,20));
+ assert.equal(requests,2);assert.equal(f.app.getState().room.skipManualDice,true);
+});
 
 test('client uses configured input defaults while preserving an explicitly saved false',async t=>{
  const f=setup(t),config=require('../../src/frontend-config');

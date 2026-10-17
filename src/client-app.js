@@ -4,6 +4,32 @@ const GameApp=(()=>{
   const listeners=new Set(),pending=new Map(),recoveryRequests=new Set();let transport=null,memberId=null,stop=null,closedRoomId=null,bridgeSession=null,joinGeneration=0,cache=MultiplayerSync.createClient();
   const local=GameLocalInputs.create(localStorage);
   const emit=()=>{for(const fn of listeners)fn(S);};
+  const settingsKey='trpg-client-settings',settingNames=['reverseSendNewline','roundNotifications','skipMultiplayerManualDice'];
+  let settingsListening=false,dicePreferenceJob=null;
+  function loadSettings(){
+    let saved={};try{saved=JSON.parse(localStorage.getItem(settingsKey)||'{}');}catch(_){}
+    return {...FrontendConfig.defaults('client'),...Object.fromEntries(settingNames.filter(key=>typeof saved?.[key]==='boolean').map(key=>[key,saved[key]]))};
+  }
+  const diceScope=()=>JSON.stringify([S.active?.id,S.room?.roomId,S.room?.epoch,S.room?.memberId,S.room?.bindingVersion]);
+  function syncDicePreference(){
+    if(dicePreferenceJob||!transport||!S.room||S.room.online===false||S.network&&S.network.status!=='connected'||!S.active?.actorId||S.active.spectator)return;
+    const skip=S.settings.skipMultiplayerManualDice===true;
+    if(typeof S.room.skipManualDice!=='boolean'||S.room.skipManualDice===skip)return;
+    const job={scope:diceScope(),transport};dicePreferenceJob=job;
+    let confirmed=false,retryStale=false;
+    command('dice.preference',{skip}).then(()=>{
+      if(dicePreferenceJob!==job||job.scope!==diceScope()||job.transport!==transport)return;
+      S.room.skipManualDice=skip;S.dicePreferenceError=null;confirmed=true;emit();
+    }).catch(error=>{
+      if(dicePreferenceJob!==job||job.scope!==diceScope())return;
+      S.dicePreferenceError='掷骰偏好尚未同步，重新连接后将重试。';emit();
+      retryStale=['STALE_ROUND','STALE_BINDING'].includes(error.code);
+    }).finally(()=>{
+      if(dicePreferenceJob!==job)return;dicePreferenceJob=null;
+      if(retryStale)sync().catch(()=>{});
+      else if(confirmed||job.scope!==diceScope())syncDicePreference();
+    });
+  }
   const scope=()=>S.active?.actorId?{gameId:S.active.id,memberId,actorId:S.active.actorId}:null;
   const sameScope=(a,b)=>a&&b&&a.gameId===b.gameId&&a.memberId===b.memberId&&a.actorId===b.actorId;
   function inputState(value){return {inputHistory:value.inputHistory.map(r=>({...r,rolledBack:r.status==='retracted'})),draft:value.draft,privateDraft:value.privateDraft,hiddenSend:value.hiddenSend??!!value.privateDraft,disguiseSend:value.disguiseSend??!!(value.privateDraft&&value.draft),draftRound:value.draftRound,draftVersion:value.draftVersion};}
@@ -59,7 +85,7 @@ const GameApp=(()=>{
     S.room=view.room;S.running=view.room?.status==='executing';
     const feedback=GameInputs.currentFeedback(S);
     if(!feedback||feedback.status==='accepted'&&S.room.submitted||feedback.status==='cancelled'&&!S.room.submitted)S.actionFeedback=null;
-    S.error=null;preSubmit.tick();emit();
+    S.error=null;preSubmit.tick();emit();syncDicePreference();
     if(transport)await transport.sendToHost(memberId,{type:'sync.ack',payload:cache.request()});
   }
   async function command(type,payload={},options={}){
@@ -89,7 +115,7 @@ const GameApp=(()=>{
     }catch(error){if(error.code!=='LOCAL_INPUT_STALE')throw error;}
     refreshInputs(identity);emit();await sync();return result;
   }
-  function disconnect(){stop?.();stop=null;for(const p of pending.values()){clearTimeout(p.timer);p.reject(Error('连接已关闭，未确认的输入已保留'));}pending.clear();transport=null;}
+  function disconnect(){stop?.();stop=null;dicePreferenceJob=null;S.dicePreferenceError=null;for(const p of pending.values()){clearTimeout(p.timer);p.reject(Error('连接已关闭，未确认的输入已保留'));}pending.clear();transport=null;}
   function stageDraft(text,binding,options={}){if(!S.active||!GameInputs.setDraft(S.active,options.private?'':text,binding))return false;S.active.privateDraft=options.private?String(text):String(options.privateContent||'');S.active.hiddenSend=options.hiddenSend??!!S.active.privateDraft;S.active.disguiseSend=options.disguiseSend??!!(S.active.privateDraft&&S.active.draft);store();return true;}
   async function cancelAction(){
     const identity=scope(),r={...S.room},submittedRequestId=identity?local.load(identity).inputHistory.find(x=>x.roundId===r.roundId)?.requestId:undefined,result=await command('action.cancel',submittedRequestId?{submissionRequestId:submittedRequestId}:{});
@@ -129,12 +155,20 @@ const GameApp=(()=>{
     }catch(error){if(generation===joinGeneration){stopNetwork();S.joining=null;S.active=null;S.room=null;S.network={status:'disconnected',message:error.message,code:error.code};S.error=error.message;S.joinFailure={message:error.message,code:error.code};emit();}throw error;}
   }
   async function reconnectRoom(){if(!bridgeSession)throw Error('请重新粘贴邀请链接加入房间');await bridgeSession.reconnect();}
-  return {getState:()=>S,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},init:async()=>{try{const saved=JSON.parse(localStorage.getItem('trpg-client-settings')||'{}');S.settings={...FrontendConfig.defaults('client'),...Object.fromEntries(['reverseSendNewline','roundNotifications'].filter(key=>typeof saved?.[key]==='boolean').map(key=>[key,saved[key]]))};}catch(_){}},
+  return {getState:()=>S,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},init:async()=>{
+    S.settings=loadSettings();
+    if(!settingsListening&&typeof globalThis.addEventListener==='function'){
+      settingsListening=true;globalThis.addEventListener('storage',event=>{
+        if(event.storageArea&&event.storageArea!==localStorage||event.key!==null&&event.key!==settingsKey)return;
+        S.settings=loadSettings();emit();syncDicePreference();
+      });
+    }
+  },
     connect:async(t,id)=>{stopNetwork();S.joinFailure=null;S.network=null;await attach(t,id);},joinRoom,reconnectRoom,receive,sync,
     preSubmit,send:(text,privateContent,options)=>submitInput(text,privateContent,options),cancelAction,profile:async actorId=>(await command('profile.request',{actorId})).profile,inventory:async actorId=>(await command('inventory.request',{actorId})).inventory,skip:(options={})=>submitInput('','',{draftState:GameInputs.draftState(S.active||{}),...options},true),requestRollback:()=>command('rollback.request',{targetRound:S.active.rollbackTargetRound??Math.max(0,S.active.round-1)}),roomCommand:command,
     player:()=>({info:S.active?.info||{},items:S.active?.items||[],name:S.active?.playerName}),exportView:()=>cache.getState()?.view,setSpectatorView:async view=>{await command('spectator.view',{view});await sync();},
     stageDraft,saveDraft:async(...args)=>stageDraft(...args),
-    updateSettings:async values=>{S.settings={...S.settings,...Object.fromEntries(['reverseSendNewline','roundNotifications'].filter(key=>Object.hasOwn(values,key)).map(key=>[key,values[key]===true]))};localStorage.setItem('trpg-client-settings',JSON.stringify(S.settings));emit();},
+    updateSettings:async values=>{S.settings={...loadSettings(),...Object.fromEntries(settingNames.filter(key=>Object.hasOwn(values,key)).map(key=>[key,values[key]===true]))};localStorage.setItem(settingsKey,JSON.stringify(S.settings));emit();syncDicePreference();},
     setMode:()=>{},returnHome:()=>{S.home=true;emit();},returnToGame:()=>{if(S.active){S.home=false;emit();}},closeSave:()=>{stopNetwork();S.joinFailure=null;S.joining=null;S.active=null;S.home=false;S.room=null;S.network=null;preSubmit.tick();emit();}
   };
 })();

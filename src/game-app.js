@@ -44,7 +44,7 @@ const GameApp=(()=>{
     syncHost=MultiplayerSync.createHost({getSave:()=>{
       const stable=s.activeRound&&!s.activeRound.complete?publishedSave:s;
       return {...stable,events:s.events,status:s.status,slots:s.slots,round:s.round,snapshots:s.snapshots};
-    },getRoom:()=>({...hostSession.state(),autoAdvanceUnconscious:S.settings.autoAdvanceUnconscious!==false})});
+    },getRoom:()=>({...hostSession.state(),manualDice:S.settings.manualDice===true,autoAdvanceUnconscious:S.settings.autoAdvanceUnconscious!==false})});
     hostSession.subscribe(()=>{emit();publishClients();});
     if(s.slotsConfigured!==false)await hostSession.initialize(s.actorId);
     S.room=hostSession.state();
@@ -441,7 +441,7 @@ const GameApp=(()=>{
           if(currentRequest)currentRequest.response.tools=structuredClone(t);emit();}});
       const transport=async messages=>{if(!settings.apiKey.trim())throw Error('请先在设置中填写 API Key');if(roundOptions.isCurrent&&!roundOptions.isCurrent())throw Error('回合已失效');currentRequest=null;clearStream();emit();try{const response=await raw(messages);if(roundOptions.isCurrent&&!roundOptions.isCurrent())throw Error('回合已失效');if(currentRequest){currentRequest.status='completed';currentRequest.response=structuredClone(response);}return response;}catch(e){if(currentRequest){currentRequest.status='interrupted';currentRequest.error=e.message;}throw e;}};
       const flows=Prompts.flows(snapshot.overrides);
-      await GameCore.run(s,transport,{signal:controller.signal,system:snapshot.system,manualDice:settings.manualDice===true,openingPreload:settings.openingPreload!==false,
+      await GameCore.run(s,transport,{signal:controller.signal,system:snapshot.system,manualDice:settings.manualDice===true,skipManualDice:actorId=>hostSession?.skipManualDice(actorId)===true,openingPreload:settings.openingPreload!==false,
         cap:GameTransport.inputBudget(settings,defs),maxToolLoops:settings.maxToolLoops,multiplayerPrompts:Prompts.multiplayer(snapshot.overrides),
         
         
@@ -497,7 +497,7 @@ const GameApp=(()=>{
     if(next.customRequestBody){let extra;try{extra=JSON.parse(next.customRequestBody);}catch(e){throw Error('自定义请求包体不是有效 JSON：'+e.message);}if(!extra||typeof extra!=='object'||Array.isArray(extra))throw Error('自定义请求包体必须是 JSON 对象');}
     if(next.worldListSource)GameCatalog.source(next.worldListSource);next.bridgeUrl=BridgeTransport.validateServerUrl(next.bridgeUrl);
     if(!['none','low','high','xhigh','max'].includes(next.reasoningEffort))throw Error('思考强度无效');
-    next.roundNotifications=next.roundNotifications===true;next.stream=!!next.stream;next.manualDice=!!next.manualDice;next.openingPreload=next.openingPreload!==false;next.autoAdvanceUnconscious=next.autoAdvanceUnconscious!==false;await db.putSettings(next);S.settings=next;emit();hostSession?.checkAutomatic().catch(()=>{});
+    next.roundNotifications=next.roundNotifications===true;next.stream=!!next.stream;next.manualDice=!!next.manualDice;next.openingPreload=next.openingPreload!==false;next.autoAdvanceUnconscious=next.autoAdvanceUnconscious!==false;await db.putSettings(next);S.settings=next;emit();publishClients();hostSession?.checkAutomatic().catch(()=>{});
   }
   async function resolveManualDice(rolls){
     idle();const s=active();peerCheck(s);GameCore.resolveManualDice(s,rolls);await persist();emit();return s;

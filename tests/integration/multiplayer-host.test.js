@@ -31,6 +31,30 @@ test('concurrent submissions collect exactly once, repeat receipts, preserve pri
   await assert.rejects(host.handle('member-b',{...b,requestId:'late'}),{code:'STALE_ROUND'});
 });
 
+test('dice preferences are member-scoped, validated, idempotent and unavailable to spectators',async t=>{
+ const f=await fixture(t),{host,send,packet}=f;
+ assert.equal(host.skipManualDice('b'),false);
+ await assert.rejects(send('member-b','dice.preference',{skip:'true'}),{code:'INVALID_COMMAND'});
+ await assert.rejects(send('member-b','dice.preference',{skip:true,actorId:'a'}),{code:'FORBIDDEN'});
+ const c=packet('member-b','dice.preference',{skip:true});
+ assert.deepEqual(await host.handle('member-b',c),await host.handle('member-b',c));
+ assert.equal(host.skipManualDice('b'),true);assert.equal(host.skipManualDice('a'),false);
+ await host.setConnected('member-b',false);assert.equal(host.skipManualDice('b'),true);
+ await host.reserveSpectator('viewer','all');
+ await assert.rejects(send('viewer','dice.preference',{skip:true}),{code:'SPECTATOR_READ_ONLY'});
+ await send('member-b','dice.preference',{skip:false});assert.equal(host.skipManualDice('b'),false);
+});
+
+test('a new dice preference resumes its pending check once, without looping on execution failure',async t=>{
+ const f=await fixture(t,{execute:async()=>{throw Error('transport failed');}});
+ f.save.activeRound={number:3,complete:false};f.save.status='interrupted';f.save.multiplayer.status='interrupted';
+ f.save.pendingManualDice={eventId:'pending',callId:'check',round:3};
+ f.save.events=[{id:'pending',type:'dice',pending:true,callId:'check',rollerId:'b'}];
+ await f.send('member-b','dice.preference',{skip:true});await f.host.waitForIdle();
+ await f.host.checkAutomatic();await f.host.waitForIdle();
+ assert.equal(f.runs.length,1);assert.equal(f.runs[0].options.resume,true);
+});
+
 test('opening waits for every invited player to join and be online',async t=>{
  const f=await fixture(t,{count:1,status:'new'});
  VFS.writeFile(f.save.tree,'/workspace/Player-b/基础信息.json','{}');VFS.writeFile(f.save.tree,'/workspace/Player-b/背包.json','[]');require('../../src/game-slots').ensure(f.save);

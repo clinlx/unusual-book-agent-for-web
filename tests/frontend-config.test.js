@@ -14,7 +14,7 @@ test('central defaults preserve each frontend profile and return independent set
   assert.equal(designer.contextOverflow,'disabled');
   assert.equal(game.maxOutputTokens,16384);
   assert.equal(game.bridgeUrl,Config.links.relay);
-  assert.deepEqual(client,{reverseSendNewline:false,roundNotifications:false});
+  assert.deepEqual(client,{reverseSendNewline:false,roundNotifications:false,skipMultiplayerManualDice:false});
   game.promptOverrides.custom='local';
   assert.deepEqual(Config.defaults('game').promptOverrides,{});
   assert.deepEqual(require('../src/world-designer/00-config').DEFAULT_SETTINGS,designer);

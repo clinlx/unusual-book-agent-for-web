@@ -157,7 +157,7 @@ const MultiplayerSync=(()=>{
       if(visible){if(e.type==='round_end'&&slot&&roundStates.has(e.round))visible.roundState=roundStates.get(e.round);events.push(visible);}
     }
     const roomView=room?{...pick(room,['roomId','epoch','roundId','round','status','online','autoAdvanceUnconscious']),memberId,actorId,bindingVersion:ownMember?.bindingVersion||0,submitted:!!room.submissions?.[actorId],members:people.map(([id,m])=>({memberId:id,actorId:m.actorId,connected:m.connected===true||m.online===true})),vote:room.vote?{...pick(room.vote,['id','requester','targetRound','targetRoundId','status','expiresAt']),eligible:(room.vote.eligible||[]).includes(memberId),voted:Object.hasOwn(room.vote.votes||{},memberId),yes:Object.values(room.vote.votes||{}).filter(Boolean).length,required:Math.ceil((room.vote.eligible||[]).length/2)}:null}:null;
-    if(roomView)roomView.slotRequests=(room.slotRequests||[]).map(request=>pick(request,['id','memberId','actorId','at']));
+    if(roomView){roomView.manualDice=room.manualDice===true;roomView.skipManualDice=ownMember?.skipManualDice===true;roomView.slotRequests=(room.slotRequests||[]).map(request=>pick(request,['id','memberId','actorId','at']));}
     if(roomView){const q=room.preparedActions?.[actorId];roomView.preparedAction=!spectator&&q&&q.memberId===memberId&&q.bindingVersion===ownMember?.bindingVersion&&q.epoch===room.epoch?pick(q,['id','version','status','epoch','fromRound','round','roundId','content','privateContent','disguise']):null;}
     if(roomView)roomView.collection=collection(room,publicSlots);
     if(spectator&&roomView){roomView.actorId=null;roomView.submitted=false;roomView.spectator=true;roomView.perspective=perspective;roomView.canChoosePerspective=ownMember.permission==='all';}

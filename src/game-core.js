@@ -605,10 +605,10 @@ const GameCore = (() => {
     if(!round.complete&&s.snapshots.length)s.lastChanges=changes(s.snapshots.at(-1).tree,s.tree);
     s.updatedAt=Date.now();return out;
   }
-  function resolveManualDice(s,rolls){
+  function resolveManualDice(s,rolls,options={}){
     const pending=s.pendingManualDice;if(!pending)throw Error('没有待进行的手动检定');
     if(!s.activeRound||pending.round!==s.activeRound.number)throw Error('待检定状态与当前回合不一致');
-    const out=execute(s,'roll_dice',copy(pending.args),pending.callId,{fixedDiceRolls:rolls,manualDiceResolved:true,manualEventId:pending.eventId});
+    const out=execute(s,'roll_dice',copy(pending.args),pending.callId,{random:options.random,fixedDiceRolls:rolls,manualDiceResolved:!options.automatic,manualEventId:pending.eventId});
     if(!out.ok)throw Error(out.error||'手动检定结算失败');
     s.messages.push({role:'tool',tool_call_id:pending.callId,content:JSON.stringify(out),round:s.activeRound.number});
     delete s.pendingManualDice;s.status='interrupted';s.error=null;s.updatedAt=Date.now();return out;
@@ -809,7 +809,9 @@ const GameCore = (() => {
       for(const tc of message.tool_calls||[]){
         if(s.messages.some(m=>m.role==='tool'&&m.round===s.activeRound.number&&m.tool_call_id===tc.id))continue;
         if(s.pendingManualDice){
-          if(s.pendingManualDice.callId===tc.id)return true;
+          if(s.pendingManualDice.callId===tc.id&&opts.skipManualDice?.(diceIdentity(s,s.pendingManualDice.args).rollerId)===true){
+            resolveManualDice(s,undefined,{random:opts.random,automatic:true});await step();continue;
+          }
           return true;
         }
         abort();let a,out;
@@ -817,7 +819,7 @@ const GameCore = (() => {
           a=toolArguments.parse(tc.function?.arguments);
           if(tc.function.name==='roll_dice'&&opts.manualDice===true&&dicePlayerRelated(s,a)&&!diceSecret(a)){
             const identity=diceIdentity(s,a),request=diceRequest(a);
-            if(request.specs.some(spec=>spec.n)){
+            if(request.specs.some(spec=>spec.n)&&opts.skipManualDice?.(identity.rollerId)!==true){
               const e=emit(s,'dice',{roller:a.roller,description:a.description||'',relatedAttr:a.related_attr||'',...identity,
                 diceArgs:copy(a),manual:true,pending:true,callId:tc.id});
               s.pendingManualDice={callId:tc.id,eventId:e.id,round:s.activeRound.number,args:copy(a),createdAt:Date.now()};

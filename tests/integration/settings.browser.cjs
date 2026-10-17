@@ -65,6 +65,47 @@ test('game and client notifications request permission only on opt-in and persis
  }finally{await context.close();}
 });
 
+test('client dice preference follows host settings and shares live state across tabs',async()=>{
+ const Sync=require('../../src/multiplayer-sync'),VFS=require('../../src/vfs');
+ const context=await browser.newContext({viewport:{width:390,height:844}}),errors=[];
+ try{
+  const pages=[],rooms=[],hosts=[];
+  for(let i=0;i<2;i++){
+   const tree=VFS.createTree();VFS.writeFile(tree,'/workspace/Player-a/基础信息.json','{"姓名":"测试者"}');VFS.writeFile(tree,'/workspace/Player-a/背包.json','[]');
+   const save={id:'dice-game-'+i,name:'掷骰测试',tree,slots:[{id:'a',path:'/workspace/Player-a',kind:'player'}],round:1,status:'waiting',events:[]};
+   const room={roomId:'dice-room-'+i,roundId:'r2',epoch:0,round:2,status:'collecting',online:true,manualDice:i===1,members:{guest:{actorId:'a',bindingVersion:1}}};
+   const host=Sync.createHost({getSave:()=>save,getRoom:()=>room});rooms.push(room);hosts.push(host);
+   const page=await context.newPage();pages.push(page);page.setDefaultTimeout(5000);page.on('pageerror',e=>errors.push(e.message));await page.route('https://**/*',r=>r.abort());
+   await page.exposeFunction('diceHostRequest',async command=>{
+    if(command.type==='sync.ack')return null;
+    if(command.type==='sync.request')return host.sync('guest',command.payload);
+    assert.equal(command.type,'dice.preference');room.members.guest.skipManualDice=command.payload.skip;
+    return {type:'command.result',requestId:command.requestId,ok:true};
+   });
+   await page.goto(origin+'/client.html');await page.locator('#join-room-form').waitFor();
+   await page.evaluate(async()=>{
+    let receive;await GameApp.connect({onClient(id,fn){receive=fn;return()=>{};},async sendToHost(id,command){const packet=await diceHostRequest(command);if(packet)await receive(packet);}},'guest');
+   });
+   await page.locator('[data-action="settings"]').click();
+  }
+  const selector='[name="skipMultiplayerManualDice"]';
+  assert.equal(await pages[0].locator(selector).count(),0);assert.equal(await pages[1].locator(selector).isChecked(),false);
+  rooms[0].manualDice=true;await pages[0].evaluate(packet=>GameApp.receive(packet),await hosts[0].sync('guest'));
+  await pages[0].locator(selector).waitFor();await pages[0].locator(selector).check();await pages[0].locator('#settings-form [type="submit"]').click();
+  await pages[1].waitForFunction(()=>GameApp.getState().settings.skipMultiplayerManualDice&&GameApp.getState().room.skipManualDice);
+  await pages[1].waitForFunction(()=>document.querySelector('[name="skipMultiplayerManualDice"]').checked);
+  assert.equal(rooms[0].members.guest.skipManualDice,true);assert.equal(rooms[1].members.guest.skipManualDice,true);
+  await pages[0].locator('[data-action="settings"]').click();rooms[0].manualDice=false;
+  await pages[0].evaluate(packet=>GameApp.receive(packet),await hosts[0].sync('guest'));await pages[0].locator(selector).waitFor({state:'detached'});
+  await pages[0].locator('#settings-form [type="submit"]').click();assert.equal(await pages[0].evaluate(()=>GameApp.getState().settings.skipMultiplayerManualDice),true);
+  for(const width of [320,390,900]){
+   await pages[1].setViewportSize({width,height:844});assert.ok(await pages[1].evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+   const footer=await pages[1].locator('#settings-form [type="submit"]').boundingBox();assert.ok(footer.y+footer.height<=844);
+  }
+  await pages[1].setViewportSize({width:390,height:844});await pages[1].screenshot({path:path.join(artifacts,'client-dice-preference-390.png')});assert.deepEqual(errors,[]);
+ }finally{await context.close();}
+});
+
 test('mobile notification fallback activates the local worker without issuing a real system notification',async()=>{
  const context=await browser.newContext();
  try{
@@ -335,13 +376,13 @@ test('client settings use invitation routing and a compact shortcut card with a 
     await page.evaluate(()=>localStorage.setItem('trpg-client-settings',JSON.stringify({bridgeUrl:'wss://obsolete.invalid/',reverseSendNewline:false})));
     await page.reload();await page.locator('[data-action="settings"]').click();
     assert.equal(await page.locator('[name="bridgeUrl"]').count(),0);assert.equal(await page.locator('.settings-section').count(),0);
-    assert.deepEqual(await page.evaluate(()=>GameApp.getState().settings),{reverseSendNewline:false,roundNotifications:false});
+    assert.deepEqual(await page.evaluate(()=>GameApp.getState().settings),{reverseSendNewline:false,roundNotifications:false,skipMultiplayerManualDice:false});
     const toggle=page.getByRole('checkbox',{name:'反转发送与换行'});
     assert.deepEqual(await page.locator('.client-shortcut-preview kbd').allTextContents(),['Ctrl / ⌘ + Enter','Enter']);
     await toggle.check();assert.deepEqual(await page.locator('.client-shortcut-preview kbd').allTextContents(),['Enter','Ctrl / ⌘ + Enter']);
     await page.getByRole('button',{name:'取消',exact:true}).click();assert.equal(await page.evaluate(()=>GameApp.getState().settings.reverseSendNewline),false);
     await page.locator('[data-action="settings"]').click();await toggle.check();await page.getByRole('button',{name:'保存设置',exact:true}).click();
-    assert.deepEqual(await page.evaluate(()=>JSON.parse(localStorage.getItem('trpg-client-settings'))),{reverseSendNewline:true,roundNotifications:false});
+    assert.deepEqual(await page.evaluate(()=>JSON.parse(localStorage.getItem('trpg-client-settings'))),{reverseSendNewline:true,roundNotifications:false,skipMultiplayerManualDice:false});
     await page.reload();await page.locator('[data-action="settings"]').click();assert.equal(await toggle.isChecked(),true);
     for(const width of [1440,390,320]){
       await page.setViewportSize({width,height:700});

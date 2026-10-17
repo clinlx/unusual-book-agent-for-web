@@ -4,6 +4,25 @@ const V=require('../../src/vfs'),Core=require('../../src/game-core'),Sync=requir
 function fixture(){const tree=V.createTree();for(const [prefix,id,name]of [['Player','a','甲'],['Player','b','乙'],['AIPC','helper','助手'],['KPC','guide','向导'],['DISABLE','sleep','封存']]){V.writeFile(tree,`/workspace/${prefix}-${id}/基础信息.json`,JSON.stringify({姓名:name,Alive:true,Enabled:true}));V.writeFile(tree,`/workspace/${prefix}-${id}/背包.json`,'[]');}V.writeFile(tree,'/workspace/存档-索引-NPC/vendor/基础信息.json','{"姓名":"店员"}');const s=Core.createSave('dice',tree);Core.beginRound(s,'',true);return s;}
 const args=extra=>({description:'秘密侦查',roller:'Player-b',related_attr:'侦查',is_secret:false,is_private:false,dice_dict:{检定:'1d100'},calculate_only:false,target_value:50,compare_mode:'le',critical_success_range:null,critical_failure_range:null,dice_combine_mode:'sum',left_modifiers:{},right_modifiers:{},...extra});
 const rolls=(s,id)=>Core.visibleEvents({...s,actorId:id,playerPath:'/workspace/Player-'+id},'play').filter(e=>e.type==='dice');
+
+test('client opt-out rolls only its own checks automatically, including a previously paused check',async()=>{
+ const s=fixture();let automatic=false;
+ const options={manualDice:true,openingPreload:false,skipManualDice:id=>automatic&&id==='b',random:()=>.41};
+ const calls=['b','a'].map(id=>({id:'check-'+id,function:{name:'roll_dice',arguments:JSON.stringify(args({roller:'Player-'+id}))}}));
+ await Core.run(s,async()=>({tool_calls:calls}),options);
+ assert.equal(s.pendingManualDice.callId,'check-b');automatic=true;
+ await Core.run(s,async()=>assert.fail('must stop at host check'),options);
+ assert.equal(s.pendingManualDice.callId,'check-a');
+ assert.equal(rolls(s,'b').filter(e=>e.callId==='check-b').length,1);
+ assert.equal(rolls(s,'b').find(e=>e.callId==='check-b').data.total,42);
+ assert.equal(s.messages.filter(m=>m.tool_call_id==='check-b').length,1);
+});
+
+test('client opt-out avoids creating a manual pending event for new checks',async()=>{
+ const s=fixture();s.messages.push({role:'assistant',round:1,tool_calls:[{id:'auto-b',function:{name:'roll_dice',arguments:JSON.stringify(args())}}]});
+ await assert.rejects(Core.run(s,async()=>{throw Error('batch finished');},{manualDice:true,openingPreload:false,skipManualDice:id=>id==='b',random:()=>.2}),/batch finished/);
+ assert.equal(s.pendingManualDice,undefined);assert.equal(rolls(s,'b')[0].data.total,21);assert.equal(rolls(s,'b')[0].manual,false);
+});
 test('all public Player rolls are visible to both players and carry a verified stable actor identity',()=>{const s=fixture();assert.equal(Core.execute(s,'roll_dice',args(),'public').ok,true);for(const id of ['a','b']){assert.equal(rolls(s,id).length,1);assert.equal(Sync.project(s,id).events.filter(e=>e.type==='dice').length,1);}const e=s.events.find(e=>e.type==='dice');assert.equal(e.rollerId,'b');assert.equal(e.rollerKind,'player');});
 test('unknown and ambiguous rollers and invalid private recipients fail before random consumption or events',()=>{const s=fixture();let random=0;for(const extra of [{roller:'missing'},{roller:'主角'},{is_private:'true'},{is_private:true,target_player:'AIPC-helper'},{is_private:true,target_player:'KPC-guide'},{is_private:true,target_player:'DISABLE-sleep'},{is_private:true,target_player:'missing'}]){const out=Core.execute(s,'roll_dice',args(extra),'bad-'+JSON.stringify(extra),{random:()=>{random++;return .5;}});assert.equal(out.ok,false,JSON.stringify(extra));}assert.equal(random,0);assert.equal(s.events.filter(e=>e.type==='dice').length,0);});
 test('existing NPC/KPC/AIPC and GM rolls stay in DEBUG; explicit private Player recipients receive non-GM rolls only',()=>{const s=fixture();for(const roller of ['店员','KPC-guide','AIPC-helper','<|GM|>'])assert.equal(Core.execute(s,'roll_dice',args({roller}),'npc-'+roller).ok,true);assert.equal(rolls(s,'a').length,0);assert.equal(Sync.project(s,'b').events.filter(e=>e.type==='dice').length,0);assert.equal(Core.execute(s,'roll_dice',args({roller:'店员',is_private:true,target_player:'Player-b'}),'private-npc').ok,true);assert.equal(rolls(s,'a').length,0);assert.equal(rolls(s,'b').length,1);assert.equal(rolls(s,'b')[0].private,true);assert.equal(rolls(s,'b')[0].targetPlayer,'b');});
