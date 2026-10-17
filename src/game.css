@@ -213,6 +213,7 @@
 .pre-submit-notice button{flex-shrink:0;padding:4px 8px;font-size:12px}.run-controls .pre-submit-button{font-size:13px}
 @media(max-width:480px){.pre-submit-notice{padding:8px 12px;gap:8px}.run-controls{flex-wrap:wrap;justify-content:flex-end}.run-controls .pre-submit-button{padding:8px 10px}}
 
+.player-detail-modal>header{position:relative;padding-bottom:27px}.player-detail-status{position:absolute;left:22px;right:22px;bottom:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font:11px/16px var(--sans)}
 .modal>header,.modal>.modal-actions{flex-shrink:0}.modal>.modal-actions{margin:0;padding:14px 22px;border-top:1px solid var(--rule);background:var(--paper);flex-wrap:wrap;gap:8px}.modal>.modal-body{flex:1 1 auto}.modal>.app-dialog-actions{padding:12px 18px}@media(max-width:520px){.modal>.modal-actions{padding:12px 14px}.room-actions button{padding:6px 9px;font-size:12px}.room-save-status{font-size:10px}}
 
 .modal-form-layout{display:flex;flex-direction:column;min-height:0}.modal-form-layout>.modal-body{flex:1 1 auto}.modal-form-layout>.modal-actions{flex-shrink:0;margin:0;padding:14px 22px;border-top:1px solid var(--rule);background:var(--paper);flex-wrap:wrap;gap:8px}.modal-form-layout>.app-dialog-actions{padding:12px 18px}@media(max-width:520px){.modal-form-layout>.modal-actions{padding:12px 14px}}

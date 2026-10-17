@@ -1399,7 +1399,9 @@ const GameUI = (() => {
         const expanded=existing?new Map([...modalRoot.querySelectorAll('details[data-key]')].map(el=>[el.dataset.key,el.open])):new Map();
         const value=detail&&(inventory?detail.items:detail.info),section=inventory?'inventory':'character';
         const body=detail?`<div class="${section} player-${inventory?'inventory':'profile'}">${GamePresentation.fields(value,stale?value:detail.baseline??value,section,{showHidden:detail.omniscient===true})||`<p>${detail.omniscient?(inventory?'暂无物品。':'暂无资料。'):(inventory?'暂无可公开的物品。':'暂无可公开资料。')}</p>`}</div>`:'';
-        showModal(detail?(detail.name||'角色')+(inventory?' · 背包':''):label,`<div data-player-detail="${esc(requestId)}" data-player-detail-scope="${esc(scope)}">${note?`<p class="muted" role="status">${esc(note)}</p>`:''}${body}</div>${actions}`);
+        showModal(detail?(detail.name||'角色')+(inventory?' · 背包':''):label,`<div data-player-detail="${esc(requestId)}" data-player-detail-scope="${esc(scope)}">${!detail&&note?`<p class="muted" role="status">${esc(note)}</p>`:''}${body}</div>${actions}`);
+        modalRoot.querySelector('.modal').classList.add('player-detail-modal');
+        modalRoot.querySelector('.modal>header').insertAdjacentHTML('beforeend',`<span class="player-detail-status" role="status" title="${esc(detail?note:'')}">${esc(detail?note:'')}</span>`);
         for(const el of modalRoot.querySelectorAll('details[data-key]'))if(expanded.has(el.dataset.key))el.open=expanded.get(el.dataset.key);
         modalRoot.querySelector('.modal-body').scrollTop=scroll;
       }

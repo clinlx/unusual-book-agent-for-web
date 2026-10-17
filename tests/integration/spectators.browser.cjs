@@ -56,19 +56,40 @@ test('spectator client switches authorized perspectives, shows player rosters an
  detailGate=new Promise(resolve=>releaseDetail=resolve);
  await page.locator('.character-roster [data-actor="a"]').click();
  assert.equal(await page.locator('.player-profile').count(),1,'cached profile is visible before the response');
- assert.match(await page.locator('.modal-body').innerText(),/正在更新/);
+ assert.match(await page.locator('.player-detail-status').innerText(),/正在更新/);
  updated.状态.HP=4;VFS.writeFile(save.tree,'/workspace/Player-a/基础信息.json',JSON.stringify(updated));
- detailGate=null;releaseDetail();await page.waitForFunction(()=>!document.querySelector('.modal-body')?.textContent.includes('正在更新'));
+ detailGate=null;releaseDetail();await page.waitForFunction(()=>!document.querySelector('.player-detail-status')?.textContent.includes('正在更新'));
  assert.match(await page.locator('.player-profile .diff-decreased').innerText(),/4/);
  await page.locator('.modal-actions [data-action="close-modal"]').click();
  detailFailure=true;await page.locator('.character-roster [data-actor="a"]').click();
- await page.waitForFunction(()=>document.querySelector('.modal-body')?.textContent.includes('更新失败'));
+ await page.waitForFunction(()=>document.querySelector('.player-detail-status')?.textContent.includes('更新失败'));
  assert.equal(await page.locator('.player-profile').count(),1,'failed refresh keeps the cached content');
  assert.match(await page.locator('.player-profile').innerText(),/不可公开档案/);
  await page.locator('.modal-actions [data-action="close-modal"]').click();detailFailure=false;
  await page.locator('.inventory-roster [data-actor="a"]').click();await page.locator('.player-inventory .diff-added').first().waitFor();
  assert.equal(await page.locator('.inventory-roster [data-actor="a"] .roster-change').count(),0);
  await page.locator('.modal-actions [data-action="close-modal"]').click();
+ // Unchanged cached details must not move when a refresh starts, finishes or fails.
+ const detailKinds=[{roster:'inventory',body:'inventory'},{roster:'character',body:'profile'}];
+ for(const kind of detailKinds){
+  await page.locator(`.${kind.roster}-roster [data-actor="b"]`).click();await page.locator(`.player-${kind.body}`).waitFor();
+  await page.locator('.modal-actions [data-action="close-modal"]').click();
+ }
+ for(const width of [1280,390]){
+  await page.setViewportSize({width,height:844});
+  for(const kind of detailKinds)for(const fails of [false,true]){
+   if(width===390)await page.locator(`[data-action="mobile-${kind.roster==='inventory'?'left':'right'}"]`).click();
+   detailFailure=fails;detailGate=new Promise(resolve=>releaseDetail=resolve);
+   await page.locator(`.${kind.roster}-roster [data-actor="b"]`).click();await page.locator(`.player-${kind.body}`).waitFor();
+   const before={modal:await page.locator('.modal').boundingBox(),content:await page.locator(`.player-${kind.body}`).boundingBox()};
+   if(width===390&&!fails)await page.screenshot({path:`tests/artifacts/cached-${kind.body}-refresh-390.png`});
+   detailGate=null;releaseDetail();await page.waitForFunction(()=>!document.querySelector('.modal')?.textContent.includes('正在更新'));
+   const after={modal:await page.locator('.modal').boundingBox(),content:await page.locator(`.player-${kind.body}`).boundingBox()};
+   assert.deepEqual(after,before,`cached ${kind.body} layout stays fixed at ${width}px (${fails?'failure':'success'})`);
+   await page.locator('.modal-actions [data-action="close-modal"]').click();
+  }
+ }
+ detailFailure=false;await page.setViewportSize({width:1280,height:844});
  save.round=2;save.snapshots[0].round=1;await page.evaluate(p=>GameApp.receive(p),await projector.sync('watch'));
  await page.locator('.character-roster [data-actor="a"] .roster-change').waitFor();
  await page.locator('[data-action="room-panel"]').click();await page.locator('#spectator-view').selectOption('a');await page.locator('.right-panel .diff-decreased del').waitFor();
