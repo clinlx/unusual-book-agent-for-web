@@ -17,7 +17,7 @@ before(async () => {
     if (!file.startsWith(dist + path.sep)) return res.writeHead(404).end();
     fs.readFile(file, (error, data) => {
       if (error) return res.writeHead(404).end();
-      res.setHeader('Content-Type', file.endsWith('.html') ? 'text/html; charset=utf-8' : 'text/plain; charset=utf-8');
+      res.setHeader('Content-Type', file.endsWith('.html') ? 'text/html; charset=utf-8' : file.endsWith('.js')?'text/javascript; charset=utf-8':'text/plain; charset=utf-8');
       res.end(data);
     });
   });
@@ -41,6 +41,42 @@ async function openSettings(page, name) {
     await page.getByRole('button', { name: '设置', exact: true }).click();
   }
 }
+
+test('game and client notifications request permission only on opt-in and persist independently',async()=>{
+ const context=await browser.newContext();
+ try{
+  const page=await context.newPage();page.setDefaultTimeout(5000);
+  await page.route('https://**/*',r=>r.abort());await page.route('**/modules.json',r=>r.fulfill({json:[]}));await page.route('**/files/**',r=>r.abort());
+  await page.addInitScript(()=>{window.noticePrompts=0;window.noticeAnswer='granted';Object.defineProperty(window,'Notification',{configurable:true,value:class{static permission='default';static async requestPermission(){window.noticePrompts++;return this.permission=window.noticeAnswer;}}});});
+  for(const file of ['index.html','client.html']){
+   await page.goto(origin+'/'+file);await page.locator('[data-action="settings"]').click();
+   const toggle=page.locator('[name="roundNotifications"]');
+   if(file==='index.html')await page.locator('[data-settings-section="game"]').evaluate(el=>el.open=true);
+   assert.equal(await toggle.isChecked(),false);assert.equal(await page.evaluate(()=>noticePrompts),0);
+   await toggle.check();await page.waitForFunction(()=>!document.querySelector('[name="roundNotifications"]').disabled);
+   assert.equal(await page.evaluate(()=>noticePrompts),1);await page.getByRole('button',{name:'保存设置',exact:true}).click();
+   await page.reload();await page.locator('[data-action="settings"]').click();assert.equal(await toggle.isChecked(),true);assert.equal(await page.evaluate(()=>noticePrompts),0);
+   if(file==='index.html')await page.locator('[data-settings-section="game"]').evaluate(el=>el.open=true);
+   await toggle.uncheck();await page.evaluate(()=>{Notification.permission='default';noticeAnswer='denied';});await toggle.click();
+   await page.waitForFunction(()=>!document.querySelector('[name="roundNotifications"]').disabled);
+   assert.equal(await toggle.isChecked(),false);assert.match(await page.locator('[data-notification-status]').innerText(),/阻止/);
+   await page.getByRole('button',{name:'保存设置',exact:true}).click();
+  }
+ }finally{await context.close();}
+});
+
+test('mobile notification fallback activates the local worker without issuing a real system notification',async()=>{
+ const context=await browser.newContext();
+ try{
+  const page=await context.newPage();await page.route('https://**/*',r=>r.abort());await page.goto(origin+'/client.html');await page.locator('#join-room-form').waitFor();
+  const result=await page.evaluate(async()=>{
+   const sent=[];Object.defineProperty(window,'Notification',{configurable:true,value:class{static permission='granted';constructor(){throw TypeError('mobile');}}});
+   ServiceWorkerRegistration.prototype.showNotification=async function(title,options){sent.push({title,options,active:this.active?.state});};
+   const ok=await RoundNotifications.send({round:3,tag:'test-round-3'});return {ok,sent};
+  });
+  assert.equal(result.ok,true);assert.equal(result.sent.length,1);assert.equal(result.sent[0].active,'activated');assert.match(result.sent[0].options.body,/第 3 回合/);
+ }finally{await context.close();}
+});
 
 test('designer maximum output defaults to 16k, validates input and persists custom values',async()=>{
   const context=await browser.newContext();
@@ -299,13 +335,13 @@ test('client settings use invitation routing and a compact shortcut card with a 
     await page.evaluate(()=>localStorage.setItem('trpg-client-settings',JSON.stringify({bridgeUrl:'wss://obsolete.invalid/',reverseSendNewline:false})));
     await page.reload();await page.locator('[data-action="settings"]').click();
     assert.equal(await page.locator('[name="bridgeUrl"]').count(),0);assert.equal(await page.locator('.settings-section').count(),0);
-    assert.deepEqual(await page.evaluate(()=>GameApp.getState().settings),{reverseSendNewline:false});
+    assert.deepEqual(await page.evaluate(()=>GameApp.getState().settings),{reverseSendNewline:false,roundNotifications:false});
     const toggle=page.getByRole('checkbox',{name:'反转发送与换行'});
     assert.deepEqual(await page.locator('.client-shortcut-preview kbd').allTextContents(),['Ctrl / ⌘ + Enter','Enter']);
     await toggle.check();assert.deepEqual(await page.locator('.client-shortcut-preview kbd').allTextContents(),['Enter','Ctrl / ⌘ + Enter']);
     await page.getByRole('button',{name:'取消',exact:true}).click();assert.equal(await page.evaluate(()=>GameApp.getState().settings.reverseSendNewline),false);
     await page.locator('[data-action="settings"]').click();await toggle.check();await page.getByRole('button',{name:'保存设置',exact:true}).click();
-    assert.deepEqual(await page.evaluate(()=>JSON.parse(localStorage.getItem('trpg-client-settings'))),{reverseSendNewline:true});
+    assert.deepEqual(await page.evaluate(()=>JSON.parse(localStorage.getItem('trpg-client-settings'))),{reverseSendNewline:true,roundNotifications:false});
     await page.reload();await page.locator('[data-action="settings"]').click();assert.equal(await toggle.isChecked(),true);
     for(const width of [1440,390,320]){
       await page.setViewportSize({width,height:700});

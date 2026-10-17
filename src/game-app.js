@@ -497,7 +497,7 @@ const GameApp=(()=>{
     if(next.customRequestBody){let extra;try{extra=JSON.parse(next.customRequestBody);}catch(e){throw Error('自定义请求包体不是有效 JSON：'+e.message);}if(!extra||typeof extra!=='object'||Array.isArray(extra))throw Error('自定义请求包体必须是 JSON 对象');}
     if(next.worldListSource)GameCatalog.source(next.worldListSource);next.bridgeUrl=BridgeTransport.validateServerUrl(next.bridgeUrl);
     if(!['none','low','high','xhigh','max'].includes(next.reasoningEffort))throw Error('思考强度无效');
-    next.stream=!!next.stream;next.manualDice=!!next.manualDice;next.openingPreload=next.openingPreload!==false;next.autoAdvanceUnconscious=next.autoAdvanceUnconscious!==false;await db.putSettings(next);S.settings=next;emit();hostSession?.checkAutomatic().catch(()=>{});
+    next.roundNotifications=next.roundNotifications===true;next.stream=!!next.stream;next.manualDice=!!next.manualDice;next.openingPreload=next.openingPreload!==false;next.autoAdvanceUnconscious=next.autoAdvanceUnconscious!==false;await db.putSettings(next);S.settings=next;emit();hostSession?.checkAutomatic().catch(()=>{});
   }
   async function resolveManualDice(rolls){
     idle();const s=active();peerCheck(s);GameCore.resolveManualDice(s,rolls);await persist();emit();return s;

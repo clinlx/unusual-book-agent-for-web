@@ -19,7 +19,7 @@ const FrontendConfig=(()=>{
     maxContextK:240,maxToolLoops:60,httpTimeoutSeconds:180,maxRetries:2,
     // 留空使用 links.worldCatalog；用户可以在游戏设置中覆盖列表源。
     worldListSource:'',bridgeUrl:links.relay,
-    manualDice:false,openingPreload:true,autoAdvanceUnconscious:true,promptOverrides:{},
+    roundNotifications:false,manualDice:false,openingPreload:true,autoAdvanceUnconscious:true,promptOverrides:{},
   };
   const designer={
     ...common,imageSending:true,
@@ -33,8 +33,8 @@ const FrontendConfig=(()=>{
     reasoningDisplay:'collapsed', // collapsed | alwaysCollapsed | expanded | hidden。
     systemPromptOverride:'', // 留空使用设计师配置中的系统提示词。
   };
-  // 加入者只保留本地输入偏好；中转地址由邀请信息提供。
-  const client={reverseSendNewline:common.reverseSendNewline};
+  // 加入者只保留本地输入与提醒偏好；中转地址由邀请信息提供。
+  const client={reverseSendNewline:common.reverseSendNewline,roundNotifications:false};
   const profiles={game,designer,client};
   function freeze(value){
     for(const child of Object.values(value))if(child&&typeof child==='object')freeze(child);

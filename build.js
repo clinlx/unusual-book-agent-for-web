@@ -17,7 +17,7 @@ function collectBooks(dir,relative=''){
 }
 collectBooks(path.join(root,'assets','trpg_rule_books'));
 const order=['src/frontend-config.js','vendor/room-bridge.js','src/connection-recovery.js','src/bridge-transport.js','src/connection-status.js','vendor/marked.min.js','src/shared/file-read.js','src/vfs.js','skills/game-world-builder/scripts/world-trigger-rules.js','src/shared/file-write-validation.js','src/sse.js','src/zip.js','src/workspace-import.js','src/diff.js','src/md.js','src/lease.js','src/shared/api-url.js','src/shared/output-limit.js','src/shared/tool-arguments.js','src/shared/file-knowledge.js','src/shared/world-handoff.js','src/shared/transfer-dialog.js','src/shared/designer-projects.js','src/shared/back-navigation.js','src/shared/send-shortcut.js','src/shared/dropdown.js',
-  'src/game-prompts.js','src/game-tools.js','src/game-data.js','src/game-history.js','src/game-context-recovery.js','src/game-input-history.js','src/game-pre-submit.js','src/game-local-inputs.js','src/game-presentation.js','src/game-slots.js','src/game-world-triggers.js','src/game-core.js','src/game-import.js','src/game-catalog.js','src/game-store.js','src/game-transport.js','src/multiplayer-host.js','src/multiplayer-sync.js','src/game-app.js','src/game-ui.js'];
+  'src/game-prompts.js','src/game-tools.js','src/game-data.js','src/game-history.js','src/game-context-recovery.js','src/game-input-history.js','src/game-pre-submit.js','src/game-local-inputs.js','src/game-presentation.js','src/game-slots.js','src/game-world-triggers.js','src/game-core.js','src/game-import.js','src/game-catalog.js','src/game-store.js','src/game-transport.js','src/multiplayer-host.js','src/multiplayer-sync.js','src/game-app.js','src/round-notifications.js','src/game-ui.js'];
 const obfuscated=JavaScriptObfuscator.obfuscate(Build.scripts(order),{
   target:'browser-no-eval',compact:true,identifierNamesGenerator:'hexadecimal',
   renameGlobals:false,renameProperties:false,stringArray:true,stringArrayThreshold:0.75,
@@ -32,10 +32,11 @@ const scripts=dice3d+'\n;'+gameIdentity+'const BUNDLED_PROMPTS = '+safeJSON(prom
 const html=Build.compose('src/template.html','src/game.css',scripts).replace('/*__FAVICON__*/',gameFavicon);
 fs.mkdirSync(path.join(root,'dist'),{recursive:true});
 fs.writeFileSync(path.join(root,'dist','index.html'),html);
-const clientOrder=['src/frontend-config.js','vendor/room-bridge.js','src/connection-recovery.js','src/bridge-transport.js','src/connection-status.js','vendor/marked.min.js','src/diff.js','src/md.js','src/shared/back-navigation.js','src/shared/send-shortcut.js','src/shared/dropdown.js','src/game-data.js','src/game-input-history.js','src/game-pre-submit.js','src/game-local-inputs.js','src/game-presentation.js','src/multiplayer-sync.js','src/client-app.js','src/game-ui.js'];
+const clientOrder=['src/frontend-config.js','vendor/room-bridge.js','src/connection-recovery.js','src/bridge-transport.js','src/connection-status.js','vendor/marked.min.js','src/diff.js','src/md.js','src/shared/back-navigation.js','src/shared/send-shortcut.js','src/shared/dropdown.js','src/game-data.js','src/game-input-history.js','src/game-pre-submit.js','src/game-local-inputs.js','src/game-presentation.js','src/multiplayer-sync.js','src/client-app.js','src/round-notifications.js','src/game-ui.js'];
 const clientHtml=Build.compose('src/template.html','src/game.css',dice3d+'\n;'+gameIdentity+Build.scripts(clientOrder)).replace('异闻手记 · 单人跑团','异闻手记 · 联机玩家').replace('/*__FAVICON__*/',gameFavicon);
 fs.writeFileSync(path.join(root,'dist','client.html'),clientHtml);
 
+fs.copyFileSync(path.join(root,'src/notification-sw.js'),path.join(root,'dist/notification-sw.js'));
 fs.copyFileSync(path.join(root,'assets/robots.txt'),path.join(root,'dist/robots.txt'));
 console.log('Built dist/index.html with obfuscated inline JavaScript ('+Math.round(Buffer.byteLength(html)/1024)+' KiB), '+Object.keys(prompts).length+' prompt sources, '+Object.keys(ruleBooks).length+' rule book files.');
 buildWorldDesigner();

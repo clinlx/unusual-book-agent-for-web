@@ -6,7 +6,7 @@ const fs=require('node:fs'),path=require('node:path');
 test('publication directory contains only release outputs, with no test artifacts',()=>{
   const dist=path.resolve(__dirname,'../../dist');
   if(!fs.existsSync(dist))return;
-  const files=new Set(['index.html','designer.html','client.html','modules.json','modules-full.json','robots.txt']);
+  const files=new Set(['index.html','designer.html','client.html','modules.json','modules-full.json','robots.txt','notification-sw.js']);
   const unexpected=fs.readdirSync(dist,{withFileTypes:true})
     .filter(entry=>!(entry.isFile()&&files.has(entry.name))&&!(entry.isDirectory()&&entry.name==='files'))
     .map(entry=>entry.name).sort();
