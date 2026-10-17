@@ -8,6 +8,7 @@ const Prompts = (() => {
   "flow/next_round.md": "每轮推进",
   "system/round.md": "回合流程与状态缓存",
   "reference/游戏前准备.md": "游戏前准备",
+  "reference/节点地图.md": "节点地图格式与展示",
   "reference/游戏结束.md": "游戏结束",
   "reference/游戏循环.md": "游戏循环索引",
   "reference/回合细则.md": "回合细则",

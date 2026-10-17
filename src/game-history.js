@@ -6,7 +6,7 @@ const GameHistory=(()=>{
   const ROOT='/workspace/过往回合历史记忆';
   const generated=p=>p.startsWith(ROOT+'/')||['/workspace/ROUND_CACHE.xml','/workspace/SummaryHistory.json','/workspace/OutputCopy.log'].includes(p);
   const segment=x=>String(x||'Unknown').trim().replace(/[<>:"/\\|?*\u0000-\u001f\s]/g,'_').replace(/_+/g,'_').replace(/[. ]+$/g,'').slice(0,120)||'Unknown';
-  const archiveEvents=events=>events.filter(e=>['player','story','dice','note','round_end'].includes(e.type));
+  const archiveEvents=events=>events.filter(e=>['player','story','map','dice','note','round_end'].includes(e.type));
   function writeRound(s,round,cache,overwrite=true,playerState){
     const events=archiveEvents(s.events).filter(e=>e.round===round),summary=s.summaries.findLast(e=>e.round===round);
     if(!events.length&&!summary)return;
@@ -45,10 +45,10 @@ const GameHistory=(()=>{
     s.events=history.filter(e=>e&&typeof e==='object').map((e,i)=>{
       const type=e.type==='main'?'story':e.type==='message'?'player':e.type;
       const hidden=e.is_private&&String(e.target_player||'').replace(/^Player-/,'')!==playerId;
-      return {id:'reference-'+i,type:['story','player','dice','note','round_end'].includes(type)?type:'note',content:String(e.content||''),
+      return {id:'reference-'+i,type:['story','player','map','dice','note','round_end'].includes(type)?type:'note',content:String(e.content||''),
         round:roundNumber(e.round_count??e.round),at:e.at??(e.timestamp>0?e.timestamp*1000:undefined),worldTime:e.world_time??e.worldTime??'',
         audience:e.is_private?(e.target_player?[String(e.target_player).replace(/^Player-/,'')]:'host'):(e.audience||'public'),actorId:e.actorId||String(e.role||'').replace(/^Player-/,''),secret:!!(e.is_secret||e.secret),skip:!!(e.is_skip||e.skip),speaker:e.role,privateContent:e.private_content||'',
-        data:e.dice_data||e.data};
+        data:e.dice_data||e.data,...(type==='map'?{map:e.map}:{})};
     });
     const summaries=exists('SummaryHistory.json')?read('SummaryHistory.json','array'):dirs.map(n=>{const p='过往回合历史记忆/'+n.name+'/回合总结.txt';return {round:Number(n.name.match(/^Round_(\d+)/)[1]),content:D.node(s,p)?.content||''};});
     const byRound=new Map();for(const e of summaries){if(!e||typeof e!=='object')continue;const round=roundNumber(e.round_count??e.round);byRound.set(round,{round,content:String(e.content||''),worldTime:e.world_time??e.worldTime??'',at:e.at??(e.timestamp>0?e.timestamp*1000:undefined)});}s.summaries=[...byRound.values()].sort((a,b)=>a.round-b.round);

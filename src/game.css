@@ -241,3 +241,25 @@
 
 /* Model input and the complete-list arrow share one field. */
 .model-control>.model-picker{min-width:0}
+.player-tools{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--rule);flex-shrink:0}
+.player-tools[hidden],.player-tools:empty{display:none}
+.player-tools>button{flex:1;min-width:0}
+.node-map-card{border:1px solid #b9a77e;background:#e8dfcb;border-radius:7px;margin:18px 0;padding:12px 16px;cursor:pointer;overflow:hidden;touch-action:pan-y pinch-zoom}
+.node-map-card:focus-visible{outline:2px solid var(--gold);outline-offset:3px}
+.node-map-card>header{display:flex;justify-content:space-between;align-items:center;color:var(--muted);font:14px var(--sans)}
+.node-map-card>header small{font-size:11px}
+.node-map-preview{display:block;width:100%;height:240px}
+.node-map-caption{text-align:center;margin:0!important;font:12px var(--sans);color:var(--muted)}
+.node-map-dialog{padding:0;width:min(1000px,calc(100vw - 24px));max-width:none;max-height:92vh;max-height:92dvh;background:var(--paper,#efe5cf);color:var(--ink,#3e3c31);border:1px solid #b9a77e;border-radius:8px;box-shadow:0 20px 70px #0006;overflow:hidden}
+.node-map-dialog[open]{display:flex;flex-direction:column}
+.node-map-dialog::backdrop{background:#111810ba;backdrop-filter:blur(3px)}
+.node-map-dialog>header{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--rule);flex-shrink:0}
+.node-map-dialog h2{margin:0;font-size:21px}.node-map-dialog [data-close]{border:0;font-size:24px;padding:0 8px}
+.node-map-controls{display:flex;justify-content:center;gap:8px;padding:10px;flex-shrink:0}
+.node-map-controls button{min-width:40px}
+.node-map-detail{display:block;width:100%;height:clamp(180px,48vh,560px);min-height:120px;flex-shrink:1;touch-action:none;cursor:grab}
+.node-map-detail:active{cursor:grabbing}
+.node-map-description{padding:12px 20px;border-top:1px solid var(--rule);min-height:70px;max-height:20vh;overflow:auto;flex-shrink:0}
+.node-map-description h3{font-size:16px;margin:0 0 5px}.node-map-description p{margin:0;font-size:14px;white-space:pre-wrap;overflow-wrap:anywhere}
+.node-map-places{display:flex;gap:6px;padding:10px 20px;overflow:auto;flex-shrink:0}.node-map-places>button{white-space:nowrap;font-size:12px}.node-map-places [aria-pressed=true]{background:#b79b6233}
+@media(max-width:600px){.node-map-preview{height:200px}.node-map-card{padding:10px}.node-map-dialog>header{padding:12px 14px}.node-map-description{padding:10px 14px}.player-tools{padding:10px}}

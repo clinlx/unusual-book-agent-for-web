@@ -33,7 +33,7 @@ test('browser config is standalone and has the same profiles as Node',()=>{
 test('standalone story exports use the configured project URL and escape HTML attributes',()=>{
   const context=vm.createContext({
     FrontendConfig:{...Config,links:{...Config.links,github:'https://example.test/project?a=1&b="two"'}},
-    GameData:require('../src/game-data'),BUNDLED_GAME_ICON:'',BUNDLED_GAME_FAVICON:'',BUNDLED_GAME_STYLES:'',
+    GameData:require('../src/game-data'),NodeMap:require('../src/node-map'),BUNDLED_GAME_ICON:'',BUNDLED_GAME_FAVICON:'',BUNDLED_GAME_STYLES:'',
   });
   vm.runInContext(fs.readFileSync(require.resolve('../src/game-presentation'),'utf8'),context);
   const html=vm.runInContext('GamePresentation.historyHTML({name:"测试",events:[],snapshots:[]})',context);

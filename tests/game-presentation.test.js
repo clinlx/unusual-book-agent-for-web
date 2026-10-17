@@ -55,7 +55,8 @@ test('archive filters raw private audiences and masks private secret dice before
  a.match(html,/VISIBLE_PRIVATE_ROLL/);a.match(html,/<article class="dice private-dice dice-clickable"/);a.match(html,/<article class="dice secret-dice private-dice"/);
  a.match(html,/<article class="story private-story"/);a.match(html,/OWN_PRIVATE_STORY/);a.match(html,/私密暗骰/);
  a.doesNotMatch(html,/OTHER_PRIVATE|HIDDEN_DARK|43219|HOST_ROLL|GM_ROLL|LEGACY_HOST_STORY|OTHER_ACTION/);
- a.equal((html.match(/<article /g)||[]).length,3);a.deepEqual(s.events,before);
+ // Count emitted markup, excluding HTML templates in the embedded offline renderer.
+ a.equal((html.split('<script>')[0].match(/<article /g)||[]).length,3);a.deepEqual(s.events,before);
 });
 
 test('archive names other actors and distinguishes own, other and private actions',()=>{

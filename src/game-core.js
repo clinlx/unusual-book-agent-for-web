@@ -1,6 +1,7 @@
 'use strict';
 
 const GameCore = (() => {
+  const maps = typeof module !== 'undefined' && module.exports ? require('./node-map') : NodeMap;
   const defaults = typeof module !== 'undefined' && module.exports ? require('./frontend-config').game : FrontendConfig.game;
   const vfs = typeof module !== 'undefined' && module.exports ? require('./vfs.js') : VFS;
   const data = typeof module !== 'undefined' && module.exports ? require('./game-data.js') : GameData;
@@ -170,10 +171,10 @@ const GameCore = (() => {
     const info=contextRebuildInfo(s),old=s.activeRound,current=old?.number||Math.max(1,s.round);
     // Rebuild from published game events, never from arbitrary assistant text or tool arguments.
     const common=['id','type','round','at','worldTime','content','audience','private','actorId','roundId','speaker','privateContent','disguise','skip',
-      'secret','playerRelated','roller','rollerId','rollerKind','targetPlayer','description','relatedAttr','data','manual','pending','playerState','name'];
+      'secret','playerRelated','roller','rollerId','rollerKind','targetPlayer','description','relatedAttr','data','manual','pending','playerState','name','map'];
     const diceFields=['description','roller','related_attr','is_secret','is_private','target_player','dice_dict','calculate_only','target_value','compare_mode',
       'critical_success_range','critical_failure_range','dice_combine_mode','left_modifiers','right_modifiers'];
-    const events=s.events.filter(e=>['player','story','dice','note','round_end'].includes(e.type)).map(e=>{
+    const events=s.events.filter(e=>['player','story','map','dice','note','round_end'].includes(e.type)).map(e=>{
       const event=Object.fromEntries(common.filter(k=>Object.hasOwn(e,k)).map(k=>[k,copy(e[k])]));
       // Published roll rules are game facts used by the detail panel, including named modifiers.
       if(e.type==='dice'&&object(e.diceArgs))event.diceArgs=Object.fromEntries(diceFields.filter(k=>Object.hasOwn(e.diceArgs,k)).map(k=>[k,copy(e.diceArgs[k])]));
@@ -187,6 +188,7 @@ const GameCore = (() => {
           (e.privateContent?'\n[该玩家的私密行动，仅主持人可见]\n'+e.privateContent:'')});
       if(e.type==='story')messages.push({role:'assistant',round,origin:'rebuilt-story',
         content:(e.private||e.audience&&e.audience!=='public'?'[私密剧情，受众：'+JSON.stringify(e.audience||'host')+']\n':'')+content});
+      if(e.type==='map')messages.push({role:'user',round,origin:'rebuilt-map',content:'[已经公开的地图快照，不因上下文重建重复展示]\n'+JSON.stringify(maps.publicSnapshot(e.map))});
       if(e.type==='dice')messages.push({role:'user',round,origin:'rebuilt-dice',
         content:'[已发生的检定 · 沿用结果，不要重掷；保留原受众与暗骰限制]\n'+JSON.stringify(
           Object.fromEntries(['content','roller','description','relatedAttr','secret','audience','playerRelated','data','diceArgs'].filter(k=>Object.hasOwn(e,k)).map(k=>[k,e[k]])))});
@@ -314,8 +316,9 @@ const GameCore = (() => {
     if(e.type==='dice')return diceEventAccess(s,e,id).visible;
     if(e.type==='player'&&e.actorId!==id&&e.privateContent&&!String(e.content||'').trim()&&!e.skip)return false;
     if(e.audience!==undefined&&e.audience!=='public'&&(!Array.isArray(e.audience)||!e.audience.includes(id)))return false;
-    return !e.secret&&(['player','story','round_end','note'].includes(e.type)||e.type==='warning'&&e.code==='INVALID_TOOL_ARGUMENTS');
+    return !e.secret&&(['player','story','map','round_end','note'].includes(e.type)||e.type==='warning'&&e.code==='INVALID_TOOL_ARGUMENTS');
   }).map(e=>{const x=copy(e),id=s.actorId||s.playerPath?.split('/').pop().replace(/^Player-/,'');if(x.actorId!==id){delete x.privateContent;delete x.disguise;}
+    if(x.type==='map')x.map=maps.publicSnapshot(x.map);
     if(x.type==='dice'){const {visible,...access}=diceEventAccess(s,e,id);Object.assign(x,access);if(x.secret){delete x.data;delete x.diceArgs;delete x.content;delete x.description;delete x.relatedAttr;}}return x;
   });
   function requireText(v,label){if(typeof v!=='string'||!v.trim())throw Error(label+' 不得为空');return v;}
@@ -443,6 +446,18 @@ const GameCore = (() => {
       const readSubtreeFirst=fp=>{readFirst(fp);const n=vfs.resolve(s.tree,vfs.normalize(fp));if(n?.type==='dir')for(const child of Object.values(n.children))readSubtreeFirst(fp+'/'+child.name);};
       let result;
       switch(name){
+        case 'show_map':{
+          if(typeof a.current_id!=='string')throw Error('current_id 必须显式填写字符串；不高亮时填空串');
+          if(a.path!==undefined)requireText(a.path,'path');
+          const fp=path(a.path===undefined?'节点地图.json':a.path);
+          if(!/\.json$/i.test(fp))throw Error('地图路径必须指向 JSON 文件');
+          const n=vfs.resolve(s.tree,vfs.normalize(fp));
+          if(!n||n.type!=='file'||n.encoding==='base64')throw Error('地图文件不存在或不是文本文件：'+fp);
+          let raw;try{raw=JSON.parse(n.content.replace(/^\uFEFF/,''));}catch(_){throw Error('地图文件不是合法 JSON：'+fp);}
+          const map=maps.snapshot(raw,a.current_id);
+          emit(s,'map',{map,audience:'public'});
+          result={status:'地图快照已向所有玩家展示',visibleNodes:map.nodes.length};break;
+        }
         case 'trigger_next_round':{
           const plan=jsonObject(a.phase_plan,'phase_plan');if(typeof plan.Countdowns!=='string'||!plan.Countdowns.trim()||!Array.isArray(plan.Pending_Triggers)||typeof plan.Forced_Checks!=='string'||!plan.Forced_Checks.trim())throw Error('phase_plan 需要非空文本 Countdowns、Forced_Checks 和数组 Pending_Triggers');
           plan.Pending_Triggers.forEach((entry,i)=>{if(!object(entry))throw Error('phase_plan.Pending_Triggers['+i+'] 必须是对象；没有触发器时填写 []');});

@@ -87,12 +87,13 @@ const MultiplayerSync=(()=>{
   }
   const diceFields=['mode','left','right','compare_mode','raw','total','target','success','criticalHints','critical','special'];
   function eventView(e,actorId,index,save,Core){
-    if(!['player','story','round_end','note','dice'].includes(e.type))return null;
+    if(!['player','story','map','round_end','note','dice'].includes(e.type))return null;
     const access=e.type==='dice'?Core.diceEventAccess(save,e,actorId):null;
     if(access?!access.visible:!allowed(e,actorId))return null;
     if(e.type==='player'&&e.actorId!==actorId&&!String(e.content||'').trim()&&String(e.privateContent||'').trim()&&!e.skip)return null;
     if(e.secret&&e.type!=='dice'&&!Array.isArray(e.audience))return null;
     const out={id:'event-'+index,...pick(e,['type','round','at','worldTime','actorId','name','skip'])};
+    if(e.type==='map'){const maps=typeof module!=='undefined'&&module.exports?require('./node-map'):NodeMap;out.map=maps.publicSnapshot(e.map);return out;}
     if(e.type==='dice'){
       Object.assign(out,pick(e,['roller','description','relatedAttr','manual','pending']),pick(access,['rollerId','rollerKind','private','targetPlayer','playerRelated','secret']));
       if(out.secret){delete out.description;delete out.relatedAttr;}

@@ -1,5 +1,6 @@
 'use strict';
 const GamePresentation=(()=>{
+  const maps=typeof module!=='undefined'&&module.exports?require('./node-map'):NodeMap;
   const config=typeof module!=='undefined'&&module.exports?require('./frontend-config'):FrontendConfig;
   const D=typeof module!=='undefined'&&module.exports?require('./game-data'):GameData;
   const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -52,7 +53,7 @@ const GamePresentation=(()=>{
   function eventContent(save,e){let text=String(e.content||'');if(!save?.tree)return text;const resolve=names(save),roller=e.data?.roller||e.roller; if(roller&&resolve(roller)!==roller){if(text.startsWith(roller))text=resolve(roller)+text.slice(String(roller).length);}return text.replace(/\b(?:Player|KPC)-[^\s:：·，。;；()[\]<>]+/g,id=>resolve(id));}
   function hasPlayHistory(save){
     return Number(save?.round)>0 || (save?.events||[]).some(event =>
-      ['dice','round_end'].includes(event.type) || ['story','player'].includes(event.type) && String(event.content||'').trim());
+      ['dice','map','round_end'].includes(event.type) || ['story','player'].includes(event.type) && String(event.content||'').trim());
   }
   function exportName(save,at=Date.now()){return String(save.name||'故事')+'-故事-'+new Date(at).toISOString().replace(/[:.]/g,'-')+'.html';}
   const DICE_COMPARE={gt:'>',ge:'≥',lt:'<',le:'≤',eq:'=',ne:'≠'};
@@ -149,7 +150,7 @@ const GamePresentation=(()=>{
     const spectatorProjection=save.spectator===true&&!save.tree;
     const isDark=e=>e.type==='dice'&&!!(e.secret||e.diceArgs?.is_secret||e.relatedAttr==='心理学'||e.diceArgs?.related_attr==='心理学');
     const events=(save.events||[]).filter(e=>{
-      if(!['player','story','round_end','dice','note'].includes(e.type))return false;
+      if(!['player','story','map','round_end','dice','note'].includes(e.type))return false;
       if(e.audience!==undefined&&e.audience!=='public'&&!(Array.isArray(e.audience)&&save.actorId&&e.audience.includes(save.actorId)))return false;
       if(!spectatorProjection&&isPrivate(e)&&e.targetPlayer&&e.targetPlayer!==save.actorId)return false;
       if(isPrivate(e)&&save.tree&&!Array.isArray(e.audience)&&!e.targetPlayer)return false;
@@ -162,6 +163,7 @@ const GamePresentation=(()=>{
     });
     const actorName=e=>e.name||(save.slots||[]).find(s=>s.id===e.actorId)?.name||names(save)(e.actorId)||'玩家';
     const eventHTML=(e,index)=>{
+      if(e.type==='map')return maps.card(e.map,{archive:true});
       if(e.type==='round_end')return `<article class="round_end round-end" data-round="${esc(e.round)}"><header>回合结束 · ${esc(metadata(e))}</header></article>`;
       if(e.type==='dice'&&!isDark(e)){
         const roller=e.roller||e.diceArgs?.roller||e.data?.roller||e.rollerId||'',description=e.description||e.diceArgs?.description||'';
@@ -220,7 +222,7 @@ const GamePresentation=(()=>{
 
     const github=`<a class="archive-github" href="${esc(config.links.github)}" target="_blank" rel="noopener noreferrer" aria-label="GitHub 项目" title="GitHub 项目"><svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M12 .75a11.25 11.25 0 0 0-3.56 21.92c.56.1.77-.24.77-.54v-2.1c-3.14.68-3.8-1.33-3.8-1.33-.51-1.3-1.25-1.65-1.25-1.65-1.02-.7.08-.69.08-.69 1.13.08 1.73 1.16 1.73 1.16 1 1.72 2.63 1.22 3.27.94.1-.73.4-1.22.71-1.5-2.5-.28-5.13-1.25-5.13-5.57 0-1.23.44-2.23 1.16-3.01-.12-.28-.5-1.43.11-2.97 0 0 .95-.3 3.1 1.15a10.8 10.8 0 0 1 5.64 0c2.15-1.45 3.1-1.15 3.1-1.15.61 1.54.23 2.69.11 2.97.72.78 1.16 1.78 1.16 3.01 0 4.33-2.64 5.28-5.15 5.56.4.35.76 1.03.76 2.08v3.1c0 .3.2.65.78.54A11.25 11.25 0 0 0 12 .75Z"/></svg></a>`;
     const detailDialog='<dialog id="dice-details" class="archive-dice-dialog" aria-labelledby="dice-details-title"><header><h2 id="dice-details-title">检定详情</h2><button type="button" data-close-dice aria-label="关闭检定详情">×</button></header><div id="dice-details-content"></div><footer><button type="button" data-close-dice>关闭</button></footer></dialog>';
-    const layout=`<main class="archive replay-mode" id="archive"><header class="archive-header"><div class="archive-brand"><span class="brand-seal">${icon}</span><div class="archive-title"><small>异闻手记 · 故事存档</small><h1>${esc(save.name||'故事存档')}</h1></div></div><div class="replay-toolbar" id="replay-toolbar"><button type="button" id="replay-prev" disabled>← 上一步</button><span id="replay-progress"><input id="replay-jump" type="text" inputmode="numeric" pattern="[0-9]*" value="0" aria-label="当前节点" style="width:${Math.max(2,String(nodes.length).length+1)}ch"> / <b>${nodes.length}</b></span><button type="button" id="replay-next">${nodes.length?'下一节点 →':'暂无节点'}</button></div><div class="archive-head-actions"><div class="archive-mode-switch" role="group" aria-label="查看模式"><button type="button" data-mode="replay" aria-pressed="true">演绎模式</button><button type="button" data-mode="overview" aria-pressed="false">总览模式</button></div><span>离线卷宗 · ${esc(new Date().toLocaleString())}</span>${github}</div></header>${tabs.map(([id,name])=>`<input class="native-control tab-control" type="radio" name="archive-tab" id="archive-tab-${id}" aria-label="${name}" ${id==='story'?'checked':''}>`).join('')}<aside id="archive-items" class="card panel side-panel"><h2 class="panel-title"><span>I. 随身物品</span></h2><div class="panel-content panel-scroll" id="items-content"><p>暂无物品</p></div></aside><section id="archive-story" class="story-column"><div class="card story-paper" id="replay-surface"><h2 class="panel-title story-heading"><span><small>II.</small> 故事卷宗</span><small>CHRONICLE</small></h2><div class="history" id="archive-history">${body||'<p>暂无故事记录</p>'}<button type="button" id="replay-hint" class="replay-hint" aria-hidden="true">点击以继续演绎</button></div></div><div class="resource-dock" id="archive-vitals" hidden></div></section><aside id="archive-status" class="card panel side-panel"><h2 class="panel-title"><span>III. 人物档案</span></h2><div class="panel-content panel-scroll" id="status-content"><p>暂无资料</p></div></aside><nav class="archive-nav" aria-label="卷宗页面">${tabs.map(([id,name])=>`<label for="archive-tab-${id}">${name}</label>`).join('')}</nav></main>`;
+    const layout=`<main class="archive replay-mode" id="archive"><header class="archive-header"><div class="archive-brand"><span class="brand-seal">${icon}</span><div class="archive-title"><small>异闻手记 · 故事存档</small><h1>${esc(save.name||'故事存档')}</h1></div></div><div class="replay-toolbar" id="replay-toolbar"><button type="button" id="replay-prev" disabled>← 上一步</button><span id="replay-progress"><input id="replay-jump" type="text" inputmode="numeric" pattern="[0-9]*" value="0" aria-label="当前节点" style="width:${Math.max(2,String(nodes.length).length+1)}ch"> / <b>${nodes.length}</b></span><button type="button" id="replay-next">${nodes.length?'下一节点 →':'暂无节点'}</button></div><div class="archive-head-actions"><div class="archive-mode-switch" role="group" aria-label="查看模式"><button type="button" data-mode="replay" aria-pressed="true">演绎模式</button><button type="button" data-mode="overview" aria-pressed="false">总览模式</button></div><span>离线卷宗 · ${esc(new Date().toLocaleString())}</span>${github}</div></header>${tabs.map(([id,name])=>`<input class="native-control tab-control" type="radio" name="archive-tab" id="archive-tab-${id}" aria-label="${name}" ${id==='story'?'checked':''}>`).join('')}<aside id="archive-items" class="card panel side-panel"><h2 class="panel-title"><span>I. 随身物品</span></h2><div class="panel-content panel-scroll" id="items-content"><p>暂无物品</p></div><footer class="player-tools" id="archive-player-tools" hidden><button type="button" id="latest-map">◇ 查看地图</button></footer></aside><section id="archive-story" class="story-column"><div class="card story-paper" id="replay-surface"><h2 class="panel-title story-heading"><span><small>II.</small> 故事卷宗</span><small>CHRONICLE</small></h2><div class="history" id="archive-history">${body||'<p>暂无故事记录</p>'}<button type="button" id="replay-hint" class="replay-hint" aria-hidden="true">点击以继续演绎</button></div></div><div class="resource-dock" id="archive-vitals" hidden></div></section><aside id="archive-status" class="card panel side-panel"><h2 class="panel-title"><span>III. 人物档案</span></h2><div class="panel-content panel-scroll" id="status-content"><p>暂无资料</p></div></aside><nav class="archive-nav" aria-label="卷宗页面">${tabs.map(([id,name])=>`<label for="archive-tab-${id}">${name}</label>`).join('')}</nav></main>`;
 
     // Only archive layout and playback controls live here; colors, paper, text,
     // player/private bubbles, fields and change tags come from the gameplay skin.
@@ -247,15 +249,19 @@ const GamePresentation=(()=>{
 @media print{.archive-github,.archive-dice-dialog{display:none!important}html,body{height:auto;overflow:visible}body{background:white}.archive{height:auto;display:block;padding:0}.archive-header{color:var(--ink)}.archive-mode-switch,.replay-toolbar,.replay-hint{display:none!important}.card,.story-column{display:block!important;overflow:visible;margin:12px 0}.panel-content,.history{overflow:visible}.archive-nav,.resource-dock{display:none!important}.history article{display:block!important}article{break-inside:avoid}}
 `;
 
-    const script=`(()=>{'use strict';
+    const script=maps.runtime()+`;(()=>{'use strict';
 const archive=document.getElementById('archive'),history=document.getElementById('archive-history'),articles=[...history.querySelectorAll('article')],next=document.getElementById('replay-next'),prev=document.getElementById('replay-prev'),progress=document.getElementById('replay-progress'),jump=document.getElementById('replay-jump'),items=document.getElementById('items-content'),status=document.getElementById('status-content'),vitals=document.getElementById('archive-vitals');
 const nodes=${safeJSON(nodes.map(({round,type,secret})=>({round,type,secret})))},states=${safeJSON(replayStates)},finalState=${safeJSON(finalState)},finalHTML=${safeJSON(finalHTML)},finalDiff=${safeJSON(finalDiff)};const firstRound=nodes.find(node=>node.round>0)?.round??nodes[0]?.round;let index=nodes.findIndex(node=>node.round>0&&node.round!==firstRound);if(index<0)index=nodes.length;
 const hint=document.getElementById('replay-hint');
+const mapTools=document.getElementById('archive-player-tools'),mapButton=document.getElementById('latest-map');
+function lastMap(){return articles.filter((a,i)=>a.matches('[data-node-map]')&&(!archive.classList.contains('replay-mode')||i<index)).at(-1);}
+function updateMaps(){mapTools.hidden=!lastMap();NodeMap.hydrate(history);}
+mapButton.addEventListener('click',()=>{const card=lastMap();if(card)NodeMap.open(JSON.parse(card.dataset.nodeMap),mapButton);});
 function updateHint(){const visible=archive.classList.contains('replay-mode')&&index<nodes.length&&history.clientHeight>0&&history.scrollHeight-history.scrollTop-history.clientHeight<=6;hint.classList.toggle('is-visible',visible);hint.setAttribute('aria-hidden',String(!visible));}
 function setPanels(html,raw,animate){items.innerHTML=html.items;status.innerHTML=html.info;vitals.innerHTML=raw.vitals||'';vitals.hidden=!raw.vitals;if(animate){for(const el of [items,status]){el.classList.remove('state-enter');void el.offsetWidth;el.classList.add('state-enter');}}}
 function stateAt(i){let found=null,changed=false;for(let n=0;n<i;n++){const node=nodes[n],s=node&&states[node.round];if(node?.type==='round_end'&&s){found=s;changed=n===i-1;}}if(i>=nodes.length)return {info:finalDiff.info,items:finalDiff.items,raw:finalState};if(!found)return {info:'<p>暂无资料</p>',items:'<p>暂无物品</p>',raw:{info:{},items:[]}};return {info:changed?found.infoDiff:found.infoClean,items:changed?found.itemsDiff:found.itemsClean,raw:found.raw};}
-function render(animate=true){cancelPress();archive.classList.add('replay-mode');archive.classList.remove('overview-mode');articles.forEach((a,i)=>{a.classList.toggle('revealed',i<index);a.classList.remove('replay-enter')});if(animate&&index>0){const a=articles[index-1];if(a){a.classList.add('replay-enter');a.scrollIntoView({block:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});}}const s=stateAt(index);setPanels({info:s.info,items:s.items},s.raw,animate);jump.value=String(index);prev.disabled=index<=0;next.disabled=index>=nodes.length;next.textContent=!nodes.length?'暂无节点':index>=nodes.length?'已到结局':'下一节点 →';requestAnimationFrame(updateHint);}
-function overview(){cancelPress();archive.classList.remove('replay-mode');archive.classList.add('overview-mode');articles.forEach(a=>a.classList.remove('replay-enter'));setPanels(finalHTML,finalState,false);updateHint();}
+function render(animate=true){cancelPress();archive.classList.add('replay-mode');archive.classList.remove('overview-mode');articles.forEach((a,i)=>{a.classList.toggle('revealed',i<index);a.classList.remove('replay-enter')});if(animate&&index>0){const a=articles[index-1];if(a){a.classList.add('replay-enter');a.scrollIntoView({block:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});}}const s=stateAt(index);setPanels({info:s.info,items:s.items},s.raw,animate);jump.value=String(index);prev.disabled=index<=0;next.disabled=index>=nodes.length;next.textContent=!nodes.length?'暂无节点':index>=nodes.length?'已到结局':'下一节点 →';updateMaps();requestAnimationFrame(updateHint);}
+function overview(){cancelPress();archive.classList.remove('replay-mode');archive.classList.add('overview-mode');articles.forEach(a=>a.classList.remove('replay-enter'));setPanels(finalHTML,finalState,false);updateHint();updateMaps();}
 document.querySelectorAll('[data-mode]').forEach(btn=>btn.addEventListener('click',()=>{const replay=btn.dataset.mode==='replay';document.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b===btn)));if(replay)render(false);else overview();}));
 const advance=()=>{if(index<nodes.length){index++;render(true);}};
 next.addEventListener('click',advance);
@@ -272,11 +278,11 @@ const surface=document.getElementById('replay-surface');let press=null,blockedDi
 const dialog=document.getElementById('dice-details'),detailBody=document.getElementById('dice-details-content');let detailTrigger=null;
 const replay=()=>archive.classList.contains('replay-mode');
 const interactive=el=>el?.closest?.('button,a,input,select,textarea,summary,label');
-function openDice(card){const template=document.getElementById('dice-detail-'+card.dataset.diceDetail);if(!template||dialog.open)return;detailTrigger=card;detailBody.replaceChildren(template.content.cloneNode(true));dialog.showModal();}
+function openDice(card){if(card.matches('[data-node-map]')){NodeMap.open(JSON.parse(card.dataset.nodeMap),card);return;}const template=document.getElementById('dice-detail-'+card.dataset.diceDetail);if(!template||dialog.open)return;detailTrigger=card;detailBody.replaceChildren(template.content.cloneNode(true));dialog.showModal();}
 function cancelPress(){if(!press)return;clearTimeout(press.timer);press.card?.classList.remove('dice-holding');if(press.card)blockedDiceClick=true;press=null;}
 function holdDice(p){p.card.classList.add('dice-holding');p.timer=setTimeout(()=>{if(press!==p||document.hidden||!p.card.isConnected)return cancelPress();cancelPress();openDice(p.card);},3000);}
 window.addEventListener('pointerdown',e=>{if(press&&press.id!==e.pointerId)cancelPress();},true);
-surface.addEventListener('pointerdown',e=>{if(e.button!==0||!e.isPrimary||interactive(e.target)||dialog.open)return;cancelPress();blockedDiceClick=false;press={id:e.pointerId,x:e.clientX,y:e.clientY,at:performance.now(),card:e.target.closest('[data-dice-detail]')};if(press.card)holdDice(press);});
+surface.addEventListener('pointerdown',e=>{if(e.button!==0||!e.isPrimary||interactive(e.target)||dialog.open||document.querySelector('.node-map-dialog[open]'))return;cancelPress();blockedDiceClick=false;press={id:e.pointerId,x:e.clientX,y:e.clientY,at:performance.now(),card:e.target.closest('[data-dice-detail],[data-node-map]')};if(press.card)holdDice(press);});
 window.addEventListener('pointermove',e=>{if(press&&press.id===e.pointerId&&Math.hypot(e.clientX-press.x,e.clientY-press.y)>8)cancelPress();},{passive:true});
 window.addEventListener('pointercancel',cancelPress);
 surface.addEventListener('pointerleave',e=>{if(e.pointerType==='mouse')cancelPress();});
@@ -284,9 +290,9 @@ window.addEventListener('pointerup',e=>{if(!press||press.id!==e.pointerId)return
 history.addEventListener('scroll',cancelPress,{passive:true});
 window.addEventListener('blur',cancelPress);
 document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelPress();});
-history.addEventListener('contextmenu',e=>{if(e.target.closest('[data-dice-detail]'))e.preventDefault();});
-history.addEventListener('click',e=>{const card=e.target.closest('[data-dice-detail]');if(card&&!replay()&&!blockedDiceClick)openDice(card);});
-history.addEventListener('keydown',e=>{const card=e.target.closest('[data-dice-detail]');if(!card||!['Enter',' '].includes(e.key))return;e.preventDefault();if(e.repeat)return;if(!replay()){openDice(card);return;}cancelPress();press={card,key:e.key};holdDice(press);});
+history.addEventListener('contextmenu',e=>{if(e.target.closest('[data-dice-detail],[data-node-map]'))e.preventDefault();});
+history.addEventListener('click',e=>{const card=e.target.closest('[data-dice-detail],[data-node-map]');if(card&&!card.matches('[data-node-map]')&&!replay()&&!blockedDiceClick)openDice(card);});
+history.addEventListener('keydown',e=>{const card=e.target.closest('[data-dice-detail],[data-node-map]');if(!card||!['Enter',' '].includes(e.key))return;e.preventDefault();if(e.repeat)return;if(!replay()&&!card.matches('[data-node-map]')){openDice(card);return;}cancelPress();press={card,key:e.key};holdDice(press);});
 window.addEventListener('keyup',e=>{if(press?.key===e.key)cancelPress();});
 history.addEventListener('focusout',e=>{if(press?.key&&press.card===e.target)cancelPress();});
 dialog.querySelectorAll('[data-close-dice]').forEach(button=>button.addEventListener('click',()=>dialog.close()));
