@@ -48,11 +48,20 @@ const MultiplayerSync=(()=>{
   }
   function profile(save,actorId,options={}){
     const {slot,omniscient}=detailAccess(save,actorId,options),card=roleCard(save,slot,omniscient,'info');
-    return {actorId,name:card.name,info:clone(card.info),omniscient};
+    return {actorId,name:card.name,info:clone(card.info),baseline:detailBaseline(save,slot,omniscient,'info',card.info),omniscient};
   }
   function inventory(save,actorId,options={}){
     const {slot,omniscient}=detailAccess(save,actorId,options),card=roleCard(save,slot,omniscient);
-    return {actorId,name:card.name,items:clone(card.items),omniscient};
+    return {actorId,name:card.name,items:clone(card.items),baseline:detailBaseline(save,slot,omniscient,'items',card.items),omniscient};
+  }
+  function detailBaseline(save,slot,omniscient,section,current){
+    if(!omniscient&&Data.hiddenFlag(Data.read(save,slot.path+'/基础信息.json')['.是否对玩家隐藏']))return clone(current);
+    const snapshot=save.snapshots?.at(-1),round=save.activeRound&&!save.activeRound.complete?save.round:save.round-1;
+    if(snapshot?.tree&&snapshot.round===round)try{
+      const previous=snapshot.slots?.find(s=>s.id===slot.id)||slot;
+      return clone(roleCard({...save,tree:snapshot.tree},previous,omniscient,section)[section]);
+    }catch(_){}
+    return clone(current);
   }
   const itemIdentities=new WeakMap();
   function itemKeys(save,slot,Data,keyMap){
@@ -154,9 +163,10 @@ const MultiplayerSync=(()=>{
     if(spectator&&roomView){roomView.actorId=null;roomView.submitted=false;roomView.spectator=true;roomView.perspective=perspective;roomView.canChoosePerspective=ownMember.permission==='all';}
     const pending=slot||spectator?pendingActions(save,actorId,{room}):[];
     if(perspective==='all')for(const id of Object.keys(room.submissions||{})){const ownAction=pendingActions(save,id,{room}).find(e=>e.actorId===id);if(ownAction){const i=pending.findIndex(e=>e.actorId===id);if(i>=0)pending[i]=ownAction;else pending.push(ownAction);}}
-    return {id:save.id,name:save.name,actorId:spectator?null:actorId,...spectator?{spectator:true,spectatedActorId:actorId,panelsLocked:!slot}:{},round:save.round||0,status:save.status,events,pendingActions:pending,rollbackCount:Math.min(10,save.snapshots?.length||0),rollbackTargetRound:save.snapshots?.at(-1)?.round??null,info:own.info,items:own.items,itemKeys:slot?itemKeys(save,slot,Data,keyMap):[],playerName:own.name,slots:publicSlots,room:roomView};
+    const baseline=spectator&&slot?{info:detailBaseline(save,slot,false,'info',own.info),items:detailBaseline(save,slot,false,'items',own.items)}:null;
+    return {...baseline?{baseline}:{},id:save.id,name:save.name,actorId:spectator?null:actorId,...spectator?{spectator:true,spectatedActorId:actorId,panelsLocked:!slot}:{},round:save.round||0,status:save.status,events,pendingActions:pending,rollbackCount:Math.min(10,save.snapshots?.length||0),rollbackTargetRound:save.snapshots?.at(-1)?.round??null,info:own.info,items:own.items,itemKeys:slot?itemKeys(save,slot,Data,keyMap):[],playerName:own.name,slots:publicSlots,room:roomView};
   }
-  function meta(view){return pick(view,['id','name','actorId','spectator','spectatedActorId','panelsLocked','round','status','playerName','slots','room','pendingActions','rollbackCount','rollbackTargetRound']);}
+  function meta(view){return pick(view,['id','name','actorId','spectator','spectatedActorId','panelsLocked','baseline','round','status','playerName','slots','room','pendingActions','rollbackCount','rollbackTargetRound']);}
   async function hashes(view){const [history,info,items,state]=await Promise.all([hash(view.events),hash(view.info),hash({items:view.items,itemKeys:view.itemKeys}),hash(meta(view))]);return {history,info,items,state};}
   const same=(a,b)=>canonical(a)===canonical(b);
   function createHost({getSave,getRoom,pageSize=200}){

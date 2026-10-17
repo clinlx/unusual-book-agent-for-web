@@ -16,3 +16,21 @@ test('visible profile changes do not mark unchanged inventory, and missing basel
  const s=setup();assert.deepEqual(changes(s),{info:false,items:false});Core.beginRound(s,'',true,'');write(s,'Player-pc/基础信息.json',{姓名:'林',状态:{HP:8,MAXHP:10},'.秘密':'原秘密'});finish(s);assert.deepEqual(changes(s),{info:true,items:false});
  s.snapshots=[];assert.deepEqual(changes(s),{info:false,items:false});
 });
+
+test('spectator details include a round baseline filtered by the same permission as current data',()=>{
+ const s=setup();Core.beginRound(s,'',true,'');write(s,'Player-pc/基础信息.json',{姓名:'林',状态:{HP:8,MAXHP:10},'.秘密':'新秘密'});write(s,'存档-索引-物品/钥匙/物品基础信息.json',{名称:'钥匙',数量:2});finish(s);
+ for(const permission of ['none','all','pc']){
+  const room={status:'collecting',members:{watch:{role:'spectator',permission}},submissions:{}},options={room,memberId:'watch'};
+  const profile=Sync.profile(s,'pc',options),bag=Sync.inventory(s,'pc',options);
+  assert.equal(profile.baseline.状态.HP,10);assert.equal(profile.info.状态.HP,8);
+  assert.equal(bag.baseline[0].数量,1);assert.equal(bag.items[0].数量,2);
+  assert.equal(profile.baseline['.秘密'],permission==='all'?'原秘密':undefined);
+  if(permission==='pc')assert.deepEqual(Sync.project(s,null,options).baseline,{info:profile.baseline,items:bag.baseline});
+ }
+ write(s,'Player-pc/基础信息.json',{姓名:'林','.是否对玩家隐藏':true});
+ const hiddenOptions={memberId:'watch',room:{members:{watch:{role:'spectator',permission:'none'}}}};
+ assert.deepEqual(Sync.profile(s,'pc',hiddenOptions).baseline,{});
+ assert.deepEqual(Sync.inventory(s,'pc',hiddenOptions).baseline,[]);
+ s.snapshots=[];const options={memberId:'watch',room:{members:{watch:{role:'spectator',permission:'all'}}}};
+ assert.deepEqual(Sync.profile(s,'pc',options).baseline,Sync.profile(s,'pc',options).info);
+});
