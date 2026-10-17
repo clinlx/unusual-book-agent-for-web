@@ -4,6 +4,24 @@ const M=require('../../src/node-map');
 const V=require('../../src/vfs'),C=require('../../src/game-core'),P=require('../../src/game-presentation');
 const Sync=require('../../src/multiplayer-sync'),History=require('../../src/game-history'),Tools=require('../../src/game-tools');
 const node=(id,links=[],hidden=false,point)=>({'表面名字':'地点'+id,ID:id,'表面描述':'公开描述','剧情笔记':'SECRET_NOTE','连通性':links,'是否隐藏':hidden,...(point?{'位置参考坐标':point}:{})});
+test('current location matches only unique public IDs, names or path endpoints without changing history',()=>{
+ const map=M.snapshot([node('yard'),node('hall'),node('secret',[],true)],'yard'),before=structuredClone(map);
+ for(const location of ['hall','地点hall','/workspace/存档-世界/house/hall',{ID:'hall'},{路径:'存档-世界/house/hall/场景台本.json'}])a.equal(M.matchLocation(map,location),'hall');
+ for(const location of ['',null,'secret','可能在 hall 附近',{备注:'hall'}])a.equal(M.matchLocation(map,location),null);
+ const ambiguous={...map,nodes:map.nodes.map(n=>({...n,name:'同名'}))};a.equal(M.matchLocation(ambiguous,'同名'),null);
+ a.equal(M.focus(map,'hall').currentId,'hall');a.equal(M.focus(map,'secret').currentId,'yard');a.deepEqual(map,before);
+});
+test('location-only synchronization updates each player focus without changing the historical map',async()=>{
+ const tree=V.createTree();for(const id of ['a','b']){V.writeFile(tree,'/workspace/Player-'+id+'/基础信息.json',JSON.stringify({当前位置:id==='a'?'yard':'hall'}));V.writeFile(tree,'/workspace/Player-'+id+'/背包.json','[]');}
+ const s=C.createSave('定位同步',tree);s.events=[{type:'map',map:M.snapshot([node('yard'),node('hall')],'yard'),audience:'public',round:1}];
+ const room={roomId:'map',epoch:0,members:{a:{actorId:'a',bindingVersion:1},b:{actorId:'b',bindingVersion:1},watch:{role:'spectator',permission:'all',view:'b',bindingVersion:1}}};
+ const host=Sync.createHost({getSave:()=>s,getRoom:()=>room}),client=Sync.createClient();await client.apply(await host.sync('b'));
+ a.deepEqual(client.getState().view.mapFocus,{eventId:'event-1',currentId:'hall'});a.equal(Sync.project(s,'a',{room,memberId:'a'}).mapFocus.currentId,'yard');
+ a.equal(Sync.project(s,null,{room,memberId:'watch'}).mapFocus.currentId,'hall');room.members.watch.view='all';a.equal(Sync.project(s,null,{room,memberId:'watch'}).mapFocus,null);
+ const before=client.request();V.writeFile(s.tree,'/workspace/Player-b/基础信息.json',JSON.stringify({当前位置:'yard'}));const update=await host.sync('b',before);a.equal(update.type,'incremental');a.deepEqual(update.events,[]);await client.apply(update);a.equal(client.getState().view.mapFocus.currentId,'yard');
+ V.writeFile(s.tree,'/workspace/Player-b/基础信息.json',JSON.stringify({当前位置:'SECRET_UNMAPPED_LOCATION'}));const packet=await host.sync('b',client.request());a.doesNotMatch(JSON.stringify(packet),/SECRET_UNMAPPED_LOCATION|当前位置/);await client.apply(packet);a.equal(client.getState().view.mapFocus,null);
+ a.equal(client.getState().view.events[0].map.currentId,'yard');
+});
 test('map validates all nodes before publishing and strips hidden nodes, links and notes',()=>{
  const raw=[node('a',['b','secret']),node('b',['a']),node('secret',[],true)];
  const snapshot=M.snapshot(raw,'a');

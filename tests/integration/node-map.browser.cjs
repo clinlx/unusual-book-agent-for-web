@@ -30,13 +30,14 @@ for(const width of [1280,390])test('live map cards and fixed latest-map toolbar 
  await page.locator('[data-action="slot-choose"]').click();await page.locator('[data-action="slot-confirm"]').click();
  await page.waitForFunction(()=>GameApp.getState().active?.playerPath);
  a.equal(await page.locator('.player-tools').count(),0);
- await page.evaluate(map=>{const s=GameApp.getState().active;s.events.push({id:'map-1',type:'map',round:1,map,audience:'public'});GameApp.setMode('play');},snapshot);
+ await page.evaluate(map=>{const s=GameApp.getState().active;VFS.writeFile(s.tree,s.playerPath+'/基础信息.json',JSON.stringify({姓名:'白墨',当前位置:'hall'}));s.events.push({id:'map-1',type:'map',round:1,map,audience:'public'});GameApp.setMode('play');},snapshot);
  await page.locator('.node-map-card').waitFor();await checkCanvas(page);
  await page.locator('.node-map-card').click();await page.locator('.node-map-dialog').waitFor();a.match(await page.locator('.node-map-description').innerText(),/庭院/);
  await page.locator('.node-map-places button').filter({hasText:'门厅'}).click();a.ok(await page.locator('.node-map-description').evaluate(n=>n.scrollHeight>n.clientHeight));await page.locator('[data-zoom="1.25"]').click();
  fs.mkdirSync(path.resolve(__dirname,'../artifacts'),{recursive:true});await page.screenshot({path:path.resolve(__dirname,'../artifacts/node-map-'+width+'.png')});
  await page.locator('[data-close]').click();if(width<700)await page.locator('[data-action="mobile-left"]').click();
  const toolbar=page.locator('.player-tools'),box=await toolbar.boundingBox();a.ok(box.y+box.height<=900);await page.locator('[data-action="latest-map"]').click();await page.locator('.node-map-dialog').waitFor();
+ a.match(await page.locator('.node-map-description').innerText(),/门厅/);
  a.doesNotMatch(await page.content(),/PRIVATE_MAP_NOTE|SECRET_CELLAR|SECRET_LOCATION/);a.deepEqual(errors,[]);
  // Export through the obfuscated release, not just the Node version of Presentation.
  const html=await page.evaluate(()=>GamePresentation.historyHTML(GameApp.getState().active));const archive=await page.context().newPage();const archiveErrors=[];archive.on('pageerror',e=>archiveErrors.push(e.message));await archive.setContent(html);await archive.locator('[data-mode="overview"]').click();await checkCanvas(archive);if(width<700)await archive.locator('label[for="archive-tab-items"]').click();await archive.locator('#latest-map').click();await archive.locator('.node-map-dialog').waitFor();a.deepEqual(archiveErrors,[]);
@@ -53,12 +54,24 @@ test('offline maps respect replay position, long press, scrolling cancellation a
  await page.locator('label[for="archive-tab-items"]').click();await page.locator('#latest-map').click();a.match(await page.locator('.node-map-description').innerText(),/门厅/);
  a.doesNotMatch(html,/PRIVATE_MAP_NOTE|SECRET_CELLAR|SECRET_LOCATION/);a.deepEqual(errors,[]);
 });
-for(const role of ['player','none','all'])test(role+' client receives maps and the latest-map shortcut',async t=>{
- const tree=V.createTree();V.writeFile(tree,'/workspace/Player-pc/基础信息.json','{}');V.writeFile(tree,'/workspace/Player-pc/背包.json','[]');const save=Core.createSave('联机地图',tree);save.events=[{id:'map',type:'map',round:1,audience:'public',map:snapshot}];save.status='waiting';
+for(const role of ['player','none','all','pc'])test(role+' client receives maps and the latest-map shortcut',async t=>{
+ const tree=V.createTree();V.writeFile(tree,'/workspace/Player-pc/基础信息.json','{"当前位置":"hall"}');V.writeFile(tree,'/workspace/Player-pc/背包.json','[]');const save=Core.createSave('联机地图',tree);save.events=[{id:'map',type:'map',round:1,audience:'public',map:snapshot}];save.status='waiting';
  const room={roomId:'map-room',epoch:0,roundId:'r',status:'collecting',members:{guest:{actorId:'pc',bindingVersion:1,connected:true}}},projector=Sync.createHost({getSave:()=>save,getRoom:()=>room});
  if(role!=='player')room.members.guest={actorId:null,role:'spectator',permission:role,perspective:role,bindingVersion:1,connected:true};
  const page=await pageFor(t,1280),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.exposeFunction('mapServer',async(id,p)=>{if(p.type==='sync.request')await page.evaluate(packet=>GameApp.receive(packet),await projector.sync(id,p.payload));});await page.goto(origin+'/client.html');await page.locator('#join-room-form').waitFor();await page.evaluate(()=>GameApp.connect({onClient:()=>()=>{},sendToHost:(id,p)=>window.mapServer(id,p)},'guest'));
- await page.locator('.node-map-card').waitFor();await checkCanvas(page);await page.locator('[data-action="latest-map"]').click();await page.locator('.node-map-dialog').waitFor();a.deepEqual(errors,[]);
+ await page.locator('.node-map-card').waitFor();await checkCanvas(page);await page.locator('[data-action="latest-map"]').click();await page.locator('.node-map-dialog').waitFor();
+ a.match(await page.locator('.node-map-description').innerText(),role==='player'||role==='pc'?/门厅/:/庭院/);await page.locator('[data-close]').click();
+ await page.locator('.node-map-card').click();a.match(await page.locator('.node-map-description').innerText(),/庭院/);await page.locator('[data-close]').click();
+ if(role==='player'||role==='pc'){
+   V.writeFile(save.tree,'/workspace/Player-pc/基础信息.json','{"当前位置":"yard"}');await page.evaluate(()=>GameApp.sync());
+   await page.locator('[data-action="latest-map"]').click();a.match(await page.locator('.node-map-description').innerText(),/庭院/);await page.locator('[data-close]').click();
+   V.writeFile(save.tree,'/workspace/Player-pc/基础信息.json','{"当前位置":"hall"}');await page.evaluate(packet=>GameApp.receive(packet),await projector.sync('guest'));
+   await page.locator('[data-action="latest-map"]').click();a.match(await page.locator('.node-map-description').innerText(),/门厅/);await page.locator('[data-close]').click();
+   V.writeFile(save.tree,'/workspace/Player-pc/基础信息.json','{"当前位置":"SECRET_LOCATION"}');await page.evaluate(()=>GameApp.sync());
+   await page.locator('[data-action="latest-map"]').click();a.match(await page.locator('.node-map-description').innerText(),/庭院/);
+   a.doesNotMatch(await page.evaluate(()=>JSON.stringify(GameApp.exportView())),/SECRET_LOCATION|当前位置/);
+ }
+ a.deepEqual(errors,[]);
 });
 test('touch scrolling cancels map long press; stationary hold opens only after three seconds',async t=>{
  const context=await browser.newContext({viewport:{width:390,height:844},hasTouch:true,isMobile:true,reducedMotion:'reduce'});t.after(()=>context.close());const page=await context.newPage();

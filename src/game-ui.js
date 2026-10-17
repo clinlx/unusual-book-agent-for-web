@@ -1380,7 +1380,7 @@ const GameUI = (() => {
     showModal('最近一回合的文件改动',`<p class="muted">${state.running?'本轮进行中，以下为已发生的改动。':'文件改动已生效。这里保留最近一轮的记录。'}</p>${changes.map(c=>`<details class="change" open><summary><span class="change-kind ${esc(c.type)}">${{add:'新增',delete:'删除',modify:'修改'}[c.type]||esc(c.type)}</span> ${esc(c.path)}</summary>${c.binary?'<p>二进制内容已变更</p>':`<div class="diff-columns"><div><header>修改前</header><pre>${esc(c.before??'（不存在）')}</pre></div><div><header>修改后</header><pre>${esc(c.after??'（不存在）')}</pre></div></div>`}</details>`).join('')||'<div class="empty-pane"><span>≡</span><p>本轮没有文件改动</p></div>'}`);
   }
   async function action(name,el) {
-    if(name==='latest-map'){const e=visibleEvents(state.active?.events||[],'play').findLast(e=>e.type==='map');if(e)NodeMap.open(e.map,el);return;}
+    if(name==='latest-map'){const view=GameApp.exportView(),e=view?.events?.findLast(e=>e.type==='map');if(e)NodeMap.open(NodeMap.focus(e.map,view.mapFocus?.eventId===e.id?view.mapFocus.currentId:null),el);return;}
     if(name==='close-modal'){if(modalRoot.querySelector('[data-slot-selection]'))return;if(modalRoot.querySelector('.manual-dice-shell[data-dice-rolling="true"]'))return toast('骰子正在结算，请等待结果');if(modalRoot.querySelector('.room-modal')&&!await resolveRoomChanges())return;resetRoomDraft();diceBoxToken++;activeDiceBox=null;modalRoot.innerHTML='';return;}
     if(name==='dice-detail'){const e=(state.active?.hostSpectator&&state.mode!=='debug'?GameApp.spectatorView()?.events:state.active?.events)?.find(x=>x.id===el.dataset.eventId);if(e)return diceDetailModal(e);}
     if(name==='manual-dice-later'){modalRoot.innerHTML='';return;}

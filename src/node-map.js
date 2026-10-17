@@ -29,6 +29,31 @@ function createNodeMap(){
     const source=Array.isArray(s?.nodes)?s.nodes:[],nodes=source.filter(n=>n&&n.hidden!==true&&n.是否隐藏!==true&&typeof n.id==='string'&&typeof n.name==='string').map(n=>({id:n.id,name:n.name,description:typeof n.description==='string'?n.description:'',...(Number.isFinite(n.x)&&Number.isFinite(n.y)?{x:n.x,y:n.y}:{})}));
     const ids=new Set(nodes.map(n=>n.id));return {nodes,edges:(Array.isArray(s?.edges)?s.edges:[]).filter(e=>e&&ids.has(e.from)&&ids.has(e.to)).map(e=>({from:e.from,to:e.to,directed:e.directed===true})),currentId:ids.has(s?.currentId)?s.currentId:''};
   }
+  function matchLocation(input,location){
+    const nodes=publicSnapshot(input).nodes;
+    const exact=value=>{
+      if(typeof value!=='string'||!value.trim())return null;
+      value=value.trim();const byId=nodes.filter(n=>n.id===value);
+      if(byId.length===1)return byId[0].id;
+      const byName=nodes.filter(n=>n.name===value);return byName.length===1?byName[0].id:null;
+    };
+    const match=value=>{
+      const direct=exact(value);if(direct||typeof value!=='string')return direct;
+      const parts=value.trim().replace(/\\/g,'/').split('/').filter(Boolean);
+      if(parts.length<2)return null;
+      if(/^(场景台本|场景信息|基础信息)\.json$/.test(parts.at(-1)))parts.pop();
+      return exact(parts.at(-1));
+    };
+    if(typeof location==='string')return match(location);
+    if(!location||typeof location!=='object'||Array.isArray(location))return null;
+    for(const key of ['ID','id','节点ID','地点ID','场景ID','路径','path','表面名字','名称','name']){
+      const id=match(location[key]);if(id)return id;
+    }
+    return null;
+  }
+  function focus(input,currentId){
+    const s=publicSnapshot(input);if(s.nodes.some(n=>n.id===currentId))s.currentId=currentId;return s;
+  }
   function layout(input){
     const s=publicSnapshot(input),anchors=s.nodes.filter(n=>Number.isFinite(n.x));
     // Coordinates describe relative positions, not CSS pixels. Normalize units before
@@ -149,7 +174,7 @@ function createNodeMap(){
     dialog.querySelector('[data-close]').onclick=()=>dialog.close();dialog.querySelector('[data-fit]').onclick=()=>dispose.fit();dialog.querySelectorAll('[data-zoom]').forEach(b=>b.onclick=()=>dispose.zoom(Number(b.dataset.zoom)));
     dialog.addEventListener('close',()=>{dispose();dialog.remove();if(trigger?.isConnected)trigger.focus({preventScroll:true});},{once:true});return dialog;
   }
-  return {snapshot,publicSnapshot,layout,fitView,project,card,hydrate,open,mount,runtime:()=>typeof BUNDLED_NODE_MAP_RUNTIME!=='undefined'?BUNDLED_NODE_MAP_RUNTIME:`const NodeMap=(${createNodeMap.toString()})();`};
+  return {snapshot,publicSnapshot,matchLocation,focus,layout,fitView,project,card,hydrate,open,mount,runtime:()=>typeof BUNDLED_NODE_MAP_RUNTIME!=='undefined'?BUNDLED_NODE_MAP_RUNTIME:`const NodeMap=(${createNodeMap.toString()})();`};
 }
 const NodeMap=createNodeMap();
 if(typeof module!=='undefined'&&module.exports)module.exports=NodeMap;
