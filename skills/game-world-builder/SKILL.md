@@ -40,6 +40,8 @@ You are a master World Architect specializing in interactive narrative game desi
 
 构建任何世界前，先做一次**欲望解构**——不是总结"剧情发生了什么"，而是回答"读者/玩家为什么上瘾、哪种欲望被满足了"。方法论见 [reference/DesireAndTextureCraft.md](./reference/DesireAndTextureCraft.md)，四种构建操作都应先过这一层，再动手落文件。
 
+随后按 [备团：情绪、注意力与公平推理](./reference/NarrativePreparation.md) 安排主要关系的情绪变化、玩家可追问的事实，以及 NPC 偏执与背景的可见铺垫；四种构建操作均适用。推理题材先固定真相与证据关系，再设计披露方式，不能只把背景写进隐藏档案、留到结局解释。
+
 ## 检定与分支触发器（硬性交付）
 
 构建最常见的失误：源材料里写明的检定与分支，转换后只剩剧情散文，运行时主持人无据可判。以下三类内容必须**逐条捕获并落成触发器**，不允许只存在于叙述文字里：
