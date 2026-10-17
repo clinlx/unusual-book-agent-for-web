@@ -23,7 +23,7 @@ const ids = s => data(s).entries.map(e => e.id);
 function begin(s, text = '前往钟楼', options = {}) { Core.beginRound(s, text, false, '当前任务', options); }
 function finish(s, story = '继续前行') {
   s.activeRound.triggered = true;
-  assert.equal(Core.execute(s, 'append_story', { content: story, one_line_summary_of_content: story }, 'story-' + s.activeRound.number).ok, true);
+  assert.equal(Core.execute(s, 'append_story', { content: story, one_line_summary_of_content: story ,self_accept:true}, 'story-' + s.activeRound.number).ok, true);
   assert.equal(Core.execute(s, 'end_the_round', { NEXT_TURN_CACHE: { Story_Phase: '游戏循环' } }, 'end-' + s.activeRound.number).ok, true);
 }
 test('没有配置的旧世界不改变请求；关闭规则不注入', () => {
@@ -46,7 +46,7 @@ test('扫描窗口按玩家回合计数，不丢同轮的其他玩家；story �
   begin(s, '', { actions: [{ actorId: 'alice', content: '前往钟楼' }, { actorId: 'bob', content: '等一下' }] });
   assert.deepEqual(ids(s), ['a']); finish(s, '钟楼的钟声');
   begin(s, '去港口'); assert.deepEqual(ids(s), ['b']);
-  s.activeRound.triggered = true; Core.execute(s, 'append_story', { content: '港口的汽笛', one_line_summary_of_content: '汽笛' }, 'next-story');
+  s.activeRound.triggered = true; Core.execute(s, 'append_story', { content: '港口的汽笛', one_line_summary_of_content: '汽笛' ,self_accept:true}, 'next-story');
   assert.deepEqual(ids(s), ['b'], '已经激活的本轮资料持续到本轮结束');
   const fresh = save([entry('a', { sources: ['story'] })]); begin(fresh, '去港口');
   fresh.events.push({ id: 'old', type: 'story', content: '钟楼', round: 1 }, { id: 'last', type: 'story', content: '港口', round: 1 });
@@ -183,7 +183,7 @@ test('真实请求循环在新 story 后激活，完整工具批次后注入；�
   const transport = async messages => {
     requests++;
     if (requests === 1) { assert.equal(messages.some(m => m.content.startsWith(Triggers.HEADER)), false);
-      return { reasoning: '真实思考', tool_calls: [call('append_story', { content: '钟楼在雾中浮现', one_line_summary_of_content: '出现' }, 'story')] }; }
+      return { reasoning: '真实思考', tool_calls: [call('append_story', { content: '钟楼在雾中浮现', one_line_summary_of_content: '出现' ,self_accept:true}, 'story')] }; }
     assert.match(messages.at(-1).content, /资料-a/); assert.equal(messages.at(-2).role, 'tool');
     assert.equal(messages.find(m => m.tool_calls)?.reasoning_content, '真实思考');
     throw Error('模拟断网');

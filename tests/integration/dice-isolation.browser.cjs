@@ -20,7 +20,7 @@ const dice=extra=>({description:'SAN检定',roller:'林砚',related_attr:'SAN',i
       route.fulfill({contentType:'application/json',body:JSON.stringify({choices:[{message:{role:'assistant',content:'',tool_calls:[
         call('roll_dice',dice({}),'checks'),
         call('roll_dice',dice({description:'SAN损失',dice_dict:{损失量:'set-force:1'},dice_combine_mode:'sum',calculate_only:true,target_value:null,compare_mode:null,critical_success_range:[1,1]}),'loss'),
-        call('append_story',{content:'分别结算两次检定与损失。',one_line_summary_of_content:'完成结算'},'story'),
+        call('append_story',{content:'分别结算两次检定与损失。',one_line_summary_of_content:'完成结算',self_accept:true},'story'),
         call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'end'),
       ]},finish_reason:'tool_calls'}]})}):route.abort());
     const page=await context.newPage();page.setDefaultTimeout(10000);

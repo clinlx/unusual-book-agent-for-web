@@ -27,7 +27,7 @@ test('game resumes an interrupted oversized tool batch at the same budget withou
   await Core.run(s, async messages => {
     requests++; assert.ok(Core.estimate(messages) <= 1000);
     assert.ok(messages.some(m => m.content.startsWith('[本回合执行记录]')));
-    return { tool_calls: [call('story', 'append_story', { content: '旅程继续。', one_line_summary_of_content: '继续旅程' }),
+    return { tool_calls: [call('story', 'append_story', { content: '旅程继续。', one_line_summary_of_content: '继续旅程' ,self_accept:true}),
       call('end', 'end_the_round', { NEXT_TURN_CACHE: { Story_Phase: '游戏循环' } })] };
   }, { system: '规则', cap: 1000 });
   assert.equal(requests, 2); assert.equal(s.status, 'waiting');

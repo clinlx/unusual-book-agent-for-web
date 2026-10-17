@@ -39,7 +39,7 @@ for (const count of [1, 3, 4, 6, 12, 20]) {
               dice_dict: count === 6 ? { SIZ: '2d6', INT: '2d6', EDU: '2d6' } : { 骰组: count + 'd6' },
               calculate_only: true, target_value: null, compare_mode: null, critical_success_range: null,
               critical_failure_range: null, dice_combine_mode: 'independent', left_modifiers: {}, right_modifiers: {} }, 'dice'),
-            call('append_story', { content: '属性生成完成。', one_line_summary_of_content: '生成属性' }, 'story'),
+            call('append_story', { content: '属性生成完成。', one_line_summary_of_content: '生成属性' ,self_accept:true}, 'story'),
             call('end_the_round', { NEXT_TURN_CACHE: { Story_Phase: '游戏循环' } }, 'end'),
           ] } }] }) });
       });

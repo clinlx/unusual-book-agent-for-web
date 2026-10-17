@@ -22,6 +22,7 @@ const Prompts = (() => {
   "flow/multiplayer.json": "多人运行注入",
   "flow/slot_control.json": "角色开局与控制方式变更",
   "flow/after_story.md": "正文发布后自查",
+  "flow/story_rejected.md": "草稿自我否定反馈",
   "flow/need_end.md": "结束回合提醒",
   "flow/no_story.md": "尚未发布正文提醒",
   "flow/need_trigger.md": "获取玩家行动提醒",

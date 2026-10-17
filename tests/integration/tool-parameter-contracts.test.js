@@ -5,7 +5,7 @@ const Agent=require('../../src/world-designer/agent'),Config=require('../../src/
 function setup(){const tree=V.createTree();V.writeFile(tree,'/workspace/Player-pc/基础信息.json','{"姓名":"测试"}');V.writeFile(tree,'/workspace/Player-pc/背包.json','[]');const s=Core.createSave('参数',tree);Core.beginRound(s,'',true);return s;}
 test('game rejects ambiguous story and round arguments without publishing or completing',()=>{
  const cases=[
-  ['append_story',{content:'正文',one_line_summary_of_content:'摘要',skip_output:'false'},'skip_output'],
+  ['append_story',{content:'正文',one_line_summary_of_content:'摘要',skip_output:'false',self_accept:true},'skip_output'],
   ['private_append_story',{entries:[{id:'pc',story:'有效私密'},null]},'entries[1]'],
   ['private_append_story',{entries:[{id:'pc',story:'有效私密'},{id:'pc',story:3}]},'entries[1].story'],
   ['end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环',game_over:'false'}},'NEXT_TURN_CACHE.game_over'],
@@ -13,7 +13,7 @@ test('game rejects ambiguous story and round arguments without publishing or com
   ['trigger_next_round',{phase_plan:'invalid json'},'phase_plan'],
   ['random_select',{items:['甲','乙'],weights:{0:1,1:2}},'weights'],
  ];
- for(const [name,args,field]of cases){const s=setup();if(name==='end_the_round')assert.equal(Core.execute(s,'append_story',{content:'开局',one_line_summary_of_content:'开局'}).ok,true);
+ for(const [name,args,field]of cases){const s=setup();if(name==='end_the_round')assert.equal(Core.execute(s,'append_story',{content:'开局',one_line_summary_of_content:'开局',self_accept:true}).ok,true);
   const state=()=>JSON.stringify({events:s.events.filter(e=>e.type!=='tool'),tree:s.tree,cache:s.cache});const before=state();const r=Core.execute(s,name,args);
   assert.equal(r.ok,false,JSON.stringify({name,args,r}));assert.ok(r.error.includes(field),r.error);
   assert.equal(state(),before);assert.ok(!s.activeRound.complete);

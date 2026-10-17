@@ -52,7 +52,7 @@ test('host keeps next-round public and private drafts after the submitting promi
   const call=(name,args,id)=>({id,type:'function',function:{name,arguments:JSON.stringify(args)}});
   await page.route('https://drafts.invalid/**',async route=>{
     const n=++count;if(n===2){arrived();await gate;}
-    const calls=n===1?[call('append_story',{content:'开场测试',one_line_summary_of_content:'开场'},'story1'),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环',Game_World_Time:'上午九点'}},'end1')]:[call('trigger_next_round',{phase_plan:{Countdowns:'无',Pending_Triggers:[],Forced_Checks:'无'}},'next2'),call('append_story',{content:'第二回合',one_line_summary_of_content:'第二回合'},'story2'),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环',Game_World_Time:'上午九点十分'}},'end2')];
+    const calls=n===1?[call('append_story',{content:'开场测试',one_line_summary_of_content:'开场',self_accept:true},'story1'),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环',Game_World_Time:'上午九点'}},'end1')]:[call('trigger_next_round',{phase_plan:{Countdowns:'无',Pending_Triggers:[],Forced_Checks:'无'}},'next2'),call('append_story',{content:'第二回合',one_line_summary_of_content:'第二回合',self_accept:true},'story2'),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环',Game_World_Time:'上午九点十分'}},'end2')];
     await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({choices:[{message:{content:'',tool_calls:calls}}]})});
   });
   t.after(()=>release());await page.goto(origin+'/index.html');await page.locator('[data-action="import"]').waitFor();

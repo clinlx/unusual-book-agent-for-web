@@ -25,7 +25,7 @@ const ready = require('./designer-ready.cjs');
       await context.route('https://**/*', route => {
         if (!route.request().url().startsWith('https://back.invalid/')) return route.abort();
         return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ choices: [{ message: { role: 'assistant', content: '', tool_calls: [
-          { id: 'opening', type: 'function', function: { name: 'append_story', arguments: JSON.stringify({ content: '雨落在车站。', one_line_summary_of_content: '到达车站' }) } },
+          { id: 'opening', type: 'function', function: { name: 'append_story', arguments: JSON.stringify({ content: '雨落在车站。', one_line_summary_of_content: '到达车站' ,self_accept:true}) } },
           { id: 'end', type: 'function', function: { name: 'end_the_round', arguments: JSON.stringify({ NEXT_TURN_CACHE: { Story_Phase: '游戏循环', Game_World_Time: '夜晚' } }) } },
         ] }, finish_reason: 'tool_calls' }] }) });
       });

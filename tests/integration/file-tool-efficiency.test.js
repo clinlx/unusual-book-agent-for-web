@@ -71,7 +71,7 @@ test('game knowledge crosses rounds but expires when its evidence leaves the act
  Core.context(f.save,'规则',10000);f.good(f.run('apply_patch',{path:'/workspace/new.txt',old_str:'created',new_str:'known'},'patch'));
  f.save.messages=[];Core.context(f.save,'规则',10000);
  f.bad(f.run('write_file',{path:'/workspace/new.txt',content:'lost'}),/read_file/);
- f.read();f.good(f.run('append_story',{content:'开局',one_line_summary_of_content:'开局'}));f.good(f.run('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}}));Core.beginRound(f.save,'继续');
+ f.read();f.good(f.run('append_story',{content:'开局',one_line_summary_of_content:'开局',self_accept:true}));f.good(f.run('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}}));Core.beginRound(f.save,'继续');
  f.good(f.run('apply_patch',{path:'/workspace/a.txt',old_str:'alpha',new_str:'new'}));
 });
 test('designer retains evidence in context but cannot carry it into a different or compressed chat',async()=>{

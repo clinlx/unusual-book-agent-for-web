@@ -64,7 +64,7 @@ test('real multiplayer archives preserve individual story and dice privacy',{ski
   const {tree}=await load(name),save=Core.createSave(name,tree);Core.beginRound(save,'',true);
   assert.equal(Core.execute(save,'private_append_story',{entries:[{id:'p2',story:'PRIVATE_P2_STORY'}]},'private-story').ok,true);
   assert.equal(Core.execute(save,'roll_dice',{description:'PRIVATE_P2_CHECK',roller:'p2',related_attr:'侦查',is_secret:false,is_private:true,target_player:'p2',dice_dict:{检定:'1d100'},calculate_only:false,target_value:50,compare_mode:'le',critical_success_range:null,critical_failure_range:null,dice_combine_mode:'sum',left_modifiers:{},right_modifiers:{}},'private-dice').ok,true);
-  assert.equal(Core.execute(save,'append_story',{content:'',skip_output:true,one_line_summary_of_content:'本轮结束'},'public-skip').ok,true);
+  assert.equal(Core.execute(save,'append_story',{content:'',skip_output:true,one_line_summary_of_content:'本轮结束',self_accept:true},'public-skip').ok,true);
   const own=Sync.project(save,'p2'),other=Sync.project(save,'pc');assert.match(JSON.stringify(own),/PRIVATE_P2_STORY/);assert.match(JSON.stringify(own),/PRIVATE_P2_CHECK/);
   assert.doesNotMatch(JSON.stringify(other),/PRIVATE_P2_|当前幻境层级|幻境状态|位置所属|详细放置位置/);
   assert.ok(own.events.find(e=>e.type==='dice').private);assert.equal(other.events.filter(e=>e.type==='dice').length,0);

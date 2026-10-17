@@ -435,17 +435,20 @@ const GameApp=(()=>{
         onDelta:t=>{S.stream.content+=t;if(currentRequest)currentRequest.response.content+=t;emit();},onReasoningDelta:t=>{S.stream.reasoning+=t;if(currentRequest)currentRequest.response.reasoning+=t;emit();},onToolDelta:t=>{S.stream.tools=t;
           const storyCalls=t.filter(tc=>tc?.function?.name==='append_story');
           if(storyCalls.length){
-            const parts=storyCalls.map(tc=>SSE.partialJsonString(tc.function.arguments,'content')).filter(v=>v!==null);
-            if(parts.length){if(!S.stream.story)S.stream.storyPublished=s.activeRound?.published||0;S.stream.story=parts.join('\n\n');}
+            const parts=storyCalls.map(tc=>{
+              try{const a=JSON.parse(tc.function.arguments);if(a.self_accept!==true||Object.keys(a).at(-1)!=='self_accept'||a.skip_output===true)return null;}catch(_){}
+              return SSE.partialJsonString(tc.function.arguments,'content');
+            }).filter(v=>v!==null);
+            if(!S.stream.story)S.stream.storyPublished=s.activeRound?.published||0;S.stream.story=parts.join('\n\n');
           }
           if(currentRequest)currentRequest.response.tools=structuredClone(t);emit();}});
-      const transport=async messages=>{if(!settings.apiKey.trim())throw Error('请先在设置中填写 API Key');if(roundOptions.isCurrent&&!roundOptions.isCurrent())throw Error('回合已失效');currentRequest=null;clearStream();emit();try{const response=await raw(messages);if(roundOptions.isCurrent&&!roundOptions.isCurrent())throw Error('回合已失效');if(currentRequest){currentRequest.status='completed';currentRequest.response=structuredClone(response);}return response;}catch(e){if(currentRequest){currentRequest.status='interrupted';currentRequest.error=e.message;}throw e;}};
+      const transport=async messages=>{if(!settings.apiKey.trim())throw Error('请先在设置中填写 API Key');if(roundOptions.isCurrent&&!roundOptions.isCurrent())throw Error('回合已失效');currentRequest=null;clearStream();emit();try{const response=await raw(messages);if(roundOptions.isCurrent&&!roundOptions.isCurrent())throw Error('回合已失效');if(currentRequest){currentRequest.status='completed';currentRequest.response=structuredClone(response);}clearStream();emit();return response;}catch(e){if(currentRequest){currentRequest.status='interrupted';currentRequest.error=e.message;}throw e;}};
       const flows=Prompts.flows(snapshot.overrides);
       await GameCore.run(s,transport,{signal:controller.signal,system:snapshot.system,manualDice:settings.manualDice===true,skipManualDice:actorId=>hostSession?.skipManualDice(actorId)===true,openingPreload:settings.openingPreload!==false,
         cap:GameTransport.inputBudget(settings,defs),maxToolLoops:settings.maxToolLoops,multiplayerPrompts:Prompts.multiplayer(snapshot.overrides),
         
         
-        resource:p=>Prompts.file(p),resourceList:Prompts.referencePaths(),afterStory:flows.flow_after_story,firstRecall:flows.flow_recall,
+        resource:p=>Prompts.file(p),resourceList:Prompts.referencePaths(),afterStory:flows.flow_after_story,storyRejected:flows.flow_story_rejected?.trim(),firstRecall:flows.flow_recall,
         resumePrompt:kind==='resume'?flows.flow_resume:'',cachePrompt:flows.flow_cache,summariesPrompt:flows.flow_summaries,transformContext:Prompts.migrateText,
         reminder:save=>!save.activeRound.triggered?flows.flow_need_trigger:!save.activeRound.published?flows.flow_no_story:flows.flow_need_end,
         onStep:async()=>{if(roundOptions.isCurrent&&!roundOptions.isCurrent())throw Error('回合已失效');if(lease?.available&&lease.lostWhileRunning(s.id))throw Error('存档被另一个页面接管');await persist();publishClients();const keepStory=!!S.stream.story&&(s.activeRound?.published||0)<=S.stream.storyPublished;clearStream(keepStory);emit();}});

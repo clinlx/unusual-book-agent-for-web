@@ -115,7 +115,7 @@ test('DeepSeek-shaped streaming and non-streaming requests accept preload data a
     if(requests===1)assert.ok(!body.messages.some(m=>m.tool_calls||m.role==='tool'));
     else {assert.equal(requests,2);assert.equal(body.messages.find(m=>m.role==='tool').tool_call_id,'model-read');}
     const message={content:'',reasoning_content:'保留模型思考',tool_calls:requests===1?[tool('model-read','read_file',{path:'/workspace/模组.md'})]:[
-     tool('story','append_story',{content:'开场正文',one_line_summary_of_content:'开场'}),tool('end','end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}})]};
+     tool('story','append_story',{content:'开场正文',one_line_summary_of_content:'开场',self_accept:true}),tool('end','end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}})]};
     return stream?new Response('data: '+JSON.stringify({choices:[{delta:{...message,tool_calls:message.tool_calls.map((c,index)=>({...c,index}))},finish_reason:'tool_calls'}]})+'\n\ndata: [DONE]\n\n'):
      new Response(JSON.stringify({choices:[{message,finish_reason:'tool_calls'}]}));
    }

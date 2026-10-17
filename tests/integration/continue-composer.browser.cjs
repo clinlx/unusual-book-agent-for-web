@@ -25,7 +25,7 @@ test('composer resume remains visible above the history bottom and finishes the 
       requests++;
       const call=(name,args,id)=>({id,type:'function',function:{name,arguments:JSON.stringify(args)}});
       await route.fulfill({contentType:'application/json',body:JSON.stringify({choices:[{message:{content:'',tool_calls:[
-        call('append_story',{content:'中断前的正文。\n\n'.repeat(100),one_line_summary_of_content:'中断前输出'},'story'),
+        call('append_story',{content:'中断前的正文。\n\n'.repeat(100),one_line_summary_of_content:'中断前输出',self_accept:true},'story'),
         call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'end'),
       ]}}]})});
     });

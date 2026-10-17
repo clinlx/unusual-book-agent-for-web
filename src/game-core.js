@@ -480,6 +480,9 @@ const GameCore = (() => {
           round.privatePublished=(round.privatePublished||0)+entries.length;result={status:options.multiplayerPrompts?.private_story_follow_up||'Private story published; finish public output or use skip_output'};break;
         }
         case 'append_story':{
+          if(typeof a.self_accept!=='boolean')throw Error('self_accept 为必填布尔值，必须在正文和摘要之后最后填写 true 或 false');
+          if(a.self_accept===false)throw Error(options.storyRejected||'草稿已被否定。接下来，优化和雕琢后，重新小说化的形式，身临其境地给玩家');
+          if(Object.keys(a).at(-1)!=='self_accept')throw Error('self_accept 必须作为最后一个参数输出；请先完成正文和摘要，再判断是否接受本稿');
           if(!round.triggered)throw Error('先调用 trigger_next_round 获取玩家行动');
           requireText(a.one_line_summary_of_content,'one_line_summary_of_content');
           if(Object.hasOwn(a,'skip_output')&&typeof a.skip_output!=='boolean')throw Error('skip_output 必须是 true 或 false；默认行为请省略此参数');
@@ -788,6 +791,11 @@ const GameCore = (() => {
     const round=s.activeRound;
     if(!round.presetOpening)return false;
     if(round.presetPrepared){
+      // Only program-authored pending presets may be upgraded; never assume model consent.
+      for(const m of s.messages.filter(m=>m.origin==='preset-opening'&&m.round===round.number))for(const c of m.tool_calls||[]){
+        if(c.function?.name!=='append_story'||round.receipts[c.id]?.ok===true)continue;
+        try{const args=JSON.parse(c.function.arguments);if(object(args)&&!Object.hasOwn(args,'self_accept'))c.function.arguments=JSON.stringify({...args,self_accept:true});}catch(_){}
+      }
       const failed=new Set(s.messages.filter(m=>m.origin==='preset-opening'&&m.round===round.number).flatMap(m=>m.tool_calls||[]).filter(c=>round.receipts[c.id]?.ok===false).map(c=>c.id));
       for(const id of failed)delete round.receipts[id];
       s.messages=s.messages.filter(m=>m.role!=='tool'||!failed.has(m.tool_call_id));
@@ -796,7 +804,7 @@ const GameCore = (() => {
     round.presetPrepared=true;
     const call=(name,args)=>({id:uid(),type:'function',function:{name,arguments:JSON.stringify(args)}});
     s.messages.push({role:'assistant',content:'',round:round.number,origin:'preset-opening',tool_calls:[
-      call('append_story',{content:round.presetOpening,one_line_summary_of_content:'预设开场已发布；待完成角色审核与开局准备。'}),
+      call('append_story',{content:round.presetOpening,one_line_summary_of_content:'预设开场已发布；待完成角色审核与开局准备。',self_accept:true}),
       call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏前准备',opening_preparation_pending:true}})
     ]});
     return true;

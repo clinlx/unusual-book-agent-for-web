@@ -3,7 +3,7 @@ const {test}=require('node:test'),assert=require('node:assert/strict');
 const Core=require('../../src/game-core'),V=require('../../src/vfs'),Sync=require('../../src/multiplayer-sync');
 function setup(){const tree=V.createTree();V.writeFile(tree,'/workspace/Player-pc/基础信息.json','{"姓名":"林","状态":{"HP":10,"MAXHP":10},".秘密":"原秘密"}');V.writeFile(tree,'/workspace/Player-pc/背包.json','["钥匙"]');V.writeFile(tree,'/workspace/存档-索引-物品/钥匙/物品基础信息.json','{"名称":"钥匙","数量":1}');return Core.createSave('标记',tree);}
 const write=(s,p,o)=>V.writeFile(s.tree,'/workspace/'+p,JSON.stringify(o));
-function finish(s){assert.equal(Core.execute(s,'append_story',{content:'第'+s.activeRound.number+'回合故事',one_line_summary_of_content:'推进'}).ok,true);assert.equal(Core.execute(s,'end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}}).ok,true);}
+function finish(s){assert.equal(Core.execute(s,'append_story',{content:'第'+s.activeRound.number+'回合故事',one_line_summary_of_content:'推进',self_accept:true}).ok,true);assert.equal(Core.execute(s,'end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}}).ok,true);}
 function changes(s,permission='none',status='collecting'){return Sync.project(s,null,{memberId:'watch',room:{status,members:{watch:{role:'spectator',permission}},submissions:{}}}).slots[0].changes;}
 test('roster compares per-section visible end state, including referenced item details, without revealing hidden updates',()=>{
  const s=setup();Core.beginRound(s,'',true,'');write(s,'Player-pc/基础信息.json',{姓名:'林',状态:{HP:10,MAXHP:10},'.秘密':'新秘密'});write(s,'存档-索引-物品/钥匙/物品基础信息.json',{名称:'钥匙',数量:2});finish(s);

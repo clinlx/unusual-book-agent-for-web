@@ -11,7 +11,7 @@ function save(){
   VFS.writeFile(tree,'/workspace/Player-p/背包.json','[]');
   const s=Core.createSave('上下文恢复',tree);Core.beginRound(s,'',true,'本轮任务');return s;
 }
-const finish=()=>({tool_calls:[call('story','append_story',{content:'旅程继续。',one_line_summary_of_content:'继续旅程'}),call('end','end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}})]});
+const finish=()=>({tool_calls:[call('story','append_story',{content:'旅程继续。',one_line_summary_of_content:'继续旅程',self_accept:true}),call('end','end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}})]});
 const file=(s,path)=>VFS.resolve(s.tree,VFS.normalize(path))?.content;
 function validProtocol(messages){
   const replied=new Set();
@@ -125,7 +125,7 @@ test('emergency checkpoints retain frozen actions, trigger plan, published progr
   const calls=[call('trigger','trigger_next_round',{phase_plan:JSON.stringify(plan)}),
     call('failed-trigger','trigger_next_round',{phase_plan:{Countdowns:'不能恢复失败规划'}}),
     call('dice','roll_dice',{description:'确认动静',roller:'p',related_attr:'侦查',is_secret:false,dice_dict:{侦查:'1d100'},calculate_only:false,target_value:60,compare_mode:'le',critical_success_range:null,critical_failure_range:null,dice_combine_mode:'sum',left_modifiers:{},right_modifiers:{}}),
-    call('story','append_story',{content:'你已到达门口。',one_line_summary_of_content:'到达门口'})];
+    call('story','append_story',{content:'你已到达门口。',one_line_summary_of_content:'到达门口',self_accept:true})];
   s.messages.push({role:'assistant',round:1,reasoning_content:'推理'.repeat(6000),tool_calls:calls});
   for(const c of calls)s.messages.push({role:'tool',round:1,tool_call_id:c.id,content:JSON.stringify(Core.execute(s,c.function.name,JSON.parse(c.function.arguments),c.id,{random:()=>.2}))});
   const state=structuredClone(s.activeRound),out=Core.context(s,'规则',2000);validProtocol(out);

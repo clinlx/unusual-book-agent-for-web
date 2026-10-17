@@ -69,7 +69,7 @@ test('mixed independent request is rejected before a manual dice prompt exists',
   const s=save();let requests=0;
   const call=(name,a,id)=>({id,function:{name,arguments:JSON.stringify(a)}});
   await Core.run(s,async()=>({tool_calls:++requests===1?[call('roll_dice',args({dice_dict:{检定:'1d100',损失:'1d3'},dice_combine_mode:'independent'}),'mixed')]:[
-    call('append_story',{content:'等待分别结算检定与损失。',one_line_summary_of_content:'等待结算'},'story'),
+    call('append_story',{content:'等待分别结算检定与损失。',one_line_summary_of_content:'等待结算',self_accept:true},'story'),
     call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'end')]}),{manualDice:true});
   assert.equal(s.pendingManualDice,undefined);assert.equal(s.events.filter(e=>e.type==='dice').length,0);
   assert.match(s.messages.find(m=>m.tool_call_id==='mixed').content,/independent/);

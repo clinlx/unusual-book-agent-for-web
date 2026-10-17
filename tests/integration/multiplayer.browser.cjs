@@ -15,7 +15,7 @@ const call=(name,args,id)=>({id,type:'function',function:{name,arguments:JSON.st
 
 test('round-one room slots stay configurable and lock from round two with shared host and client UI',async t=>{
  const page=await pageFor(t),errors=[],requests=[];page.on('pageerror',e=>errors.push(e.message));
- await page.route('https://slot-control.invalid/**',async route=>{requests.push(route.request().postDataJSON());await route.fulfill({contentType:'application/json',body:JSON.stringify({choices:[{message:{content:'',tool_calls:[...requests.length>1?[call('trigger_next_round',{phase_plan:{Countdowns:'无',Pending_Triggers:[],Forced_Checks:'无'}},'trigger')]:[],call('append_story',{content:'测试开局正文。',one_line_summary_of_content:'开局'},'story'),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'end')]}}]})});});
+ await page.route('https://slot-control.invalid/**',async route=>{requests.push(route.request().postDataJSON());await route.fulfill({contentType:'application/json',body:JSON.stringify({choices:[{message:{content:'',tool_calls:[...requests.length>1?[call('trigger_next_round',{phase_plan:{Countdowns:'无',Pending_Triggers:[],Forced_Checks:'无'}},'trigger')]:[],call('append_story',{content:'测试开局正文。',one_line_summary_of_content:'开局',self_accept:true},'story'),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'end')]}}]})});});
  await page.goto(origin+'/index.html');await page.locator('[data-action="import"]').waitFor();
  await page.evaluate(async()=>{await GameApp.updateSettings({apiKey:'test',baseUrl:'https://slot-control.invalid/v1',stream:false});const files=['Player-a','Player-b','Player-c','KPC-guide'].flatMap(name=>[{name:name+'/基础信息.json',text:JSON.stringify({姓名:name})},{name:name+'/背包.json',text:'[]'}]);await GameApp.importSave(new File([ZIP.makeZip(files)],'槽位控制.zip'));await GameApp.configureSlots('a',{b:'ai'});});
  await page.locator('[data-action="room-panel"]').click();await page.locator('[data-npc-key="slot:b"]').fill('b 是外科医生');
@@ -165,7 +165,7 @@ test('unapplied room slot changes are visible and apply/discard/cancel guard clo
 
 test('initial selection and room setup keep separate NPC drafts and start uses only final NPC roles',async t=>{
  const page=await pageFor(t),requests=[],errors=[];page.on('pageerror',e=>errors.push(e.message));
- await page.route('https://npc-cards.invalid/**',async route=>{requests.push(route.request().postDataJSON());await route.fulfill({json:{choices:[{message:{content:'',tool_calls:[call('append_story',{content:'开场正文。',one_line_summary_of_content:'开场'},'npc-story'),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'npc-end')]}}]}});});
+ await page.route('https://npc-cards.invalid/**',async route=>{requests.push(route.request().postDataJSON());await route.fulfill({json:{choices:[{message:{content:'',tool_calls:[call('append_story',{content:'开场正文。',one_line_summary_of_content:'开场',self_accept:true},'npc-story'),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'npc-end')]}}]}});});
  await page.goto(origin+'/index.html');await page.locator('[data-action="import"]').waitFor();
  await page.evaluate(async()=>{await GameApp.updateSettings({apiKey:'test',baseUrl:'https://npc-cards.invalid/v1',stream:false});const files=['Player-a','Player-b','Player-c','KPC-guide'].flatMap(name=>[{name:name+'/基础信息.json',text:JSON.stringify({姓名:name})},{name:name+'/背包.json',text:'[]'}]);await GameApp.importSave(new File([ZIP.makeZip(files)],'独立NPC.zip'));});
  await page.locator('[data-action="slot-choose"][data-actor="a"]').click();
@@ -336,10 +336,10 @@ test('host and isolated clients use authoritative rounds, private projections, r
       await guest.locator('#hidden-send-toggle').check();await guest.locator('#disguise-send-toggle').check();
       await guest.locator('#action-input').fill('乙下一轮的秘密草稿');await guest.locator('#action-private-input').fill('乙下一轮的公开草稿');
     }
-    const calls=opening?[call('append_story',{content:'雨停以后，两位旅人来到同一座车站。',one_line_summary_of_content:'二人抵达车站'},'opening'),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环',Game_World_Time:'上午九点'}},'opening-end')]:[
+    const calls=opening?[call('append_story',{content:'雨停以后，两位旅人来到同一座车站。',one_line_summary_of_content:'二人抵达车站',self_accept:true},'opening'),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环',Game_World_Time:'上午九点'}},'opening-end')]:[
       call('trigger_next_round',{phase_plan:{Countdowns:'无',Pending_Triggers:[],Forced_Checks:'无'}},'trigger'),
       call('private_append_story',{entries:[{id:'a',story:'只给甲的密语：月亮藏在井底。'},{id:'b',story:'只给乙的密语：钥匙藏在钟楼。'}]},'private'),
-      call('append_story',{content:'站长打开候车室的大门，请两人进去避雨。',one_line_summary_of_content:'站长打开候车室'},'public'),
+      call('append_story',{content:'站长打开候车室的大门，请两人进去避雨。',one_line_summary_of_content:'站长打开候车室',self_accept:true},'public'),
       call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环',Game_World_Time:'上午九点十分'}},'end')];
     await route.fulfill({contentType:'application/json',body:JSON.stringify({choices:[{message:{role:'assistant',content:'房主内部草稿不可同步',tool_calls:calls},finish_reason:'tool_calls'}]})});
   });

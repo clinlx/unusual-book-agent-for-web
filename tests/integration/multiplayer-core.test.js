@@ -22,13 +22,13 @@ test('multi actions remain attributed and only intended private recipients see t
  const got=C.execute(s,'trigger_next_round',{phase_plan:plan},'trigger');a.equal(got.ok,true);a.equal(got.result.actions.length,2);a.equal(got.result.actions[0].privateContent,'藏钥匙');
  a.equal(C.execute(s,'private_append_story',{entries:[{id:'a',story:'独有线索'}]},'private').ok,true);
  a.equal(C.visibleEvents({...s,actorId:'b',playerPath:'/workspace/Player-b'},'play').some(e=>e.content==='独有线索'),false);
- a.equal(C.execute(s,'append_story',{skip_output:true,content:'',one_line_summary_of_content:'完成私密反馈'},'public').ok,true);
+ a.equal(C.execute(s,'append_story',{skip_output:true,content:'',one_line_summary_of_content:'完成私密反馈',self_accept:true},'public').ok,true);
  a.equal(C.execute(s,'end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'end').ok,true);
  a.equal(s.round,1);a.equal(s.activeRound.id,'r1');
 });
 test('private batch is atomic and invalid recipients never become public',()=>{
  const s=save();C.beginRound(s,'',true);a.equal(C.execute(s,'private_append_story',{entries:[{id:'a',story:'秘密'},{id:'missing',story:'泄漏'}]},'bad').ok,false);a.equal(s.events.some(e=>e.type==='story'),false);
- a.equal(C.execute(s,'append_story',{skip_output:true,one_line_summary_of_content:'空'},'empty').ok,false);
+ a.equal(C.execute(s,'append_story',{skip_output:true,one_line_summary_of_content:'空',self_accept:true},'empty').ok,false);
 });
 test('all unconscious injection names living actors only and rollback restores multi slot state',()=>{
  const s=save();V.writeFile(s.tree,'/workspace/Player-a/基础信息.json','{"状态":{"Alive":true,"Enabled":false}}');V.writeFile(s.tree,'/workspace/Player-b/基础信息.json','{"状态":{"Alive":false,"Enabled":false}}');
@@ -36,10 +36,10 @@ test('all unconscious injection names living actors only and rollback restores m
 });
 test('round archives retain separately attributed visible snapshots for every active human actor',()=>{
  const s=save();C.beginRound(s,'',true);V.writeFile(s.tree,'/workspace/Player-b/基础信息.json','{"姓名":"b","信息":"b独有",".秘密":"不公开"}');
- a.equal(C.execute(s,'append_story',{content:'共同经历',one_line_summary_of_content:'推进'},'story').ok,true);a.equal(C.execute(s,'end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'end').ok,true);
+ a.equal(C.execute(s,'append_story',{content:'共同经历',one_line_summary_of_content:'推进',self_accept:true},'story').ok,true);a.equal(C.execute(s,'end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'end').ok,true);
  const archive=Object.values(V.resolve(s.tree,['workspace','过往回合历史记忆']).children)[0];const state=JSON.parse(archive.children['玩家结束状态.json'].content);
  a.equal(state.actorId,'a');a.deepEqual(Object.keys(state.actors),['a','b']);a.equal(state.actors.b.info.信息,'b独有');a.equal(state.info.信息,undefined);a.equal(JSON.stringify(state).includes('不公开'),false);
- C.beginRound(s,'',true);C.execute(s,'append_story',{content:'继续共同经历',one_line_summary_of_content:'继续'},'story2');C.execute(s,'end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'end2');
+ C.beginRound(s,'',true);C.execute(s,'append_story',{content:'继续共同经历',one_line_summary_of_content:'继续',self_accept:true},'story2');C.execute(s,'end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'end2');
  const next=Object.values(V.resolve(s.tree,['workspace','过往回合历史记忆']).children).find(x=>x.name.startsWith('Round_2_'));a.ok(next.children['玩家结束状态.json']);
 });
 

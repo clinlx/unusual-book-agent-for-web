@@ -11,7 +11,7 @@ const Args=require('../../src/shared/tool-arguments');
 const settings={baseUrl:'https://response-errors.invalid/v1',model:'test',temperature:0.7};
 const call=(id,name,args)=>({id,type:'function',function:{name,arguments:args}});
 const bad=id=>call(id,'write_file','{"path":');
-const finish=()=>({tool_calls:[call('story','append_story','{"content":"天亮了。","one_line_summary_of_content":"天亮"}'),
+const finish=()=>({tool_calls:[call('story','append_story','{"content":"天亮了。","one_line_summary_of_content":"天亮","self_accept":true}'),
   call('end','end_the_round','{"NEXT_TURN_CACHE":{"Story_Phase":"游戏循环"}}')]});
 function game(){
   const tree=VFS.createTree();VFS.writeFile(tree,'/workspace/Player-p/基础信息.json','{"姓名":"林"}');

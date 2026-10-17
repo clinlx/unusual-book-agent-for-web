@@ -19,7 +19,7 @@ test('missing tool reply uses committed receipt and does not repeat the mutation
  const tc=call('write_file',{path:'/workspace/proof.txt',content:'first'},'proof');
  s.messages.push({role:'assistant',round:1,tool_calls:[tc]});Core.execute(s,tc.function.name,JSON.parse(tc.function.arguments),tc.id);
  VFS.writeFile(s.tree,'/workspace/proof.txt','later manual change');
- await Core.run(s,async()=>({tool_calls:[call('append_story',{content:'story',one_line_summary_of_content:'summary'},'story'),call('end_the_round',{NEXT_TURN_CACHE:cache},'end')]}));
+ await Core.run(s,async()=>({tool_calls:[call('append_story',{content:'story',one_line_summary_of_content:'summary',self_accept:true},'story'),call('end_the_round',{NEXT_TURN_CACHE:cache},'end')]}));
  assert.equal(VFS.resolve(s.tree,['workspace','proof.txt']).content,'later manual change');
  assert.equal(s.messages.filter(m=>m.tool_call_id==='proof').length,1);
  assert.equal(s.events.filter(e=>e.callId==='proof').length,1);
@@ -31,7 +31,7 @@ test('flow injection follows recovered replies and only labels cache at a trunca
  await Core.run(s,async messages=>{
   const tool=messages.findIndex(m=>m.tool_call_id==='pending'),resume=messages.findIndex(m=>m.content==='custom resume');
   assert.ok(tool>=0&&resume>tool);assert.equal(messages.some(m=>m.content.startsWith('custom cache\n')),false);
-  return {tool_calls:[call('append_story',{content:'story',one_line_summary_of_content:'summary'},'story'),call('end_the_round',{NEXT_TURN_CACHE:cache},'end')]};
+  return {tool_calls:[call('append_story',{content:'story',one_line_summary_of_content:'summary',self_accept:true},'story'),call('end_the_round',{NEXT_TURN_CACHE:cache},'end')]};
  },{resumePrompt:'custom resume',cachePrompt:'custom cache'});
  const old=save();old.messages=[{role:'assistant',content:'',round:1,tool_calls:[call('end_the_round',{NEXT_TURN_CACHE:{marker:'boundary'}},'end1')]},{role:'tool',content:'{"ok":true}',round:1,tool_call_id:'end1'},{role:'user',content:'turn2',round:2}];old.round=2;old.contextFromRound=2;old.summaries=[{round:1,content:'summary'}];old.cache={marker:'latest'};
  const messages=Core.context(old,'system',128000,{summariesPrompt:'custom summaries',cachePrompt:'custom cache'});
@@ -50,12 +50,12 @@ test('recursive deletion requires current reads of all descendant text files',()
  assert.ok(VFS.resolve(s.tree,['workspace','clues','secret.txt']));
 });
 test('resume after a durable end does not leave completed round running',async()=>{
- const s=save();Core.beginRound(s,'',true,'start');Core.execute(s,'append_story',{content:'story',one_line_summary_of_content:'summary'});Core.execute(s,'end_the_round',{NEXT_TURN_CACHE:cache});
+ const s=save();Core.beginRound(s,'',true,'start');Core.execute(s,'append_story',{content:'story',one_line_summary_of_content:'summary',self_accept:true});Core.execute(s,'end_the_round',{NEXT_TURN_CACHE:cache});
  await Core.run(s,async()=>{throw Error('should not request model');});assert.equal(s.status,'waiting');
 });
 test('provider call IDs can be reused in a later round without skipping its calls',async()=>{
  const s=save();
- for(let i=0;i<2;i++){Core.beginRound(s,'',true,'start');await Core.run(s,async()=>({tool_calls:[call('append_story',{content:'story '+i,one_line_summary_of_content:'summary'},'call_0'),call('end_the_round',{NEXT_TURN_CACHE:cache},'call_1')]}),{maxToolLoops:1});}
+ for(let i=0;i<2;i++){Core.beginRound(s,'',true,'start');await Core.run(s,async()=>({tool_calls:[call('append_story',{content:'story '+i,one_line_summary_of_content:'summary',self_accept:true},'call_0'),call('end_the_round',{NEXT_TURN_CACHE:cache},'call_1')]}),{maxToolLoops:1});}
  assert.equal(s.round,2);assert.equal(s.events.filter(e=>e.type==='story').length,2);
 });
 test('difficulty class preserves reference formula and truncation',()=>{
@@ -66,7 +66,7 @@ test('difficulty class preserves reference formula and truncation',()=>{
 });
 test('abort after end can resume remaining protocol results without applying later writes',async()=>{
  const s=save();Core.beginRound(s,'',true,'start');let aborted=false;
- const transport=async()=>({tool_calls:[call('append_story',{content:'story',one_line_summary_of_content:'summary'},'a'),call('end_the_round',{NEXT_TURN_CACHE:cache},'e'),call('write_file',{path:'/workspace/late.txt',content:'must not write'},'w')]});
+ const transport=async()=>({tool_calls:[call('append_story',{content:'story',one_line_summary_of_content:'summary',self_accept:true},'a'),call('end_the_round',{NEXT_TURN_CACHE:cache},'e'),call('write_file',{path:'/workspace/late.txt',content:'must not write'},'w')]});
  await assert.rejects(Core.run(s,transport,{signal:{get aborted(){return aborted;}},onStep:async()=>{if(s.activeRound.complete)aborted=true;}}),/中止/);
  assert.equal(s.messages.filter(m=>m.role==='tool'&&['a','e','w'].includes(m.tool_call_id)).length,2);
  await Core.run(s,async()=>{throw Error('should not resend completed round');});

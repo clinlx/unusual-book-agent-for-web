@@ -21,7 +21,7 @@ function tool(s,id,name,args){
   s.messages.push({role:'tool',round:s.activeRound.number,tool_call_id:id,content:JSON.stringify(result)});
   return result;
 }
-const story=(s,id='story',text='油布包裹出现在门边。')=>tool(s,id,'append_story',{content:text,one_line_summary_of_content:'发现包裹'});
+const story=(s,id='story',text='油布包裹出现在门边。')=>tool(s,id,'append_story',{content:text,one_line_summary_of_content:'发现包裹',self_accept:true});
 const end=s=>tool(s,'end','end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环',Active_Scene:'门边',custom:'保留的状态'}});
 const rebuild=s=>Core.rebuildContext(s,{system:'最新系统规则',roundPrompt:'最新回合规则',startPrompt:'最新开局规则'});
 const file=(s,p)=>VFS.resolve(s.tree,VFS.normalize(p))?.content;

@@ -12,9 +12,9 @@ test('opening guide and host pre-submit lock, cancel, automatic acceptance, and 
  const endGate=new Promise(r=>finish=r),nextGate=new Promise(r=>continueNext=r),nextRequest=new Promise(r=>startedNext=r);t.after(()=>{finish();continueNext();});
  await page.route('https://pre-submit.invalid/**',async route=>{
   const n=++requests;let calls;
-  if(n===1)calls=[call('append_story',{content:'已经发出的开场正文。',one_line_summary_of_content:'开场'},'story')];
+  if(n===1)calls=[call('append_story',{content:'已经发出的开场正文。',one_line_summary_of_content:'开场',self_accept:true},'story')];
   else if(n===2){await endGate;calls=[call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'end')];}
-  else{startedNext();await nextGate;calls=[call('trigger_next_round',{phase_plan:{Countdowns:'无',Pending_Triggers:[],Forced_Checks:'无'}},'trigger'),call('append_story',{content:'第二回合正文',one_line_summary_of_content:'第二回合'},'story2'),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'end2')];}
+  else{startedNext();await nextGate;calls=[call('trigger_next_round',{phase_plan:{Countdowns:'无',Pending_Triggers:[],Forced_Checks:'无'}},'trigger'),call('append_story',{content:'第二回合正文',one_line_summary_of_content:'第二回合',self_accept:true},'story2'),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'end2')];}
   await route.fulfill({contentType:'application/json',body:JSON.stringify({choices:[{message:{content:'',tool_calls:calls}}]})});
  });
  await page.goto(origin+'/index.html');await page.locator('[data-action="import"]').waitFor();

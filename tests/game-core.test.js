@@ -50,11 +50,11 @@ test('主角面板过滤隐藏字段、隐藏 buff 和物品脚本',()=>{
 test('工具顺序、phase_plan 回执、正文追加和幂等性',()=>{
   const s=save();s.draft='推门';Core.beginRound(s,'推门',false,'本轮推进');
   assert.equal(s.draft,'','已经提交的行动不能在刷新后重新作为草稿出现');
-  assert.equal(Core.execute(s,'append_story',{content:'门开了',one_line_summary_of_content:'开门'},'early').ok,false);
+  assert.equal(Core.execute(s,'append_story',{content:'门开了',one_line_summary_of_content:'开门',self_accept:true},'early').ok,false);
   assert.equal(Core.execute(s,'trigger_next_round',{},'bad').ok,false);
   assert.equal(Core.execute(s,'trigger_next_round',{phase_plan:plan},'trigger').ok,true);
   assert.equal(Core.execute(s,'end_the_round',{NEXT_TURN_CACHE:cache},'earlyend').ok,false);
-  const args={content:'门开了。',one_line_summary_of_content:'推开门'};
+  const args={content:'门开了。',one_line_summary_of_content:'推开门',self_accept:true};
   Core.execute(s,'append_story',args,'story');Core.execute(s,'append_story',args,'story');
   assert.equal(s.events.filter(e=>e.type==='story').length,1);
   assert.equal(Core.execute(s,'end_the_round',{NEXT_TURN_CACHE:cache},'end').ok,true);
@@ -66,7 +66,7 @@ test('先读后写、回合快照和回退恢复所有状态',()=>{
   const path='/workspace/Player-p1/基础信息.json';
   assert.equal(Core.execute(s,'write_file',{path,content:'{"姓名":"改名"}'},'w0').ok,false);
   Core.execute(s,'read_file',{path},'r');Core.execute(s,'write_file',{path,content:'{"姓名":"改名"}'},'w');
-  Core.execute(s,'append_story',{content:'晨光亮起。',one_line_summary_of_content:'开场'},'a');
+  Core.execute(s,'append_story',{content:'晨光亮起。',one_line_summary_of_content:'开场',self_accept:true},'a');
   Core.execute(s,'end_the_round',{NEXT_TURN_CACHE:cache},'e');
   assert.ok(s.lastChanges.some(c=>c.path===path));
   Core.rollback(s);assert.equal(Core.player(s).info.姓名,'林青');assert.equal(s.round,0);assert.equal(s.events.length,0);assert.equal(s.messages.length,0);
@@ -94,7 +94,7 @@ test('玩家骰者支持姓名、完整目录名和短 ID，NPC 检定仅在 DEB
 test('中断后补齐未执行工具，不重复故事，并保留完整工具结果批次',async()=>{
   const s=save();Core.beginRound(s,'',true,'开场');
   let requests=0,aborted=false;
-  const transport=async()=>{requests++;return {content:'内部内容',tool_calls:[call('append_story',{content:'雨落下。',one_line_summary_of_content:'下雨'},'a'),call('end_the_round',{NEXT_TURN_CACHE:cache},'e')]};};
+  const transport=async()=>{requests++;return {content:'内部内容',tool_calls:[call('append_story',{content:'雨落下。',one_line_summary_of_content:'下雨',self_accept:true},'a'),call('end_the_round',{NEXT_TURN_CACHE:cache},'e')]};};
   await assert.rejects(Core.run(s,transport,{system:'系统',onStep:async()=>{if(s.events.some(e=>e.type==='story'))aborted=true;},signal:{get aborted(){return aborted;}}}),/中止/);
   assert.equal(s.events.filter(e=>e.type==='story').length,1);
   await Core.run(s,transport,{system:'系统'});
@@ -106,7 +106,7 @@ test('折半切断保留系统与当前完整回合，本地历史不丢失',()=
   for(let i=0;i<6;i++){
     Core.beginRound(s,'',true,'开局'+i);
     s.messages.push({role:'assistant',content:'长'.repeat(300),round:i+1});
-    Core.execute(s,'append_story',{content:'故事'+i,one_line_summary_of_content:'概要'+i},'a'+i);
+    Core.execute(s,'append_story',{content:'故事'+i,one_line_summary_of_content:'概要'+i,self_accept:true},'a'+i);
     Core.execute(s,'end_the_round',{NEXT_TURN_CACHE:cache},'e'+i);
   }
   const len=s.messages.length,events=s.events.length;
@@ -116,7 +116,7 @@ test('折半切断保留系统与当前完整回合，本地历史不丢失',()=
 });
 test('同批结束后的额外写入被阻止',async()=>{
   const s=save();Core.beginRound(s,'',true,'开局');
-  await Core.run(s,async()=>({tool_calls:[call('append_story',{content:'开场',one_line_summary_of_content:'开场'}),call('end_the_round',{NEXT_TURN_CACHE:cache}),call('write_file',{path:'/workspace/坏.txt',content:'不应发生'})]}),{system:'系统'});
+  await Core.run(s,async()=>({tool_calls:[call('append_story',{content:'开场',one_line_summary_of_content:'开场',self_accept:true}),call('end_the_round',{NEXT_TURN_CACHE:cache}),call('write_file',{path:'/workspace/坏.txt',content:'不应发生'})]}),{system:'系统'});
   assert.equal(VFS.resolve(s.tree,['workspace','坏.txt']),null);
   assert.equal(s.messages.filter(m=>m.role==='tool'&&['append_story','end_the_round','write_file'].includes(m.tool_call_id)).length,3);
 });

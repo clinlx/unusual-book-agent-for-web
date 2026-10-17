@@ -40,7 +40,7 @@ const call = (name, args, id) => ({ id, type: 'function', function: { name, argu
       if (body.model === 'game-only-model') {
         return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ choices: [{ message: {
           role: 'assistant', content: '', tool_calls: [
-            call('append_story', { content: '雨水落在车站的屋檐上。', one_line_summary_of_content: '抵达车站' }, 'opening'),
+            call('append_story', { content: '雨水落在车站的屋檐上。', one_line_summary_of_content: '抵达车站' ,self_accept:true}, 'opening'),
             call('end_the_round', { NEXT_TURN_CACHE: { Story_Phase: '游戏循环', Game_World_Time: '夜晚' } }, 'end-opening'),
           ],
         }, finish_reason: 'tool_calls' }] }) });

@@ -24,7 +24,7 @@ function fixture(engine){
  function next(){
   if(engine==='game'){
    if(!save.activeRound.triggered)good(run('trigger_next_round',{phase_plan:{Countdowns:'无',Pending_Triggers:[],Forced_Checks:'无'}}).out);
-   good(run('append_story',{content:'继续。',one_line_summary_of_content:'继续'}).out);
+   good(run('append_story',{content:'继续。',one_line_summary_of_content:'继续',self_accept:true}).out);
    good(run('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}}).out);
    Core.beginRound(save,'继续');
   }else ctx.turn++;

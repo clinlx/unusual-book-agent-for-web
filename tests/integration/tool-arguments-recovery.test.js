@@ -70,7 +70,7 @@ test('game recovers a saved pending batch without repeating completed writes and
   await Core.run(s,async messages=>{
     count++;
     for(const m of messages)for(const c of m.tool_calls||[])assert.doesNotThrow(()=>JSON.parse(c.function.arguments));
-    return {tool_calls:[call('story','append_story',JSON.stringify({content:'天亮了。',one_line_summary_of_content:'天亮'})),
+    return {tool_calls:[call('story','append_story',JSON.stringify({content:'天亮了。',one_line_summary_of_content:'天亮',self_accept:true})),
       call('end','end_the_round',JSON.stringify({NEXT_TURN_CACHE:{Story_Phase:'游戏循环',Game_World_Time:'清晨',Active_Scene:'门口'}}))]};
   },{openingPreload:false,maxToolLoops:2});
   assert.equal(count,1);assert.equal(s.status,'waiting');
@@ -135,7 +135,7 @@ test('game does not warn again about recovered history on a later normal round',
   const s=Core.createSave('测试',tree);Core.beginRound(s,'',true,'开局');
   s.messages.push(...records().map(m=>({...m,round:0})));
   s.events.push({type:'warning',code:'INVALID_TOOL_ARGUMENTS',callIds:['bad'],round:0,content:Args.NOTICE});
-  await Core.run(s,async()=>({tool_calls:[call('story','append_story','{"content":"天亮了。","one_line_summary_of_content":"天亮"}'),
+  await Core.run(s,async()=>({tool_calls:[call('story','append_story','{"content":"天亮了。","one_line_summary_of_content":"天亮","self_accept":true}'),
     call('end','end_the_round','{"NEXT_TURN_CACHE":{"Story_Phase":"游戏循环"}}')]}),{openingPreload:false});
   assert.equal(s.events.filter(e=>e.code==='INVALID_TOOL_ARGUMENTS').length,1);
 });

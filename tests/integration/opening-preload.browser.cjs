@@ -10,7 +10,7 @@ test('built game sends actual opening reads in its first API request without pub
   await page.route('https://**/*',async route=>{
    if(!route.request().url().startsWith('https://preload.invalid/'))return route.abort();bodies.push(route.request().postDataJSON());
    const call=(id,name,args)=>({id,type:'function',function:{name,arguments:JSON.stringify(args)}});
-   await route.fulfill({contentType:'application/json',body:JSON.stringify({choices:[{message:{content:'',tool_calls:[call('story','append_story',{content:'故事已经开始。',one_line_summary_of_content:'开场'}),call('end','end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}})]}}]})});
+   await route.fulfill({contentType:'application/json',body:JSON.stringify({choices:[{message:{content:'',tool_calls:[call('story','append_story',{content:'故事已经开始。',one_line_summary_of_content:'开场',self_accept:true}),call('end','end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}})]}}]})});
   });
   await page.goto('http://127.0.0.1:'+server.address().port+'/index.html');await page.locator('[data-action="import"]').waitFor();
   await page.evaluate(async()=>{

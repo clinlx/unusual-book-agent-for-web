@@ -36,7 +36,7 @@ async function prepare(page){
 }
 const call=(id,name,args)=>({id,type:'function',function:{name,arguments:JSON.stringify(args)}});
 const readCalls=()=>[call('write','write_file',{path:'/workspace/proof.txt',content:'已完成写入'}),call('read','read_file',{path:'/workspace/large.txt',limit:120000})];
-const finishCalls=()=>[call('story','append_story',{content:'雨停了，旅程继续。',one_line_summary_of_content:'继续旅程'}),call('end','end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}})];
+const finishCalls=()=>[call('story','append_story',{content:'雨停了，旅程继续。',one_line_summary_of_content:'继续旅程',self_accept:true}),call('end','end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}})];
 
 test('malformed tool arguments recover and show a service warning in play mode',async t=>{
   const page=await open(t),bodies=[],errors=[];page.on('pageerror',e=>errors.push(e.message));

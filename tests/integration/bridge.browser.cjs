@@ -98,7 +98,7 @@ test('real sockets recover both sides without losing submissions or interrupting
   let modelRequests=0,release,started;const gate=new Promise(resolve=>release=resolve),modelStarted=new Promise(resolve=>started=resolve);t.after(()=>release());
   await host.route('https://reconnect-model.invalid/**',async route=>{
     modelRequests++;if(modelRequests===2){started();await gate;}
-    await route.fulfill({contentType:'application/json',body:JSON.stringify({choices:[{message:{role:'assistant',content:'',tool_calls:[...(modelRequests>1?[call('trigger_next_round',{phase_plan:{Countdowns:'无',Pending_Triggers:[],Forced_Checks:'无'}},'trigger-'+modelRequests)]:[]),call('append_story',{content:'两名旅人一起走进大厅。',one_line_summary_of_content:'进入大厅'},'story-'+modelRequests),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环',Game_World_Time:'九点'}},'end-'+modelRequests)]},finish_reason:'tool_calls'}]})});
+    await route.fulfill({contentType:'application/json',body:JSON.stringify({choices:[{message:{role:'assistant',content:'',tool_calls:[...(modelRequests>1?[call('trigger_next_round',{phase_plan:{Countdowns:'无',Pending_Triggers:[],Forced_Checks:'无'}},'trigger-'+modelRequests)]:[]),call('append_story',{content:'两名旅人一起走进大厅。',one_line_summary_of_content:'进入大厅',self_accept:true},'story-'+modelRequests),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环',Game_World_Time:'九点'}},'end-'+modelRequests)]},finish_reason:'tool_calls'}]})});
   });
   await host.goto(site.origin+'/index.html');await host.locator('[data-action="import"]').waitFor();
   const invite=await host.evaluate(async bridgeUrl=>{
@@ -187,14 +187,14 @@ test('real Bridge sockets preserve host authority, private views, fragmented syn
   const bigStory='旅人沿着月台向前走去，窗外的雨已经停了。'.repeat(3200)+'长篇同步终点';let modelRequests=0;
   await host.route('https://bridge-model.invalid/**',async route=>{
     modelRequests++;assert.ok(modelRequests<=2,'本轮全部行动只触发一次模型结算');
-    const actions=modelRequests===1?[call('append_story',{content:'两名旅人来到车站，等候下一班列车。',one_line_summary_of_content:'抵达车站'},'opening'),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环',Game_World_Time:'九点'}},'opening-end')]:[
+    const actions=modelRequests===1?[call('append_story',{content:'两名旅人来到车站，等候下一班列车。',one_line_summary_of_content:'抵达车站',self_accept:true},'opening'),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环',Game_World_Time:'九点'}},'opening-end')]:[
       call('trigger_next_round',{phase_plan:{Countdowns:'无',Pending_Triggers:[],Forced_Checks:'无'}},'trigger'),
       call('roll_dice',diceArgs({description:'乙的公开检定'}),'public-dice'),
       call('roll_dice',diceArgs({roller:'Player-a',description:'甲的私密骰理由',is_private:true}),'a-dice'),
       call('roll_dice',diceArgs({description:'乙的私密骰理由',is_private:true}),'b-dice'),
       call('roll_dice',diceArgs({description:'暗骰原因保密',related_attr:'密骰属性保密',is_secret:true,is_private:true}),'secret-dice'),
       call('private_append_story',{entries:[{id:'a',story:'甲的私密线索：蓝色信封藏在井底。'},{id:'b',story:'乙的私密线索：红色钥匙藏在钟楼。'}]},'private'),
-      call('append_story',{content:bigStory,one_line_summary_of_content:'两人在月台等待'},'public'),
+      call('append_story',{content:bigStory,one_line_summary_of_content:'两人在月台等待',self_accept:true},'public'),
       call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环',Game_World_Time:'九点十分'}},'end')];
     await route.fulfill({contentType:'application/json',body:JSON.stringify({choices:[{message:{role:'assistant',content:'内部推理与草稿不会发给玩家',tool_calls:actions},finish_reason:'tool_calls'}]})});
   });

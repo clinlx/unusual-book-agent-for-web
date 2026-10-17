@@ -1,7 +1,7 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const VFS=require('../../src/vfs'),Core=require('../../src/game-core'),Slots=require('../../src/game-slots'),Sync=require('../../src/multiplayer-sync');
 function save(){const t=VFS.createTree();for(const prefix of ['Player-a','AIPC-b','DISABLE-c','KPC-guide']){VFS.writeFile(t,`/workspace/${prefix}/基础信息.json`,JSON.stringify({姓名:prefix}));VFS.writeFile(t,`/workspace/${prefix}/背包.json`,'[]');}return Core.createSave('控制方式',t);}
-function finish(s){if(!s.activeRound.starting)Core.execute(s,'trigger_next_round',{phase_plan:{Countdowns:'无',Pending_Triggers:[],Forced_Checks:'无'}},'trigger'+s.activeRound.number);Core.execute(s,'append_story',{content:'玩家看见的正文',one_line_summary_of_content:'开局'},'story'+s.activeRound.number);const r=Core.execute(s,'end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'end'+s.activeRound.number);assert.equal(r.ok,true,JSON.stringify(r));}
+function finish(s){if(!s.activeRound.starting)Core.execute(s,'trigger_next_round',{phase_plan:{Countdowns:'无',Pending_Triggers:[],Forced_Checks:'无'}},'trigger'+s.activeRound.number);Core.execute(s,'append_story',{content:'玩家看见的正文',one_line_summary_of_content:'开局',self_accept:true},'story'+s.activeRound.number);const r=Core.execute(s,'end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'end'+s.activeRound.number);assert.equal(r.ok,true,JSON.stringify(r));}
 test('first start injects human/AIPC/KPC setup into compressible internal messages without changing the system prefix',()=>{
  const s=save();s.npcCardInstructions={'slot:b':'外科医生'};Core.beginRound(s,'',true,'开始');
  const injected=s.messages.filter(m=>m.internal);assert.equal(injected.length,1);assert.equal(injected[0].role,'user');
