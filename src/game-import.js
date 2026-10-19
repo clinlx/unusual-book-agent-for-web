@@ -32,6 +32,7 @@ const GameImport=(()=>{
       if(++completed%16===0||completed===entries.length){onProgress('正在载入世界文件：'+completed+' / '+entries.length,completed/entries.length);await new Promise(resolve=>setTimeout(resolve,0));}
     }
     const s=core.createSave(file.name.replace(/\.(zip|png)$/i,''),tree);
+    s.moduleName=s.name;
     if(manifest){
       let m;try{m=JSON.parse(manifest.content);}catch(_){throw Error('完整存档的进度数据已损坏');}
       if(m.format!=='trpg-single-player'||![1,2].includes(m.version)||!m.state)throw Error('无法识别完整存档版本');
@@ -39,7 +40,7 @@ const GameImport=(()=>{
       if(!Array.isArray(st.messages)||!Array.isArray(st.events)||!Number.isSafeInteger(st.round)||st.round<0)throw Error('存档历史格式不正确');
       const unsafeKey=(k,v)=>{if(['__proto__','prototype','constructor'].includes(k))throw Error('存档包含不安全字段');return v;};
       JSON.parse(JSON.stringify(st),unsafeKey);
-      for(const key of ['playerPath','slotsConfigured','name','round','cache','worldTriggers','messages','events','summaries','status','snapshots','activeRound','contextFromRound','lastChanges','draft','privateDraft','draftRound','draftVersion','inputHistory','error','requestHistory','historyArchiveVersion','importNotice','pendingManualDice','openingPending'])
+      for(const key of ['moduleName','characterImports','characterImprints','playerPath','slotsConfigured','name','round','cache','worldTriggers','messages','events','summaries','status','snapshots','activeRound','contextFromRound','lastChanges','draft','privateDraft','draftRound','draftVersion','inputHistory','error','requestHistory','historyArchiveVersion','importNotice','pendingManualDice','openingPending'])
         if(st[key]!==undefined)s[key]=structuredClone(st[key]);
       if(s.activeRound&&!s.activeRound.complete)s.status='interrupted';
       if(st.draftRound===undefined)s.draftRound=inputs.targetRound(s);

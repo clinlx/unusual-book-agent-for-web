@@ -173,9 +173,9 @@ const MultiplayerSync=(()=>{
       const currentId=maps.matchLocation(lastMap.map,Data.get(Data.read(save,slot.path+'/基础信息.json'),'当前位置'));
       if(currentId)mapFocus={eventId:lastMap.id,currentId};
     }catch(_){} }
-    return {...baseline?{baseline}:{},id:save.id,name:save.name,actorId:spectator?null:actorId,...spectator?{spectator:true,spectatedActorId:actorId,panelsLocked:!slot}:{},round:save.round||0,status:save.status,events,mapFocus,pendingActions:pending,rollbackCount:Math.min(10,save.snapshots?.length||0),rollbackTargetRound:save.snapshots?.at(-1)?.round??null,info:own.info,items:own.items,itemKeys:slot?itemKeys(save,slot,Data,keyMap):[],playerName:own.name,slots:publicSlots,room:roomView};
+    return {...baseline?{baseline}:{},id:save.id,name:save.name,actorId:spectator?null:actorId,...spectator?{spectator:true,spectatedActorId:actorId,panelsLocked:!slot}:{},round:save.round||0,status:save.status,characterImprint:!spectator&&memberId&&save.characterImprints?.[actorId]?.memberId===memberId?save.characterImprints[actorId].snapshot.imprintId:null,events,mapFocus,pendingActions:pending,rollbackCount:Math.min(10,save.snapshots?.length||0),rollbackTargetRound:save.snapshots?.at(-1)?.round??null,info:own.info,items:own.items,itemKeys:slot?itemKeys(save,slot,Data,keyMap):[],playerName:own.name,slots:publicSlots,room:roomView};
   }
-  function meta(view){return pick(view,['id','name','actorId','spectator','spectatedActorId','panelsLocked','baseline','round','status','playerName','slots','room','pendingActions','rollbackCount','rollbackTargetRound','mapFocus']);}
+  function meta(view){return pick(view,['id','name','actorId','spectator','spectatedActorId','panelsLocked','baseline','round','status','playerName','slots','room','pendingActions','rollbackCount','rollbackTargetRound','mapFocus','characterImprint']);}
   async function hashes(view){const [history,info,items,state]=await Promise.all([hash(view.events),hash(view.info),hash({items:view.items,itemKeys:view.itemKeys}),hash(meta(view))]);return {history,info,items,state};}
   const same=(a,b)=>canonical(a)===canonical(b);
   function createHost({getSave,getRoom,pageSize=200}){

@@ -4,6 +4,7 @@ const BridgeTransport=(()=>{
   const Recovery=typeof module!=='undefined'&&module.exports?require('./connection-recovery.js'):ConnectionRecovery;
   const encoder=new TextEncoder(),decoder=new TextDecoder('utf-8',{fatal:true});
   const CHUNK_BYTES=45000,FRAME_BYTES=65536,COMMAND_BYTES=2*1024*1024,VIEW_BYTES=32*1024*1024;
+  const commandLimit=packet=>packet?.type==='character.inject'?VIEW_BYTES:COMMAND_BYTES;
   const RECONNECT_DELAYS=[5000,10000,20000,40000,80000,120000];
   const retryable=(cause,host=false)=>cause?.retryable===true||(host?['RoomExists']:['AlreadyConnected','HostDisconnected','HostUnavailable','RoomNotFound']).includes(cause?.code);
   const MANIFEST=Object.freeze({hostFunctions:Object.freeze([Object.freeze({id:1,schema:'book-agent.command-fragment:v1',maxPayloadBytes:FRAME_BYTES})]),clientFunctions:Object.freeze([Object.freeze({id:2,schema:'book-agent.view-fragment:v1',maxPayloadBytes:FRAME_BYTES})])});
@@ -73,7 +74,7 @@ const BridgeTransport=(()=>{
   function sender(getConnection,limit,invoke){
     let chain=Promise.resolve(),pendingBytes=0,lastSend=0;
     return function send(identity,packet){
-      let bytes;try{bytes=serialize(packet,limit);}catch(cause){return Promise.reject(cause);}
+      let bytes;try{bytes=serialize(packet,typeof limit==='function'?limit(packet):limit);}catch(cause){return Promise.reject(cause);}
       const expected=getConnection();if(!expected)return Promise.reject(error('ConnectionLost'));
       if(pendingBytes+bytes.length>VIEW_BYTES*2)return Promise.reject(error('Backpressure'));pendingBytes+=bytes.length;
       const operation=chain.then(async()=>{
@@ -111,7 +112,7 @@ const BridgeTransport=(()=>{
   async function createHost({url,roomId,title='',onMember,onState,sdk=SDK,credentials:saved,players:authorized=[],reconnectDelays=RECONNECT_DELAYS,environment=globalThis,logger=console}={}){
     url=validateServerUrl(url);if(!validId(roomId))throw error();
     const report=reporter('host',url,roomId,logger);
-    const token=saved?.token??sdk.randomToken(),epoch=saved?.epoch??sdk.randomToken(),players=new Map(),fragments=createFragments(COMMAND_BYTES),incoming=deliveries(VIEW_BYTES,id=>players.has(id));
+    const token=saved?.token??sdk.randomToken(),epoch=saved?.epoch??sdk.randomToken(),players=new Map(),fragments=createFragments(VIEW_BYTES),incoming=deliveries(VIEW_BYTES,id=>players.has(id));
     if(decode(token).length!==32||decode(epoch).length!==32||!Array.isArray(authorized)||authorized.length>64)throw error();
     for(const value of authorized){const item=invitation(value);if(item.url!==url||item.roomId!==roomId||players.has(item.memberId))throw error();players.set(item.memberId,item.token);}
     let closed=false,revision=0,authorization=Promise.resolve(),connection=null,detach,retryTimer=null,attempt=0,opening=null,reconnecting=null,closing=Promise.resolve(),stopRecovery=()=>{};
@@ -133,7 +134,7 @@ const BridgeTransport=(()=>{
           if(closed||connection!==current)return;
           if(['ClientJoined','ClientLeft'].includes(message.type)){if(member(message.clientId))await onMember?.({type:message.type==='ClientJoined'?'joined':'left',memberId:message.clientId});return;}
           if(message.type!=='ClientInvoke'||message.functionId!==1||!member(message.clientId)||!players.has(message.clientId))return;
-          const complete=fragments.accept(message.clientId,message.payload);if(complete)await incoming.put(message.clientId,complete.packet,complete.size);
+          const complete=fragments.accept(message.clientId,message.payload);if(complete){if(complete.size>commandLimit(complete.packet))throw error('PayloadTooLarge');await incoming.put(message.clientId,complete.packet,complete.size);}
         },report);
         current.closed.then(({error:cause}={})=>{if(closed||connection!==current)return;connection=null;detach?.();fragments.clear();incoming.clear();retry(cause||error('ConnectionLost'));});
         report({event:'connection.ready',connectionId:current.connectionId});notice(onState,'connected');return current;
@@ -194,7 +195,7 @@ const BridgeTransport=(()=>{
         report({event:'connection.ready',connectionId:current.connectionId});notice(onState,'connected');return current;
       })();try{return await opening;}finally{opening=null;}
     }
-    const send=sender(()=>closed?null:connection,COMMAND_BYTES,(c,id,fragment)=>c.invoke(1,fragment));
+    const send=sender(()=>closed?null:connection,commandLimit,(c,id,fragment)=>c.invoke(1,fragment));
     const transport={onClient(id,fn){if(id!==invite.memberId)throw error('Unauthorized');return incoming.add((_,packet)=>fn(packet));},sendToHost:(id,packet)=>id===invite.memberId?send(id,packet):Promise.reject(error('IdentitySpoof'))};
     let reconnecting=null;
     function reconnect({resetBackoff=false,background=false}={}){

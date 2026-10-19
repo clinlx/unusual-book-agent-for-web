@@ -153,7 +153,7 @@ const call=(name,args,id)=>({id,type:'function',function:{name,arguments:JSON.st
     const contextCount=await page.evaluate(()=>GameApp.getState().active.messages.length);
     const legacyId=await page.evaluate(()=>GameApp.getState().active.id);
     await page.evaluate(id=>new Promise((resolve,reject)=>{
-      const open=indexedDB.open('trpg-single-player',1);open.onerror=()=>reject(open.error);
+      const open=indexedDB.open('trpg-single-player');open.onerror=()=>reject(open.error);
       open.onsuccess=()=>{const db=open.result,tx=db.transaction('saves','readwrite'),store=tx.objectStore('saves'),get=store.get(id);
         get.onsuccess=()=>{const s=get.result;s.snapshots=[...Array.from({length:15},()=>structuredClone(s.snapshots[0])),...s.snapshots];store.put(s);};
         tx.oncomplete=()=>{db.close();resolve();};tx.onabort=()=>reject(tx.error);

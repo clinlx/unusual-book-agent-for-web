@@ -1,15 +1,15 @@
 'use strict';
 const GameStore=(()=>{
   const core=typeof module!=='undefined'&&module.exports?require('./game-core.js'):GameCore;
+  const schema=typeof module!=='undefined'&&module.exports?require('./game-database'):GameDatabase;
   const lastRoundEnd=events=>events?.findLast(e=>e.type==='round_end')?.at??null;
   function create(factory=globalThis.indexedDB){
     let db=null,memory=!factory;const mem=new Map(),rooms=new Map();let config={};
     const counts=new Map(),fingerprints=new Map();
     const signature=value=>JSON.stringify(value);
     async function open(){if(!factory)return;await new Promise((resolve,reject)=>{
-      let req;try{req=factory.open('trpg-single-player',1);}catch(e){memory=true;resolve();return;}
-      req.onupgradeneeded=()=>{const d=req.result;d.createObjectStore('saves',{keyPath:'id'});d.createObjectStore('config',{keyPath:'id'});
-        for(const name of ['messages','events']){const os=d.createObjectStore(name,{keyPath:['saveId','seq']});os.createIndex('saveId','saveId');}};
+      let req;try{req=factory.open(schema.NAME,schema.VERSION);}catch(e){memory=true;resolve();return;}
+      req.onupgradeneeded=()=>schema.upgrade(req.result);
       req.onsuccess=()=>{
         db=req.result;db.onversionchange=()=>db.close();
         

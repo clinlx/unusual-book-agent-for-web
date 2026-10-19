@@ -115,7 +115,7 @@ const GameCore = (() => {
       (String(s.draft||'')!==submittedDraft.draft||String(s.privateDraft||'')!==submittedDraft.privateDraft);
     s.snapshots.push({tree:copy(s.tree),slots:copy(s.slots||[]),actorId:s.actorId,playerPath:s.playerPath,messageCount:s.messages.length,eventCount:s.events.length,round:s.round,
       worldTime:data.worldTime(s),at:Date.now(),
-      cache:copy(s.cache),worldTriggers:s.worldTriggers?copy(s.worldTriggers):null,openingPending:s.openingPending?copy(s.openingPending):null,slotControlState:s.slotControlState?copy(s.slotControlState):null,summaryCount:s.summaries.length,status:s.status,contextFromRound:s.contextFromRound,lastChanges:copy(s.lastChanges),
+      characterImports:copy(s.characterImports||{}),cache:copy(s.cache),worldTriggers:s.worldTriggers?copy(s.worldTriggers):null,openingPending:s.openingPending?copy(s.openingPending):null,slotControlState:s.slotControlState?copy(s.slotControlState):null,summaryCount:s.summaries.length,status:s.status,contextFromRound:s.contextFromRound,lastChanges:copy(s.lastChanges),
       draft:isStart||options.skip?boundDraft:String(text||''),draftRound:inputRound,inputRoundId:roundId});
     pruneRollback(s);
     if(!options.skip&&String(text||'').trim())inputs.record(s,inputRound,roundId,text);
@@ -233,6 +233,7 @@ const GameCore = (() => {
     pruneRollback(s);const snap=s.snapshots.pop();if(!snap)throw Error('没有可回退的回合');
     const input=inputs.retract(s,snap.round+1,snap.inputRoundId);
     s.tree=copy(snap.tree);s.messages.length=snap.messageCount;s.events.length=snap.eventCount;
+    s.characterImports=copy(snap.characterImports||{});
     s.round=snap.round;s.cache=copy(snap.cache);s.summaries.length=snap.summaryCount;s.status=snap.status;
     if(snap.worldTriggers)s.worldTriggers=copy(snap.worldTriggers);else delete s.worldTriggers;
     if(snap.openingPending)s.openingPending=copy(snap.openingPending);else delete s.openingPending;

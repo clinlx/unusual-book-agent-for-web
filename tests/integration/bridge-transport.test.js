@@ -148,6 +148,20 @@ test('out-of-order and cross-identity fragments never produce a partial command'
  f.connections[0].emit({type:'ClientInvoke',clientId:'host',functionId:1,payload:frames[0].payload});await tick();assert.deepEqual(got,[]);
  await assert.rejects(client.transport.sendToHost('guest',{text:'x'.repeat(2*1024*1024)}));
 });
+
+test('full character imports can exceed ordinary command limits without widening other commands',async t=>{
+ const f=fakeSDK(),host=await Bridge.createHost({url:'ws://localhost',roomId:'room',sdk:f.sdk,logger:null});t.after(()=>host.close());
+ const invitation=await host.invite('guest'),client=await Bridge.createClient({invitation,sdk:f.sdk,logger:null});t.after(()=>client.close());
+ const packet={type:'character.inject',payload:{snapshot:{text:'角'.repeat(750000)}}},got=[];host.transport.onHost((id,p)=>got.push(p));
+ await client.transport.sendToHost('guest',packet);
+ for(const frame of f.connections[1].messages)f.connections[0].emit({type:'ClientInvoke',clientId:'guest',functionId:1,payload:frame.payload});
+ await tick();assert.deepEqual(got,[packet]);
+ await assert.rejects(client.transport.sendToHost('guest',{...packet,type:'action.submit'}),{code:'PayloadTooLarge'});
+ // A sender bypassing its own limit still cannot deliver an oversized ordinary command.
+ await host.transport.sendToClient('guest',{...packet,type:'action.submit'});
+ for(const frame of f.connections[0].messages.filter(m=>m.type==='InvokeClient'))f.connections[0].emit({type:'ClientInvoke',clientId:'guest',functionId:1,payload:frame.payload});
+ await tick();assert.equal(got.length,1);
+});
 test('transient disconnect reconnects the same transport without replaying business data; revocation stops retries',async t=>{
  const f=fakeSDK(),host=await Bridge.createHost({url:'ws://localhost',roomId:'room',sdk:f.sdk});t.after(()=>host.close());const invitation=await host.invite('guest'),states=[];
  const client=await Bridge.createClient({invitation,sdk:f.sdk,reconnectDelays:[1,2],onState:s=>states.push(s.status)});t.after(()=>client.close());const transport=client.transport;

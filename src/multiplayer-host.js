@@ -178,10 +178,36 @@ const MultiplayerHost=(()=>{
       if(!command||!validId(command.requestId))fail('INVALID_COMMAND','缺少有效请求标识');
       const fingerprint=canonical(command),old=r.receipts.find(x=>x.memberId===memberId&&x.requestId===command.requestId);
       if(old){if(old.fingerprint!==fingerprint)fail('REQUEST_CONFLICT','同一请求标识不能用于不同内容');return clone(old.receipt);}
-      scope(m,command);const type=aliases[command.type]||command.type,p=command.payload||command;let start=null,reset=null,cancelled=null,cancelledRequestId;
+      scope(m,command);const type=aliases[command.type]||command.type,p=command.payload||command;let start=null,reset=null,cancelled=null,cancelledRequestId,characterResult;
       if(m.role==='spectator'&&type!=='spectator.view'&&!(memberId==='host'&&['round.start','round.resume','round.advance','action.hostSkip','rollback.host','rollback.decide','slot.mode','slot.claim.decide'].includes(type)))fail('SPECTATOR_READ_ONLY','观战者只能接收信息，不能提交行动、投票或更改游戏');
       if(expire())await commit('rollback.expired');
       switch(type){
+        case 'character.inject':{
+          boundary();const s=save(),slot=s.slots.find(x=>x.id===m.actorId&&x.kind==='player');
+          if(!slot||p.actorId!==undefined&&p.actorId!==m.actorId)fail('FORBIDDEN','只能选择自己拥有的角色');
+          if(s.status==='ended'||s.round>=1||s.activeRound&&!s.activeRound.complete||(s.activeRound?.number||0)>1)fail('CHARACTER_LOCKED','第一回合结束后不能更换角色');
+          const Snapshot=common?require('./character-snapshot'):CharacterSnapshot;
+          Snapshot.inject(s,slot,p.snapshot);s.characterImports||={};s.characterImports[m.actorId]={revision:uid(),name:String(p.snapshot.name||slot.id),at:now()};
+          break;
+        }
+        case 'character.preview':case 'character.imprint':{
+          const s=save(),slot=s.slots.find(x=>x.id===m.actorId&&x.kind==='player');
+          if(!slot||p.actorId!==undefined&&p.actorId!==m.actorId)fail('FORBIDDEN','只能铭刻自己拥有的角色');
+          if(s.status!=='ended'||r.status!=='ended'||s.activeRound&&!s.activeRound.complete||r.vote||execution)fail('NOT_ENDED','请等故事及结算彻底结束后再铭刻角色');
+          const prior=s.characterImprints?.[m.actorId];
+          if(prior&&prior.memberId!==memberId)fail('ALREADY_IMPRINTED','这个角色已由原玩家铭刻');
+          const Snapshot=common?require('./character-snapshot.js'):CharacterSnapshot,Sync=common?require('./multiplayer-sync.js'):MultiplayerSync;
+          const character=prior?.snapshot||Snapshot.capture(s,slot);
+          const {imprintId,imprintedAt,...content}=character,revision=prior?.revision||await Sync.hash(content);
+          if(type==='character.preview')return {ok:true,requestId:command.requestId,character:clone(character),revision};
+          if(p.revision!==revision)fail('CHARACTER_CHANGED','角色状态已变化，请重新查看后确认铭刻');
+          if(!prior){
+            character.imprintId=uid();character.imprintedAt=now();
+            character.raw.metadata.updatedAt=character.imprintedAt;
+            s.characterImprints||={};s.characterImprints[m.actorId]={memberId,revision,snapshot:clone(character)};
+          }
+          characterResult={character:clone(character),revision};break;
+        }
         case 'dice.preference':{
           if(memberId==='host'||!m.actorId||p.actorId!==undefined&&p.actorId!==m.actorId)fail('FORBIDDEN','只能设置自己角色的掷骰偏好');
           if(typeof p.skip!=='boolean')fail('INVALID_COMMAND','skip 必须是布尔值');
@@ -288,7 +314,7 @@ const MultiplayerHost=(()=>{
         }
         default:fail('UNKNOWN_COMMAND','不支持的房主命令');
       }
-      const current=room(),receipt={ok:true,requestId:command.requestId,epoch:current.epoch,roundId:current.roundId,status:current.status,...type.startsWith('action.prepare')?{preparedAction:clone(current.preparedActions[m.actorId])}:{},...cancelled?{cancelled,cancelledRequestId}:{}};
+      const current=room(),receipt={ok:true,requestId:command.requestId,epoch:current.epoch,roundId:current.roundId,status:current.status,...characterResult,...type.startsWith('action.prepare')?{preparedAction:clone(current.preparedActions[m.actorId])}:{},...cancelled?{cancelled,cancelledRequestId}:{}};
       current.receipts.push({memberId,requestId:command.requestId,fingerprint,receipt});if(current.receipts.length>512)current.receipts.splice(0,current.receipts.length-512);
       await commit(reset?'timeline.reset':'room.changed',reset||{});
       if(start)start();else if(type==='dice.preference'||!current.vote&&current.status==='collecting')queueMicrotask(()=>checkAutomatic().catch(()=>{}));
@@ -326,13 +352,13 @@ const MultiplayerHost=(()=>{
           Object.assign(r.members.host,{role:'spectator',permission:'all',view:'all',actorId:null,bindingVersion:1});save().hostSpectator=true;save().actorId=null;save().selectedActorId=null;save().slotsConfigured=true;r.status=save().status==='ended'?'ended':save().activeRound&&!save().activeRound.complete?'interrupted':'collecting';
         }else if(r.status==='selecting'){const chosen=actorId||save().selectedActorId||save().slots.find(x=>x.path===save().playerPath&&x.kind!=='kpc')?.id;actor(chosen);
           for(const slot of [...save().slots])if(slot.id!==chosen&&slot.kind==='player'&&!slot.memberId)slots().setMode(save(),slot.id,'disabled');assignRaw('host',chosen);r.status=save().status==='ended'?'ended':save().activeRound&&!save().activeRound.complete?'interrupted':'collecting';}
-        else if(actorId&&actorId!=='$spectator'&&actorId!==r.members.host.actorId){boundary();assignRaw('host',actorId);}refresh();if(!r.online&&['collecting','ended'].includes(r.status)&&!r.vote&&!r.participants.some(p=>p.invalid)){
+        else if(actorId&&actorId!=='$spectator'&&actorId!==r.members.host.actorId){boundary();assignRaw('host',actorId);}refresh();if(!r.online&&r.status==='collecting'&&!r.vote&&!r.participants.some(p=>p.invalid)){
           suspendRemote();for(const [id,m]of Object.entries(r.members))if(m.invitationActorId&&!m.actorId){slots().setMode(save(),m.invitationActorId,'disabled');delete r.members[id];}
           if(r.suspendedRoom)r.suspendedRoom.bindings=r.suspendedRoom.bindings.filter(x=>r.members[x.memberId]);refresh();
         }await commit('room.initialized');return clone(r);}),
       open:({roomId}={})=>transaction(async()=>{const r=room();if(r.status==='selecting')fail('SELECT_ACTOR','请先选择角色');if(['executing','rolling_back'].includes(r.status))fail('BUSY','请等待当前回合结束');if(!r.online){if(!r.vote&&r.status==='collecting')restoreRemote();if(roomId!==undefined&&(typeof roomId!=='string'||!/^[A-Za-z0-9_-]{1,64}$/.test(roomId)))fail('INVALID_ROOM','房间标识无效');r.online=true;r.roomId=roomId||uid();r.roundId=r.status==='interrupted'?r.roundId:uid();r.receipts=[];r.slotRequests=[];await commit('room.opened');}return clone(r);}),
       close:()=>transaction(async()=>{const r=room();if(!['selecting','collecting','ended'].includes(r.status)||r.vote)fail('BUSY','请先完成当前回合或回退决策');const own=r.submissions[r.members.host?.actorId];if(own){save().draft=own.content||'';save().privateDraft=own.privateContent||'';save().draftRound=(save().round||0)+1;save().draftVersion=(save().draftVersion||0)+1;}
-        for(const [id,m]of Object.entries(r.members))if(id!=='host'){const actorId=m.actorId||m.invitationActorId;if(actorId){delete actor(actorId).memberId;slots().setMode(save(),actorId,'disabled');}delete r.members[id];}
+        for(const [id,m]of Object.entries(r.members))if(id!=='host'){if(r.status==='ended'){m.connected=false;continue;}const actorId=m.actorId||m.invitationActorId;if(actorId){delete actor(actorId).memberId;slots().setMode(save(),actorId,'disabled');}delete r.members[id];}
         r.online=false;r.roomId=null;r.roundId=uid();r.receipts=[];r.slotRequests=[];r.submissions={};r.preparedActions={};delete r.suspendedRoom;refresh();await commit('room.closed');}),
       addMember:memberId=>transaction(async()=>{if(!validId(memberId)||memberId==='host')fail('INVALID_MEMBER','无效成员标识');const r=room();if(!r.online)fail('ROOM_CLOSED','请先开房间');if(!Object.hasOwn(r.members,memberId))r.members[memberId]={actorId:null,bindingVersion:0,connected:true};await commit('member.joined');return clone(r.members[memberId]);}),
       reserveSpectator:(memberId,permission='none')=>transaction(async()=>{

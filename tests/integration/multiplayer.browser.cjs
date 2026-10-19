@@ -41,7 +41,9 @@ test('round-one room slots stay configurable and lock from round two with shared
  await page.locator('[data-action="close-modal"]').first().click();await page.locator('[data-action="settings"]').click();
  const advanced=page.locator('[data-settings-section="advanced"]');assert.equal(await advanced.locator('input[name="bridgeUrl"]').count(),1);assert.match(await advanced.innerText(),/高级选项/);await advanced.locator('summary').click();assert.match(await advanced.innerText(),/多人游戏中转服务器地址/);
  assert.equal(await page.locator('[data-settings-section="game"] input[name="bridgeUrl"]').count(),0);
- const guest=await pageFor(t);guest.on('pageerror',e=>errors.push(e.message));await guest.goto(origin+'/client.html');await guest.locator('#join-room-form').waitFor();await guest.locator('[data-action="settings"]').click();await guest.locator('.settings-section summary').click();await guest.locator('[name="bridgeUrl"]').fill('wss://relay.example.com:8443/');await guest.locator('#settings-form button[type="submit"]').click();assert.equal(await guest.evaluate(()=>GameApp.getState().settings.bridgeUrl),'wss://relay.example.com:8443/');
+ const guest=await pageFor(t);guest.on('pageerror',e=>errors.push(e.message));await guest.goto(origin+'/client.html');await guest.locator('#join-room-form').waitFor();await guest.locator('[data-action="settings"]').click();
+ assert.equal(await guest.locator('[name="bridgeUrl"]').count(),0,'client relay routing comes from its invitation');
+ await guest.locator('[name="reverseSendNewline"]').check();await guest.locator('#settings-form button[type="submit"]').click();assert.equal(await guest.evaluate(()=>GameApp.getState().settings.reverseSendNewline),true);
  assert.deepEqual(errors,[]);
 });
 async function pageFor(t){const context=await browser.newContext({viewport:{width:1440,height:960}});t.after(()=>context.close());const page=await context.newPage();await page.route('**/modules.json',route=>route.fulfill({json:[]}));await page.route('**/files/**',route=>route.abort());page.setDefaultTimeout(10000);return page;}

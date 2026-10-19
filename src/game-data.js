@@ -15,7 +15,7 @@ const GameData=(()=>{
     HP:['HP','Health','生命值'],MAXHP:['MAXHP','MaxHealth','生命值上限','最大生命值'],
     MP:['MP','Mana','魔法值','魔力值'],MAXMP:['MAXMP','MaxMana','魔法值上限','最大魔法值','魔力值上限'],
     SAN:['SAN','Sanity','理智','理智值'],MAXSAN:['MAXSAN','MaxSanity','理智上限','理智值上限','最大理智值'],
-    Enabled:['Enabled','Active'],Alive:['Alive','Living']
+    Insane:['Insane','疯狂','是否疯狂'],Enabled:['Enabled','Active'],Alive:['Alive','Living']
   };
   function get(o,keys){if(!object(o))return undefined;const names=Array.isArray(keys)?keys:aliases[keys]||[keys];for(const key of names)if(Object.hasOwn(o,key))return o[key];const wanted=new Set(names.map(normalize));const key=Object.keys(o).find(k=>wanted.has(normalize(k)));return key===undefined?undefined:o[key];}
   const hiddenKeys=new Set(['密码','password',...['喜好/厌恶','说话习惯','原则','当前位置'].flatMap(k=>aliases[k])].map(normalize));
@@ -24,7 +24,7 @@ const GameData=(()=>{
   function visible(x,items=false){
     if(Array.isArray(x))return x.filter(v=>!(object(v)&&hiddenFlag(v['.是否对玩家隐藏']))).map(v=>visible(v,items));
     if(!object(x))return x;
-    const out={};for(const [k,v]of Object.entries(x))if(!k.startsWith('.')&&!hiddenKeys.has(normalize(k))&&!(items&&itemKeys.has(normalize(k))))out[k]=visible(v,items);return out;
+    const out={};for(const [k,v]of Object.entries(x))if(!k.startsWith('.')&&!hiddenKeys.has(normalize(k))&&!(object(v)&&hiddenFlag(v['.是否对玩家隐藏']))&&!(items&&itemKeys.has(normalize(k))))out[k]=visible(v,items);return out;
   }
   function node(s,p){if(!s?.tree||!V)return null;const parts=String(p).replace(/\\/g,'/').split('/').filter(Boolean);if(parts.includes('..'))return null;if(parts[0]!=='workspace')parts.unshift('workspace');return V.resolve(s.tree,parts);}
   function read(s,p){const n=node(s,p);if(!n||n.type!=='file'||n.encoding==='base64')throw Error(p+' 不是可读取的 JSON 文件');return JSON.parse(n.content.replace(/^\uFEFF/,''));}
@@ -78,7 +78,7 @@ const GameData=(()=>{
         list(dir+'/背包.json','存档-索引-物品');
       }
       const p=dir+'/基础信息.json',o=json(p,'object');if(!o)return;
-      fields(o,Object.fromEntries(Object.entries(aliases).filter(([k])=>!['衍生属性','HP','MAXHP','MP','MAXMP','SAN','MAXSAN','Enabled','Alive'].includes(k))),p);
+      fields(o,Object.fromEntries(Object.entries(aliases).filter(([k])=>!['衍生属性','HP','MAXHP','MP','MAXMP','SAN','MAXSAN','Enabled','Alive','Insane'].includes(k))),p);
       const name=get(o,'姓名');if(typeof name==='string'&&/[<>:"/\\|?*.]/.test(name))warnings.push('[非法名称] '+p+': 姓名包含文件名禁用字符');
       for(const k of Object.keys(o))if(['背包','backpack','inventory','bag','items','itemlist'].includes(normalize(k)))warnings.push('[非法字段] '+p+': '+k+' 应移至背包文件');
       for(const k of ['HP','MAXHP','MP','MAXMP','Enabled','Alive'])if(!['状态','属性','衍生属性'].some(g=>get(get(o,g),k)!==undefined))warnings.push('[状态字段缺失] '+p+': '+k);

@@ -55,6 +55,9 @@ const GameSlots=(()=>{
         if(key)lines.push(text(key,{actor:JSON.stringify(prefixes[mode]+'-'+id)}));
       }
     }
+    for(const [id,entry]of Object.entries(save.characterImports||{}))if(modes[id]==='player'&&entry.notifiedRevision!==entry.revision){
+      lines.push(text('imported_character',{actor:JSON.stringify('Player-'+id)}));entry.notifiedRevision=entry.revision;
+    }
     const openingConfiguration=!started(save)||save.activeRound?.number===2&&(save.round||0)<2;
     save.slotControlState={initialModes:openingConfiguration?controlModes(save,openPlayerSlots):save.slotControlState?.initialModes||{...modes},lastModes:{...modes}};
     return lines.length?[INTERNAL_HEADER,...lines,text('privacy')].join('\n'):'';
