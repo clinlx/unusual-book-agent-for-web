@@ -4,7 +4,7 @@ const GamePreSubmit=(()=>{
   const roundNumber=s=>s.active?.activeRound&&!s.active.activeRound.complete?s.active.activeRound.number:s.room?.round||s.active?.round+1;
   const identity=s=>s.active?.actorId?JSON.stringify([!!s.client,s.active.id,s.active.actorId,s.room?.epoch||s.active.multiplayer?.epoch||0]):null;
   function canPrepare(s,flags){
-    if(!s.active?.actorId||!s.running||!flags.alive||!flags.enabled)return false;
+    if(s.room?.allowPreSubmit===false||!s.active?.actorId||!s.running||!flags.alive||!flags.enabled)return false;
     const round=roundNumber(s);
     return (s.active.events||[]).some(e=>e.type==='story'&&e.round===round&&
       (!Array.isArray(e.audience)||e.audience.includes(s.active.actorId))&&(!e.secret||Array.isArray(e.audience)));

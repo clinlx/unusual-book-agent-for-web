@@ -3,12 +3,15 @@
 const MultiplayerHost=(()=>{
   const common=typeof module!=='undefined'&&module.exports;
   const data=common?require('./game-data.js'):GameData;
+  const Admission=common?require('./character-admission'):CharacterAdmission;
   const history=common?require('./game-history.js'):GameHistory;
   const slots=()=>common?require('./game-slots.js'):GameSlots;
   const clone=x=>structuredClone(x);
   const validId=x=>typeof x==='string'&&x.length>0&&x.length<=160&&!['__proto__','constructor','prototype'].includes(x);
   const fail=(code,message)=>{const e=Error(message);e.code=code;throw e;};
   const canonical=x=>JSON.stringify(sort(x));
+  const manualDiceMode=s=>['on','off'].includes(s.roomSettings?.manualDice)?s.roomSettings.manualDice:'inherit';
+  const manualDiceEnabled=(s,settings={})=>manualDiceMode(s)==='inherit'?settings.manualDice===true:manualDiceMode(s)==='on';
   function sort(x){if(Array.isArray(x))return x.map(sort);if(x&&typeof x==='object')return Object.fromEntries(Object.keys(x).sort().map(k=>[k,sort(x[k])]));return x;}
   const aliases={submit:'action.submit',skip:'action.skip',start:'round.start',resume:'round.resume',advance:'round.advance',hostSkip:'action.hostSkip',requestRollback:'rollback.request',decideRollback:'rollback.decide',voteRollback:'rollback.vote',setSlotMode:'slot.mode'};
   function create({getSave,execute,rollback,persist=async()=>{},rebuildContext,getSettings=()=>({}),now=()=>Date.now(),uid=()=>globalThis.crypto.randomUUID()}){
@@ -76,7 +79,7 @@ const MultiplayerHost=(()=>{
       refresh();
     }
     function suspendRemote(){
-      const r=room(),bindings=Object.entries(r.members).filter(([id,m])=>id!=='host'&&m.actorId).map(([memberId,m])=>({memberId,actorId:m.actorId}));
+      const r=room(),bindings=Object.entries(r.members).filter(([id,m])=>id!=='host'&&m.actorId).map(([memberId,m])=>({memberId,actorId:m.actorId,bindingVersion:m.bindingVersion,reviewId:save().characterReviews?.[m.actorId]?.id}));
       if(!bindings.length)return;
       r.suspendedRoom={bindings,submissions:clone(r.submissions),round:save().round};
       for(const {memberId,actorId}of bindings){const slot=save().slots.find(x=>x.id===actorId);if(slot?.kind==='player'){delete slot.memberId;slots().setMode(save(),actorId,'disabled');}const m=member(memberId);m.actorId=null;m.bindingVersion++;}
@@ -87,9 +90,14 @@ const MultiplayerHost=(()=>{
       const r=room(),suspended=r.suspendedRoom;if(!suspended)return;
       delete r.suspendedRoom;
       if(suspended.round!==save().round)return;
-      for(const {memberId,actorId}of suspended.bindings){
+      for(const {memberId,actorId,bindingVersion,reviewId}of suspended.bindings){
         if(!r.members[memberId]||r.members[memberId].actorId||Object.values(r.members).some(m=>m.actorId===actorId))continue;
-        const slot=save().slots.find(x=>x.id===actorId);if(slot?.kind==='disabled')assignRaw(memberId,actorId);
+        const slot=save().slots.find(x=>x.id===actorId);if(slot?.kind==='disabled'){
+          assignRaw(memberId,actorId);
+          // Only resume a review tied to the exact ownership suspended with this room.
+          const q=save().characterReviews?.[actorId];
+          if(q&&q.id===reviewId&&q.memberId===memberId&&q.bindingVersion===bindingVersion){q.bindingVersion=r.members[memberId].bindingVersion;q.viewed=false;delete q.viewedHash;}
+        }
       }
       for(const action of Object.values(suspended.submissions))if(r.members[action.memberId]?.actorId===action.actorId)r.submissions[action.actorId]=clone(action);
       refresh();
@@ -101,6 +109,7 @@ const MultiplayerHost=(()=>{
     }
     function readyActions(){const r=room();return r.participants.filter(p=>p.alive).map(p=>p.enabled?r.submissions[p.actorId]:{actorId:p.actorId,memberId:p.memberId,content:'无意识，无法行动，等待剧情恢复。',privateContent:'',skip:true,automatic:true}).filter(Boolean);}
     function launch({automatic=false,starting=false,resume=false}={}){
+      Admission.assertReady(save());
       const r=room();if(execution||r.status==='executing')fail('BUSY','当前回合正在执行');
       const actions=resume?r.frozenActions||[]:readyActions();
       const token={epoch:r.epoch,roundId:r.roundId,id:uid(),before:signature(),automatic,starting};
@@ -138,7 +147,7 @@ const MultiplayerHost=(()=>{
     function skipManualDice(actorId){
       return !!actorId&&room().online===true&&save().slots.some(s=>s.id===actorId&&s.kind==='player')&&Object.entries(room().members).some(([id,m])=>id!=='host'&&m.role!=='spectator'&&m.actorId===actorId&&m.skipManualDice===true);
     }
-    function shouldRun(){const r=room();if(r.status!=='collecting'||r.vote||save().status==='new'||awaitingInvite())return false;refresh();if(r.participants.some(p=>p.invalid))return false;const living=r.participants.filter(p=>p.alive),awake=living.filter(p=>p.enabled);return living.length>0&&(awake.length?awake.every(p=>r.submissions[p.actorId]):getSettings().autoAdvanceUnconscious!==false);}
+    function shouldRun(){const r=room();if(r.status!=='collecting'||r.vote||save().status==='new'||awaitingInvite()||Admission.pending(save()).length)return false;refresh();if(r.participants.some(p=>p.invalid))return false;const living=r.participants.filter(p=>p.alive),awake=living.filter(p=>p.enabled);return living.length>0&&(awake.length?awake.every(p=>r.submissions[p.actorId]):getSettings().autoAdvanceUnconscious!==false);}
     function scope(m,command){const r=room();if(command.epoch!==r.epoch||command.roundId!==r.roundId)fail('STALE_ROUND','回合已更新，请同步后重试');if(command.bindingVersion!==m.bindingVersion)fail('STALE_BINDING','角色绑定已更新，请重新同步');if(command.roomId!==undefined&&command.roomId!==r.roomId)fail('STALE_ROOM','房间已更新');}
     function target(payload){
       const snapshots=save().snapshots||[];
@@ -179,15 +188,29 @@ const MultiplayerHost=(()=>{
       const fingerprint=canonical(command),old=r.receipts.find(x=>x.memberId===memberId&&x.requestId===command.requestId);
       if(old){if(old.fingerprint!==fingerprint)fail('REQUEST_CONFLICT','同一请求标识不能用于不同内容');return clone(old.receipt);}
       scope(m,command);const type=aliases[command.type]||command.type,p=command.payload||command;let start=null,reset=null,cancelled=null,cancelledRequestId,characterResult;
-      if(m.role==='spectator'&&type!=='spectator.view'&&!(memberId==='host'&&['round.start','round.resume','round.advance','action.hostSkip','rollback.host','rollback.decide','slot.mode','slot.claim.decide'].includes(type)))fail('SPECTATOR_READ_ONLY','观战者只能接收信息，不能提交行动、投票或更改游戏');
+      if(m.role==='spectator'&&type!=='spectator.view'&&!(memberId==='host'&&['round.start','round.resume','round.advance','action.hostSkip','rollback.host','rollback.decide','slot.mode','slot.claim.decide','character.policy','character.review.preview','character.review','room.settings'].includes(type)))fail('SPECTATOR_READ_ONLY','观战者只能接收信息，不能提交行动、投票或更改游戏');
       if(expire())await commit('rollback.expired');
       switch(type){
+        case 'room.settings':{
+          host(memberId);
+          if(execution||['executing','rolling_back'].includes(r.status)||r.vote)fail('BUSY','请等当前回合或回退处理结束后再保存房间设置');
+          const keys=Object.keys(p);if(!keys.length||keys.some(k=>!['manualDice','allowPreSubmit'].includes(k)))fail('INVALID_SETTINGS','房间设置参数无效');
+          if(Object.hasOwn(p,'manualDice')&&!['inherit','on','off'].includes(p.manualDice))fail('INVALID_SETTINGS','手动掷骰请选择跟随全局、开启或关闭');
+          if(Object.hasOwn(p,'allowPreSubmit')&&typeof p.allowPreSubmit!=='boolean')fail('INVALID_SETTINGS','允许预发送行动必须是开启或关闭');
+          save().roomSettings={...save().roomSettings,...p};break;
+        }
         case 'character.inject':{
           boundary();const s=save(),slot=s.slots.find(x=>x.id===m.actorId&&x.kind==='player');
           if(!slot||p.actorId!==undefined&&p.actorId!==m.actorId)fail('FORBIDDEN','只能选择自己拥有的角色');
           if(s.status==='ended'||s.round>=1||s.activeRound&&!s.activeRound.complete||(s.activeRound?.number||0)>1)fail('CHARACTER_LOCKED','第一回合结束后不能更换角色');
-          const Snapshot=common?require('./character-snapshot'):CharacterSnapshot;
-          Snapshot.inject(s,slot,p.snapshot);s.characterImports||={};s.characterImports[m.actorId]={revision:uid(),name:String(p.snapshot.name||slot.id),at:now()};
+          characterResult=await Admission.submit(s,memberId,p.snapshot,uid());
+          break;
+        }
+        case 'character.policy':case 'character.review.preview':case 'character.review':{
+          host(memberId);boundary();
+          if(save().status==='ended'||save().round>=1||save().activeRound&&!save().activeRound.complete)fail('CHARACTER_LOCKED','第一回合结束后不能更改角色卡设置');
+          if(type==='character.policy')await Admission.setPolicy(save(),p.policy);
+          else characterResult=type==='character.review.preview'?await Admission.preview(save(),p.actorId,p.id):await Admission.decide(save(),p.actorId,p.id,p.decision,p.hash);
           break;
         }
         case 'character.preview':case 'character.imprint':{
@@ -218,6 +241,7 @@ const MultiplayerHost=(()=>{
           m.view=spectatorView(p.view);m.bindingVersion++;break;
         }
         case 'action.prepare':{
+          if(save().roomSettings?.allowPreSubmit===false)fail('PRE_SUBMIT_DISABLED','房主已关闭预发送行动，请等待本回合结束后再提交');
           if(r.status!=='executing'||r.vote)fail('BUSY','当前不能预提交');
           validateActors();const entry=r.participants.find(x=>x.memberId===memberId&&x.actorId===m.actorId);
           if(!entry?.alive||!entry.enabled)fail('INACTIVE_ACTOR','当前角色无法主动行动');
@@ -256,7 +280,7 @@ const MultiplayerHost=(()=>{
           const prepared=r.preparedActions[entry.actorId];if(prepared?.status==='queued'){prepared.status='cancelled';prepared.version++;}
           if(shouldRun())start=launch();break;
         }
-        case 'round.start':host(memberId);if(save().status!=='new'||r.vote||r.status!=='collecting')fail('BUSY','不能重复开局');
+        case 'round.start':host(memberId);Admission.assertReady(save());if(save().status!=='new'||r.vote||r.status!=='collecting')fail('BUSY','不能重复开局');
           if(awaitingInvite())fail('WAITING_PLAYERS','有开放给玩家的槽位，但是没有玩家加入。请等待玩家加入，或将空槽位设为 NPC 或关闭角色。');
           if(r.online&&Object.entries(r.members).some(([id,m])=>id!=='host'&&m.actorId&&!m.connected))fail('WAITING_PLAYERS','有玩家已掉线，请等待所有玩家重连后再开始游戏。');
           validateActors();start=launch({starting:true});break;
@@ -381,11 +405,11 @@ const MultiplayerHost=(()=>{
       assign:(memberId,actorId)=>transaction(async()=>{boundary();assignRaw(memberId,actorId);await commit('member.assigned');return clone(member(memberId));}),
       release:(memberId,kind='disabled',{forget=false}={})=>transaction(async()=>{boundary();if(memberId==='host')fail('FORBIDDEN','房主请通过切换槽位选择角色');if(!['ai','disabled'].includes(kind))fail('INVALID_MODE','无人槽位仅可设为关闭或 AIPC');const m=member(memberId);if(m.actorId){delete actor(m.actorId).memberId;slots().setMode(save(),m.actorId,kind);delete room().preparedActions[m.actorId];m.actorId=null;m.bindingVersion++;if(forget)delete room().members[memberId];room().receipts=room().receipts.filter(x=>x.memberId!==memberId);room().slotRequests=room().slotRequests.filter(x=>x.memberId!==memberId);refresh();await commit('member.released');}}),
       setConnected:(memberId,connected)=>transaction(async()=>{member(memberId).connected=!!connected;await commit('member.connection');}),
-      handle,checkAutomatic,skipManualDice,state:()=>clone(room()),subscribe:fn=>{listeners.add(fn);return ()=>listeners.delete(fn);},
+      handle,checkAutomatic,skipManualDice,state:()=>({...clone(room()),manualDice:manualDiceEnabled(save(),getSettings()),manualDiceMode:manualDiceMode(save()),allowPreSubmit:save().roomSettings?.allowPreSubmit!==false}),subscribe:fn=>{listeners.add(fn);return ()=>listeners.delete(fn);},
       waitForIdle:async()=>{await queue;while(execution){await execution;await queue;}},
       dispose:()=>{disposed=true;cancelTimer();listeners.clear();}
     };
   }
-  return {create};
+  return {create,manualDiceMode,manualDiceEnabled};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=MultiplayerHost;

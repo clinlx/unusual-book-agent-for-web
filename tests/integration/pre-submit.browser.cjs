@@ -64,3 +64,18 @@ test('client confirms with host, restores frozen drafts after reload, and accept
  assert.equal(await page.locator('.pre-submit-notice').count(),0);assert.equal(sent.filter(x=>x.type==='action.submit').length,0);assert.equal(sent.filter(x=>x.type==='action.prepare').length,2);
  assert.equal(await page.locator('#action-input').isDisabled(),false);assert.equal(await page.locator('#action-input').inputValue(),'');assert.equal(await page.locator('#hidden-send-toggle').isChecked(),true);assert.equal(await page.locator('#disguise-send-toggle').isChecked(),true);assert.deepEqual(errors,[]);
 });
+
+test('disabled room pre-send hides client controls, blocks shortcuts and stays disabled after reconnect',async t=>{
+ const page=await pageFor(t),tree=VFS.createTree();for(const id of ['a','b']){VFS.writeFile(tree,'/workspace/Player-'+id+'/基础信息.json',JSON.stringify({姓名:id}));VFS.writeFile(tree,'/workspace/Player-'+id+'/背包.json','[]');}
+ const save=Core.createSave('关闭预发送',tree),host=Host.create({getSave:()=>save,execute:async()=>{},rollback:async()=>{}});t.after(()=>host.dispose());await host.initialize('b');await host.open();await host.addMember('guest');await host.assign('guest','a');
+ const setMode=async allowPreSubmit=>{save.multiplayer.status='interrupted';const r=host.state();await host.handle('host',{type:'room.settings',payload:{allowPreSubmit},requestId:crypto.randomUUID(),epoch:r.epoch,roundId:r.roundId,bindingVersion:r.members.host.bindingVersion});save.multiplayer.status='executing';};
+ await setMode(false);save.status='running';save.events.push({type:'story',round:1,content:'正在展开的故事。',audience:'public'});
+ const projector=Sync.createHost({getSave:()=>save,getRoom:()=>host.state()});let requests=0;
+ await page.exposeFunction('permissionServer',async(id,p)=>{if(p.type==='sync.request')return page.evaluate(packet=>GameApp.receive(packet),await projector.sync(id,p.payload));if(p.type==='sync.ack')return;requests++;throw Error('pre-send should not reach host');});
+ const connect=()=>page.evaluate(()=>GameApp.connect({onClient:()=>()=>{},sendToHost:(id,p)=>window.permissionServer(id,p)},'guest'));
+ await page.goto(origin+'/client.html');await page.locator('#join-room-form').waitFor();await connect();await page.locator('#action-input').fill('保留我的草稿');assert.equal(await page.locator('[data-action="pre-submit"]').count(),0);
+ await page.locator('#action-input').press('Control+Enter');assert.equal(requests,0);assert.equal(await page.locator('#action-input').inputValue(),'保留我的草稿');
+ await setMode(true);await page.evaluate(p=>GameApp.receive(p),await projector.sync('guest'));await page.locator('[data-action="pre-submit"]').waitFor();
+ await setMode(false);await page.evaluate(p=>GameApp.receive(p),await projector.sync('guest'));await page.locator('[data-action="pre-submit"]').waitFor({state:'hidden'});
+ await page.reload();await page.locator('#join-room-form').waitFor();await connect();await page.waitForFunction(()=>GameApp.getState().active?.status==='running');assert.equal(await page.locator('[data-action="pre-submit"]').count(),0);assert.equal(await page.evaluate(()=>GameApp.getState().room.allowPreSubmit),false);assert.equal(requests,0);
+});

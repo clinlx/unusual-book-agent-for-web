@@ -570,3 +570,33 @@ test('host and client switch all panels and header controls together at the resp
  }
  assert.deepEqual(errors,[]);
 });
+
+for(const width of [1280,390])test('room manual dice UI saves independent overrides and preserves global settings at '+width,async t=>{
+ const page=await pageFor(t);await page.setViewportSize({width,height:900});await page.route('https://**/*',r=>r.abort());page.on('download',()=>assert.fail('unexpected download'));
+ await page.goto(origin+'/index.html');await page.locator('[data-action="import"]').waitFor();
+ await page.evaluate(async()=>{await GameApp.updateSettings({manualDice:true,apiKey:'test',baseUrl:'https://room-dice.invalid/v1'});await GameApp.importSave(new File([ZIP.makeZip([{name:'Player-pc/基础信息.json',text:'{"姓名":"测试者"}'},{name:'Player-pc/背包.json',text:'[]'}])],'房间掷骰.zip'));if(GameApp.getState().active.slotsConfigured===false)await GameApp.configureSlots('pc');});
+ await page.locator('[data-action="room-panel"]').click();await page.locator('.room-settings>summary').click();assert.equal(await page.locator('#room-manual-dice').inputValue(),'inherit');
+ assert.equal(await page.locator('#room-pre-submit').inputValue(),'on');await page.locator('#room-pre-submit').selectOption('off');await page.locator('#room-manual-dice').selectOption('off');assert.equal(await page.evaluate(()=>GameApp.getState().room.manualDice),true);assert.match(await page.locator('.room-save-status').innerText(),/未保存/);
+ await page.locator('.room-modal>header [data-action="close-modal"]').click();await page.locator('[data-dialog-value="cancel"]').click();assert.equal(await page.locator('#room-manual-dice').inputValue(),'off');
+ await page.locator('[data-action="save-room"]').click();await page.waitForFunction(()=>GameApp.getState().active.roomSettings?.manualDice==='off');assert.equal(await page.evaluate(()=>GameApp.getState().room.allowPreSubmit),false);assert.equal(await page.evaluate(()=>GameApp.getState().room.manualDice),false);assert.equal(await page.evaluate(()=>GameApp.getState().settings.manualDice),true);
+ await page.locator('#room-manual-dice').selectOption('on');await page.locator('.room-modal>header [data-action="close-modal"]').click();await page.locator('[data-dialog-value="discard"]').click();
+ await page.locator('[data-action="room-panel"]').click();await page.locator('.room-settings>summary').click();assert.equal(await page.locator('#room-manual-dice').inputValue(),'off');
+ await page.screenshot({path:path.resolve(__dirname,'../artifacts/room-manual-dice-'+width+'.png')});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+ await page.reload();await page.locator('.save-open').click();await page.locator('[data-action="room-panel"]').click();await page.locator('.room-settings>summary').click();assert.equal(await page.locator('#room-manual-dice').inputValue(),'off');assert.equal(await page.locator('#room-pre-submit').inputValue(),'off');
+ await page.locator('#room-manual-dice').selectOption('inherit');await page.locator('[data-action="save-room"]').click();await page.waitForFunction(()=>GameApp.getState().room.manualDice===true);await page.evaluate(()=>GameApp.updateSettings({manualDice:false}));assert.equal(await page.evaluate(()=>GameApp.getState().room.manualDice),false);
+});
+test('actual game execution respects room dice overrides in both directions and global fallback',async t=>{
+ for(const [mode,global,expected] of [['off',true,false],['on',false,true],['inherit',true,true],['inherit',false,false]]){
+  const page=await pageFor(t);let requests=0;await page.route('https://**/*',r=>r.abort());
+  await page.route('https://room-dice.invalid/**',async route=>{
+   requests++;const args={roller:'pc',description:'观察',related_attr:'侦查',is_secret:false,dice_dict:{侦查:'1d100'},calculate_only:false,target_value:50,compare_mode:'le',critical_success_range:null,critical_failure_range:null,dice_combine_mode:'sum',left_modifiers:{},right_modifiers:{}};
+   const calls=requests===1?[call('roll_dice',args,'room-dice')]:[call('append_story',{content:'检定结束。',one_line_summary_of_content:'检定',self_accept:true},'story'),call('end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}},'end')];
+   await route.fulfill({json:{choices:[{message:{content:'',tool_calls:calls}}]}});
+  });
+  await page.goto(origin+'/index.html');await page.locator('[data-action="import"]').waitFor();
+  await page.evaluate(async({mode,global})=>{await GameApp.updateSettings({manualDice:global,apiKey:'test',baseUrl:'https://room-dice.invalid/v1',stream:false,openingPreload:false});await GameApp.importSave(new File([ZIP.makeZip([{name:'Player-pc/基础信息.json',text:'{"姓名":"测试者"}'},{name:'Player-pc/背包.json',text:'[]'}])],'实际掷骰.zip'));if(GameApp.getState().active.slotsConfigured===false)await GameApp.configureSlots('pc');await GameApp.roomCommand('room.settings',{manualDice:mode});await GameApp.start();},{mode,global});
+  const result=await page.evaluate(()=>{const s=GameApp.getState();return {error:s.error,pending:!!s.active.pendingManualDice,rolls:s.active.events.filter(e=>e.type==='dice').length,manual:s.room.manualDice};});
+  assert.equal(result.error,null);assert.equal(result.pending,expected,mode+' / global '+global);assert.equal(result.manual,expected);assert.equal(result.rolls,1);assert.equal(requests,expected?1:2);
+  await page.close();
+ }
+});

@@ -44,7 +44,7 @@ const GameApp=(()=>{
     syncHost=MultiplayerSync.createHost({getSave:()=>{
       const stable=s.activeRound&&!s.activeRound.complete?publishedSave:s;
       return {...stable,events:s.events,status:s.status,slots:s.slots,round:s.round,snapshots:s.snapshots};
-    },getRoom:()=>({...hostSession.state(),manualDice:S.settings.manualDice===true,autoAdvanceUnconscious:S.settings.autoAdvanceUnconscious!==false})});
+    },getRoom:()=>({...hostSession.state(),autoAdvanceUnconscious:S.settings.autoAdvanceUnconscious!==false})});
     hostSession.subscribe(()=>{emit();publishClients();});
     if(s.slotsConfigured!==false)await hostSession.initialize(s.actorId);
     S.room=hostSession.state();
@@ -96,6 +96,7 @@ const GameApp=(()=>{
   }
   async function roomCommand(type,payload={},options={}){
     if(!hostSession)throw Error('请先选择存档');
+    if(type==='round.start')CharacterAdmission.assertReady(active());
     if(!S.settings.apiKey.trim()&&!(['round.start','round.resume'].includes(type)&&GameCore.localOpening(active()))&&['action.submit','action.skip','round.start','round.resume','round.advance'].includes(type))throw Error('请先在设置中填写 API Key');
     if(S.active.slotsConfigured===false)throw Error('请先选择角色槽位');
     const r=hostSession.state(),m=r.members.host;
@@ -413,7 +414,7 @@ const GameApp=(()=>{
     idle();let s=active();if(!S.settings.apiKey.trim()&&!(['start','resume'].includes(kind)&&GameCore.localOpening(s)))throw Error('请先在设置中填写 API Key');peerCheck(s);
     if(lease?.available){const lock=lease.acquireForRun(s.id,s.id);if(!lock.ok)throw Error('该存档正在另一个页面运行');}
     S.running=true;S.error=null;controller=new AbortController();
-    const settings=structuredClone(S.settings);const overrides={};
+    const settings={...structuredClone(S.settings),manualDice:MultiplayerHost.manualDiceEnabled(s,S.settings)};const overrides={};
     let timer;const clearStream=(keepStory=false)=>{const story=keepStory?S.stream.story||'':'',storyPublished=keepStory?S.stream.storyPublished||0:0;S.stream={content:'',reasoning:'',tools:[],story,storyPublished};};
     try{
       

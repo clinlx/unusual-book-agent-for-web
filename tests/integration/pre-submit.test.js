@@ -82,3 +82,10 @@ test('a submitted sync wins over a delayed queued acknowledgement and an epoch c
  f.state.room.preparedAction=null;f.state.room.epoch++;const next=f.queue.prepare(draft),late=f.calls[1];
  f.state.room.epoch++;f.queue.tick();late.resolve({preparedAction:f.reply(late)});await next;assert.equal(f.queue.current(),null);
 });
+
+test('room permission blocks host and client preparation without deleting accepted drafts',async()=>{
+ for(const client of [false,true]){const f=fixture(client);f.state.room.allowPreSubmit=false;assert.equal(Pre.canPrepare(f.state,f.flags),false);assert.throws(()=>f.queue.prepare(draft),/不能预提交/);
+ f.state.room.allowPreSubmit=true;f.queue.prepare(draft);f.state.room.allowPreSubmit=false;assert.ok(f.queue.current());assert.equal(f.queue.cancel(),true);
+ f.state.room.allowPreSubmit=true;f.queue.prepare(draft);f.state.room.allowPreSubmit=false;f.finish();const work=f.queue.tick();assert.equal(f.sent.length,1);f.accept();await work;assert.equal(f.queue.current(),null);}
+ const f=remoteFixture();f.state.room.allowPreSubmit=false;assert.throws(()=>f.queue.prepare(draft),/不能预提交/);assert.equal(f.calls.length,0);
+});
