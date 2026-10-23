@@ -33,6 +33,7 @@ const GameApp=(()=>{
         await executeRound(options.resume?'resume':options.starting?'start':'action',own?.content||'',{...options,actions,roundId:options.roundId});
         if(s.activeRound?.complete)publishedSave=structuredClone(s);
       },
+      executeDebrief:()=>executeDebrief(s),
       rebuildContext:async expected=>{
         if(S.active!==s||expected?.saveId!==s.id||expected.updatedAt!==s.updatedAt)throw Error('存档已变化，请重新确认重建范围');
         const latest=await db.getSave(s.id);
@@ -97,14 +98,15 @@ const GameApp=(()=>{
   async function roomCommand(type,payload={},options={}){
     if(!hostSession)throw Error('请先选择存档');
     if(type==='round.start')CharacterAdmission.assertReady(active());
-    if(!S.settings.apiKey.trim()&&!(['round.start','round.resume'].includes(type)&&GameCore.localOpening(active()))&&['action.submit','action.skip','round.start','round.resume','round.advance'].includes(type))throw Error('请先在设置中填写 API Key');
+    if(!S.settings.apiKey.trim()&&!(['round.start','round.resume'].includes(type)&&GameCore.localOpening(active()))&&['debrief.start','debrief.submit','debrief.resume','action.submit','action.skip','round.start','round.resume','round.advance'].includes(type))throw Error('请先在设置中填写 API Key');
     if(S.active.slotsConfigured===false)throw Error('请先选择角色槽位');
     const r=hostSession.state(),m=r.members.host;
     const result=await hostSession.handle('host',{type,payload,requestId:GameCore.uid(),roomId:r.roomId,epoch:r.epoch,roundId:r.roundId,bindingVersion:m.bindingVersion});
-    if(!options.acceptOnly)await hostSession.waitForIdle();emit();return result;
+    if(!options.acceptOnly&&!S.active.debrief)await hostSession.waitForIdle();emit();return result;
   }
   async function submitAction(content,privateContent='',options={}){
     const s=active();
+    if(s.debrief){if(privateContent||options.hiddenSend||options.disguiseSend)throw Error('复盘仅支持公开发言');return roomCommand('debrief.submit',{content:String(content)},{acceptOnly:true});}
     if(options.acceptOnly){
       const session=hostSession;await session.waitForIdle();
       if(session!==hostSession||S.active!==s)throw Error('预提交所属存档已切换');
@@ -404,12 +406,38 @@ const GameApp=(()=>{
     }finally{S.rebuilding=false;S.switching=false;lease?.releaseLease?.(s.id);emit();}
   }
   function currentContext(){
+    if(active().debrief){if(active().debrief.active)return GameDebrief.context(active());return active().debrief.events.map(e=>({role:e.role,content:e.content}));}
     if(S.lastRequest&&S.lastRequestSaveId===active().id)return GameSlots.playerContext(structuredClone(S.lastRequest.messages));
     const s=structuredClone(active()),frozen=!s.activeRound?.complete&&s.activeRound?.promptSnapshot;
     const overrides={},flows=Prompts.flows();
     const built=GameCore.context(s,(frozen?.system&&!Object.keys(frozen.overrides||{}).length?frozen.system:system()),GameTransport.inputBudget(S.settings,GameTools.build(Prompts,overrides)),{cachePrompt:flows.flow_cache,summariesPrompt:flows.flow_summaries,transformContext:Prompts.migrateText});
     return GameSlots.playerContext(built);
   }
+  async function executeDebrief(s){
+    idle();if(S.active!==s)throw Error('复盘所属存档已切换');peerCheck(s);
+    if(!S.settings.apiKey.trim())throw Error('请先在设置中填写 API Key');
+    if(lease?.available&&!lease.acquireForRun(s.id,s.id).ok)throw Error('该存档正在另一个页面运行');
+    const latest=await db.getSave(s.id);if(latest&&latest.updatedAt>s.updatedAt){lease?.releaseLease(s.id);throw Error('存档已在其他页面更新，请重新打开');}
+    const settings={...S.settings},defs=GameDebrief.tools();
+    S.running=true;S.error=null;controller=new AbortController();
+    const signal=controller.signal,clear=()=>{S.stream={content:'',reasoning:'',tools:[],story:''};};clear();emit();publishClients();
+    const heartbeat=setInterval(()=>{if(lease?.available){if(lease.lostWhileRunning(s.id))controller?.abort(Error('存档被另一个页面接管'));else lease.renewLease(s.id);}},lease?.HEARTBEAT||2000);
+    try{
+      const raw=GameTransport.create(settings,defs,{signal,
+        onAttempt:()=>{S.retryStatus='';clear();emit();},
+        onRetry:info=>{S.retryStatus=RequestRetry.message(info);clear();emit();},
+        onDelta:text=>{S.stream.content+=text;emit();},
+        onReasoningDelta:text=>{S.stream.reasoning+=text;emit();},
+        onToolDelta:calls=>{S.stream.tools=calls;emit();},
+        onUsage:usage=>{S.usage=usage;},
+        onRequest:body=>{S.lastRequest=body;S.lastRequestSaveId=s.id;clear();emit();}
+      });
+      await GameDebrief.run(s,raw,{signal,cap:GameTransport.inputBudget(settings,defs),maxToolLoops:settings.maxToolLoops,
+        onStep:async()=>{signal.throwIfAborted();await persist();}});
+    }catch(e){S.error=e.message;throw e;}
+    finally{clearInterval(heartbeat);lease?.releaseLease(s.id);S.running=false;S.retryStatus='';controller=null;clear();emit();}
+  }
+  async function startDebrief(){idle();peerCheck(active());return roomCommand('debrief.start',{}, {acceptOnly:true});}
   async function executeRound(kind,text,roundOptions={}){
     idle();let s=active();if(!S.settings.apiKey.trim()&&!(['start','resume'].includes(kind)&&GameCore.localOpening(s)))throw Error('请先在设置中填写 API Key');peerCheck(s);
     if(lease?.available){const lock=lease.acquireForRun(s.id,s.id);if(!lock.ok)throw Error('该存档正在另一个页面运行');}
@@ -487,8 +515,8 @@ const GameApp=(()=>{
     if(typeof text!=='string'||text.length>4000)throw Error('每名NPC的车卡要求最多4000字');
     s.npcCardInstructions={...GameSlots.npcRequirements(s),[actorKey]:text};await persist();emit();
   }
-  const resume=()=>roomCommand('round.resume');
-  function abort(){controller?.abort(Object.assign(Error('已中止本回合，可继续或回退'),{name:'AbortError'}));}
+  const resume=()=>roomCommand(active().debrief?'debrief.resume':'round.resume',{}, {acceptOnly:!!active().debrief});
+  function abort(){controller?.abort(Object.assign(Error(S.active?.debrief?'复盘已中断，可继续':'已中止本回合，可继续或回退'),{name:'AbortError'}));}
   async function rollback(){return decideHostRollback('approve');}
   async function updateSettings(values){
     const next={...S.settings};for(const k of Object.keys(defaults))if(k!=='promptOverrides'&&Object.hasOwn(values,k))next[k]=values[k];
@@ -524,7 +552,8 @@ const GameApp=(()=>{
     // Navigation inside the app is guarded by page-rendered UI, never a native unload dialog.
     window.addEventListener('storage',e=>{if(e.key?.startsWith('awl:lease:'))emit();});
   }
-  return {getState:()=>S,subscribe,init,importSave,importHandoff,importLink,openSave,closeSave,returnHome,returnToGame,leaveForClient,renameSave,deleteSave,exportSave,send,skip,start,resume,abort,rollback,setMode,
+  return {getState:()=>S,subscribe,init,importSave,importHandoff,importLink,openSave,closeSave,returnHome,returnToGame,leaveForClient,renameSave,deleteSave,exportSave,send,skip,start,resume,abort,rollback,setMode,startDebrief,
+    cancelDebrief:id=>roomCommand('debrief.cancel',{id},{acceptOnly:true}),
     configureSlots,configureNPCCards,configureInvitationSlot,configureSpectators,spectatorView:()=>S.active?.hostSpectator?exportView():null,setSpectatorView:view=>roomCommand('spectator.view',{view},{acceptOnly:true}),connectRoom,setInvitationSlot,openRoom,createInvitation,rotateInvitation,revokeInvitation,closeRoom,reconnectRoom:async()=>{if(!bridgeSession)throw Error('请先连接服务器建立房间');await bridgeSession.reconnect();},multiplayerState,roomCommand,requestRollback,decideHostRollback,exportView,attachMultiplayerTransport,
     addMember:id=>hostSession.addMember(id),setMemberConnected:(id,connected)=>hostSession.setConnected(id,connected),assignMember:(id,actor)=>hostSession.assign(id,actor),dispatchMember:(id,command)=>hostSession.handle(id,command),multiplayerSync:(id,request)=>syncHost.sync(id,request),
     readFile,writeFile,fileOperation,player,currentContext,contextRebuildInfo,rebuildContext,updateSettings,stageDraft,saveDraft,resolveManualDice,cancelAction,

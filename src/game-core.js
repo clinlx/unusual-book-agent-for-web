@@ -102,6 +102,7 @@ const GameCore = (() => {
     return n?.type==='file'&&n.encoding!=='base64'&&!!n.content?.trim();
   }
   function beginRound(s,text,isStart=false,prompt='',options={}) {
+    if(s.debrief)throw Error('已进入复盘模式，不能回溯或推进游戏');
     if(s.activeRound&&!s.activeRound.complete)throw Error('当前回合尚未结束，请继续或回退本回合');
     if(s.status==='ended')throw Error('游戏已结束，可回退至上一回合');
     const opening=isStart&&s.round===0||s.openingPending?openingFiles(s,options):null;
@@ -168,6 +169,7 @@ const GameCore = (() => {
       unfinished:!!s.activeRound&&!s.activeRound.complete};
   }
   function rebuildContext(s,opts={}) {
+    if(s.debrief)throw Error('已进入复盘模式，不能回溯或推进游戏');
     const info=contextRebuildInfo(s),old=s.activeRound,current=old?.number||Math.max(1,s.round);
     // Rebuild from published game events, never from arbitrary assistant text or tool arguments.
     const common=['id','type','round','at','worldTime','content','audience','private','actorId','roundId','speaker','privateContent','disguise','skip',
@@ -230,6 +232,7 @@ const GameCore = (() => {
     return info;
   }
   function rollback(s) {
+    if(s.debrief)throw Error('已进入复盘模式，不能回溯或推进游戏');
     pruneRollback(s);const snap=s.snapshots.pop();if(!snap)throw Error('没有可回退的回合');
     const input=inputs.retract(s,snap.round+1,snap.inputRoundId);
     s.tree=copy(snap.tree);s.messages.length=snap.messageCount;s.events.length=snap.eventCount;
@@ -411,6 +414,7 @@ const GameCore = (() => {
     return {data:result,content:`${a.roller||'角色'} · ${a.description||a.related_attr||'掷骰'}\n${rows.map(r=>`${r.label} ${r.formula} [${r.rolls.join(', ')}]`).join('；')}\n${resultText}`};
   }
   function execute(s,name,a={},callId=uid(),options={}) {
+    if(s.debrief)return {ok:false,error:'复盘模式不能执行游戏工具'};
     const round=s.activeRound;if(!round)return {ok:false,error:'尚未开始回合'};
     if(Object.hasOwn(round.receipts,callId))return copy(round.receipts[callId]);
     const knowledge=round.fileKnowledge||(round.fileKnowledge=fileKnowledge.create(round.number));fileKnowledge.setTurn(knowledge,round.number);
@@ -812,6 +816,7 @@ const GameCore = (() => {
     return true;
   }
   async function run(s,transport,opts={}) {
+    if(s.debrief)throw Error('复盘模式不能推进游戏');
     if(!s.activeRound)throw Error('尚未开始回合');
     const abort=()=>{if(opts.signal?.aborted)throw Object.assign(Error('已中止本回合'),{name:'AbortError'});};
     const step=async()=>{if(opts.onStep)await opts.onStep(s);};

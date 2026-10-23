@@ -82,7 +82,7 @@ const GameApp=(()=>{
     }catch(error){S.storageWarning=error.message;inputs=same?previous:{inputHistory:[],draft:'',privateDraft:'',draftRound:view.round+1,draftVersion:0};}
     S.active={...view,...inputState(inputs),cache:{Game_World_Time:view.events.at(-1)?.worldTime||''},snapshots:[],room:view.room};
     S.baseline=same&&before?.scope.epoch===next.scope.epoch?{info:before.view.info,items:before.view.items}:{info:view.info,items:view.items};
-    S.room=view.room;S.running=view.room?.status==='executing';
+    S.room=view.room;S.running=view.debrief?view.debrief.status==='running':view.room?.status==='executing';
     const feedback=GameInputs.currentFeedback(S);
     if(!feedback||feedback.status==='accepted'&&S.room.submitted||feedback.status==='cancelled'&&!S.room.submitted)S.actionFeedback=null;
     S.error=null;preSubmit.tick();emit();syncDicePreference();
@@ -97,6 +97,7 @@ const GameApp=(()=>{
   async function submitInput(text,privateContent='',options={},skip=false){
     if(S.network&&S.network.status!=='connected')throw Error('连接已中断，请等待重连或重新连接');if(!S.active||!S.room)throw Error('尚未连接房主');if(S.room.online===false)throw Error('房间已关闭');if(!S.active.actorId)throw Error('请先申请角色槽位');text=String(text);privateContent=String(privateContent);
     if(!skip&&!text.trim()&&!privateContent.trim())return;
+    if(S.active.debrief){if(skip||privateContent||options.hiddenSend||options.disguiseSend)throw Error('复盘仅支持公开发言');const result=await command('debrief.submit',{content:text});await sync();return result;}
     if(GameInputs.submission(S))throw Error('本回合已提交，请先撤回提交');
     const hiddenSend=options.hiddenSend??!!privateContent,disguiseSend=options.disguiseSend??!!(privateContent&&text),draftState=GameInputs.draftState(options.draftState||{draft:text,privateDraft:privateContent,hiddenSend,disguiseSend});
     const identity=scope(),r={...S.room},round=S.active.round+1,previous=local.load(identity),old=previous.inputHistory.find(x=>x.roundId===r.roundId);
@@ -165,6 +166,7 @@ const GameApp=(()=>{
     }
   },
     connect:async(t,id)=>{stopNetwork();S.joinFailure=null;S.network=null;await attach(t,id);},joinRoom,reconnectRoom,receive,sync,
+    cancelDebrief:async id=>{await command('debrief.cancel',{id});await sync();},
     preSubmit,send:(text,privateContent,options)=>submitInput(text,privateContent,options),cancelAction,profile:async actorId=>(await command('profile.request',{actorId})).profile,inventory:async actorId=>(await command('inventory.request',{actorId})).inventory,skip:(options={})=>submitInput('','',{draftState:GameInputs.draftState(S.active||{}),...options},true),requestRollback:()=>command('rollback.request',{targetRound:S.active.rollbackTargetRound??Math.max(0,S.active.round-1)}),roomCommand:command,
     player:()=>({info:S.active?.info||{},items:S.active?.items||[],name:S.active?.playerName}),exportView:()=>cache.getState()?.view,setSpectatorView:async view=>{await command('spectator.view',{view});await sync();},
     stageDraft,saveDraft:async(...args)=>stageDraft(...args),
