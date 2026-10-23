@@ -1532,7 +1532,7 @@
     if (S.activeTool) return;
     box.append(el('div', { class: 'busy-row', id: 'busyRow' },
       el('span', { class: 'spinner' }),
-      el('span', { class: 'busy-text', text: '处理中…' })));
+      el('span', { class: 'busy-text', text: S.retryStatus || '处理中…' })));
   }
 
   // 工具执行中的占位卡片：只报告在做什么，不显示结果（还没有）。
@@ -2582,6 +2582,15 @@
         S.reasonBuf = '';
         const toolDefs = Agent.toolDefinitions(cur.allSkills(), { imageSending: S.settings.imageSending });
         const transport = Agent.createHttpTransport(S.settings, toolDefs, {
+          onAttempt: () => { S.retryStatus = ''; if (S.sessionId === sess.id) renderBusyIndicator($('#chatScroll')); },
+          onRetry: async info => {
+            S.retryStatus = RequestRetry.message(info);
+            S.streamingTools = null;
+            if (S.toolPaintTimer) { clearTimeout(S.toolPaintTimer); S.toolPaintTimer = null; }
+            clearStreamBubble();
+            await DB.del('config', 'stream:' + projectId);
+            if (S.sessionId === sess.id) renderChat();
+          },
           prepareMessages: messages => S.settings.imageSending ? messages : messages.map(m => Array.isArray(m.content)
             ? { ...m, content: Tokens.contentText(m.content) + '\n[图片发送已关闭]' } : m),
           onDelta: t => renderStreamDelta(t),
@@ -2748,6 +2757,7 @@
         S.toolPaintAt = 0;
         setLockRun(sess.id, false);
         clearStreamBubble();
+        S.retryStatus = '';
         S.streamSession = null;
         S.streamSaveAt = 0;
         S.activeTmpPaths = new Set();
@@ -5288,6 +5298,14 @@
     // 默认展开：折叠态看不出可以点开，用户容易以为这里没内容
     agentSection.append(collapsible('系统提示词', agentBody, undefined, true));
 
+    const autoRetry = el('input', { type: 'checkbox', id: 'settingsAutoRetry', checked: s.autoRetry === true, 'aria-label': '失败自动重试' });
+    const retryRow = field('失败自动重试', autoRetry);
+    retryRow.querySelector('label').htmlFor = autoRetry.id;
+    const maxFailures = el('input', { type: 'number', min: 1, max: 100, step: 1, value: s.maxConsecutiveFailures ?? DEFAULT_SETTINGS.maxConsecutiveFailures, 'aria-label': '最大连续失败次数' });
+    const retryCooldown = el('input', { type: 'number', min: 0, max: 3600, step: 'any', value: s.retryCooldownSeconds ?? DEFAULT_SETTINGS.retryCooldownSeconds, 'aria-label': '重试冷却时间（秒）' });
+    const refreshRetry = () => { maxFailures.disabled = retryCooldown.disabled = !autoRetry.checked; };
+    autoRetry.addEventListener('change', refreshRetry); refreshRetry();
+
     const reverseSendNewline = el('input', { type: 'checkbox', id: 'settingsReverseSendNewline', checked: s.reverseSendNewline === true, 'aria-label': '反转发送与换行' });
     const reverseSendRow = field('反转发送与换行', reverseSendNewline);
     reverseSendRow.querySelector('label').htmlFor = reverseSendNewline.id;
@@ -5509,6 +5527,8 @@
       field('温度', temp), field('思考强度', effortWrap), field('流式输出', stream),
       field('最大输出 tokens', maxOutput),
       field('视觉模型', imageSending),
+      retryRow, field('最大连续失败次数', maxFailures), field('重试冷却时间（秒）', retryCooldown),
+      el('div', { class: 'hint', text: '仅开启后生效。默认连续失败 3 次才中断，每次等待 5 秒；请求成功后计数清零。只重试临时请求故障，已完成的工具不会重复执行。' }),
       el('div', { class: 'row' }, el('label', { text: '' }), el('div', { style: 'flex:1;min-width:0' }, testBtn, testResult)),
       el('div', { class: 'section' }, el('h3', { text: '上下文' }),
         field('满上下文处理', overflow, ['contextOverflow', 'disabled', 'sliding', 'truncate', 'compress']),
@@ -5549,7 +5569,11 @@
           try { maxOutputTokens = OutputLimit.tokens(maxOutput.value); }
           catch (error) { toast(error.message); return; }
           if (maxOutputTokens >= maxK * 1000) { toast('最大输出必须小于最大上下文，为输入保留空间'); return; }
+          let retrySettings;
+          try { retrySettings = RequestRetry.validate({ autoRetry: autoRetry.checked, maxConsecutiveFailures: maxFailures.value, retryCooldownSeconds: retryCooldown.value }); }
+          catch (error) { toast(error.message); return; }
           S.settings = {
+            ...retrySettings,
             baseUrl: baseUrl.value.trim() || DEFAULT_SETTINGS.baseUrl,
             apiKey: apiKey.value.trim(),
             model: model.value.trim() || DEFAULT_SETTINGS.model,

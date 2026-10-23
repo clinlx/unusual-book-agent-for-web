@@ -13,10 +13,11 @@ const FrontendConfig=(()=>{
     baseUrl:links.apiBase,apiKey:'',model:'deepseek-flash',
     stream:true,temperature:0.7,maxOutputTokens:16384,
     reasoningEffort:'high',reverseSendNewline:false,
+    autoRetry:false,maxConsecutiveFailures:3,retryCooldownSeconds:5,
   };
   const game={
     ...common,topP:'',frequencyPenalty:'',presencePenalty:'',seed:'',customRequestBody:'',
-    maxContextK:240,maxToolLoops:60,httpTimeoutSeconds:180,maxRetries:2,
+    maxContextK:240,maxToolLoops:60,httpTimeoutSeconds:180,
     // 留空使用 links.worldCatalog；用户可以在游戏设置中覆盖列表源。
     worldListSource:'',bridgeUrl:links.relay,
     roundNotifications:false,manualDice:false,openingPreload:true,autoAdvanceUnconscious:true,promptOverrides:{},

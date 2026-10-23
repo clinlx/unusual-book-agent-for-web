@@ -42,6 +42,86 @@ async function openSettings(page, name) {
   }
 }
 
+test('both frontends persist retry settings and gate child fields behind the opt-in switch',async()=>{
+  for(const name of ['game','designer']){
+    const context=await browser.newContext();
+    try{
+      const page=await context.newPage();await page.route('https://**/*',r=>r.abort());
+      await openSettings(page,name);
+      const toggle=page.locator(name==='game'?'[name="autoRetry"]':'#settingsAutoRetry');
+      const failures=page.locator(name==='game'?'[name="maxConsecutiveFailures"]':'[aria-label="最大连续失败次数"]');
+      const cooldown=page.locator(name==='game'?'[name="retryCooldownSeconds"]':'[aria-label="重试冷却时间（秒）"]');
+      assert.equal(await toggle.isChecked(),false);assert.equal(await failures.inputValue(),'3');assert.equal(await cooldown.inputValue(),'5');
+      assert.equal(await failures.isDisabled(),true);assert.equal(await cooldown.isDisabled(),true);
+      await toggle.check();await failures.fill('4');await cooldown.fill('0.5');
+      await page.getByRole('button',{name:name==='game'?'保存设置':'保存',exact:true}).click();
+      await page.locator(name==='game'?'#settings-form':'.overlay').waitFor({state:'detached'});
+      await openSettings(page,name);
+      assert.equal(await toggle.isChecked(),true);assert.equal(await failures.inputValue(),'4');assert.equal(await cooldown.inputValue(),'0.5');
+      await toggle.uncheck();assert.equal(await failures.isDisabled(),true);
+      await page.getByRole('button',{name:name==='game'?'保存设置':'保存',exact:true}).click();
+      await page.locator(name==='game'?'#settings-form':'.overlay').waitFor({state:'detached'});
+      await openSettings(page,name);assert.equal(await toggle.isChecked(),false);assert.equal(await failures.inputValue(),'4');
+    }finally{await context.close();}
+  }
+});
+
+test('designer displays retry cooldown, recovers the same turn and can stop while waiting',async()=>{
+  const context=await browser.newContext();
+  try{
+    const page=await context.newPage();await page.route('https://**/*',r=>r.abort());
+    await openSettings(page,'designer');await page.getByRole('button',{name:'取消',exact:true}).click();
+    await page.evaluate(()=>Object.assign(__UI_STATE__.settings,{apiKey:'test',baseUrl:'https://retry.invalid/v1',autoRetry:true,maxConsecutiveFailures:3,retryCooldownSeconds:.5,stream:false}));
+    let count=0,alwaysFail=false;
+    await page.route('https://retry.invalid/**',route=>{
+      count++;
+      return alwaysFail||count===1?route.fulfill({status:503,body:'busy'}):route.fulfill({json:{choices:[{message:{content:'自动重试恢复成功'},finish_reason:'stop'}]}});
+    });
+    await page.locator('#chatInput').fill('测试自动重试');await page.locator('#sendBtn').click();
+    await page.getByText('请求连续失败 1/3 次，0.5 秒后自动重试，可随时停止。',{exact:true}).waitFor();
+    await page.waitForFunction(()=>!__UI_STATE__.running);
+    assert.equal(count,2);assert.equal(await page.getByText('自动重试恢复成功',{exact:true}).count(),1);
+    alwaysFail=true;
+    await page.evaluate(()=>__UI_STATE__.settings.retryCooldownSeconds=5);
+    await page.locator('#chatInput').fill('测试等待期间停止');await page.locator('#sendBtn').click();
+    await page.getByText('请求连续失败 1/3 次，5 秒后自动重试，可随时停止。',{exact:true}).waitFor();
+    await page.locator('#sendBtn').click();await page.waitForFunction(()=>!__UI_STATE__.running);
+    assert.equal(count,3);assert.equal(await page.locator('#chatInput').isEditable(),true);
+  }finally{await context.close();}
+});
+
+test('game shows cooldown, completes after retry, and preserves an interrupted round when stopped',async()=>{
+  const context=await browser.newContext();
+  try{
+    const page=await context.newPage();await page.route('https://**/*',r=>r.abort());await openSettings(page,'game');
+    await page.locator('[data-action="close-modal"]').first().click();
+    await page.evaluate(async()=>{
+      const zip=ZIP.makeZip([{name:'Player-p/基础信息.json',text:'{"姓名":"玩家"}'},{name:'Player-p/背包.json',text:'[]'}]);
+      await GameApp.importSave(new File([zip],'重试.zip'));
+      await GameApp.updateSettings({baseUrl:'https://retry.invalid/v1',apiKey:'test',stream:false,autoRetry:true,maxConsecutiveFailures:3,retryCooldownSeconds:.5});
+    });
+    await page.locator('[data-action="slot-choose"][data-actor="p"]').click();await page.locator('[data-action="slot-confirm"]').click();
+    let count=0,alwaysFail=false;
+    await page.route('https://retry.invalid/**',route=>{
+      count++;
+      const call=(id,name,args)=>({id,type:'function',function:{name,arguments:JSON.stringify(args)}});
+      return alwaysFail||count===1?route.fulfill({status:503,body:'busy'}):route.fulfill({json:{choices:[{message:{tool_calls:[
+        call('story','append_story',{content:'自动重试继续旅程',one_line_summary_of_content:'继续',self_accept:true}),
+        call('end','end_the_round',{NEXT_TURN_CACHE:{Story_Phase:'游戏循环'}})]},finish_reason:'stop'}]}});
+    });
+    await page.evaluate(()=>{window.retryRun=GameApp.start().catch(()=>{});});
+    await page.getByText('请求连续失败 1/3 次，0.5 秒后自动重试，可随时停止。').waitFor();
+    await page.evaluate(()=>window.retryRun);
+    assert.equal(count,2);
+    assert.equal(await page.evaluate(()=>GameApp.getState().active.events.filter(e=>e.type==='story').length),1);
+    alwaysFail=true;await page.evaluate(async()=>{await GameApp.updateSettings({retryCooldownSeconds:5});window.retryRun=GameApp.send('继续').catch(()=>{});});
+    await page.getByText('请求连续失败 1/3 次，5 秒后自动重试，可随时停止。').waitFor();
+    await page.locator('[data-action="abort"]').first().click();await page.evaluate(()=>window.retryRun);
+    assert.equal(count,3);assert.equal(await page.evaluate(()=>GameApp.getState().active.status),'interrupted');
+    assert.equal(await page.locator('[data-action="resume"]').first().isEnabled(),true);
+  }finally{await context.close();}
+});
+
 test('game and client notifications request permission only on opt-in and persist independently',async()=>{
  const context=await browser.newContext();
  try{
@@ -55,6 +135,7 @@ test('game and client notifications request permission only on opt-in and persis
    assert.equal(await toggle.isChecked(),false);assert.equal(await page.evaluate(()=>noticePrompts),0);
    await toggle.check();await page.waitForFunction(()=>!document.querySelector('[name="roundNotifications"]').disabled);
    assert.equal(await page.evaluate(()=>noticePrompts),1);await page.getByRole('button',{name:'保存设置',exact:true}).click();
+   await page.locator('#settings-form').waitFor({state:'detached'});
    await page.reload();await page.locator('[data-action="settings"]').click();assert.equal(await toggle.isChecked(),true);assert.equal(await page.evaluate(()=>noticePrompts),0);
    if(file==='index.html')await page.locator('[data-settings-section="game"]').evaluate(el=>el.open=true);
    await toggle.uncheck();await page.evaluate(()=>{Notification.permission='default';noticeAnswer='denied';});await toggle.click();
@@ -295,8 +376,10 @@ for (const name of ['game', 'designer']) {
         await page.locator('.modal .row').filter({ has: page.locator('label', { hasText: /^流式输出$/ }) }).locator('select').selectOption('0');
       }
       await page.getByRole('button', { name: name === 'game' ? '保存设置' : '保存', exact: true }).click();
+      await page.locator(name === 'game' ? '#settings-form' : '.overlay').waitFor({state:'detached'});
       await page.reload();
       if (name === 'designer') await readyDesigner(page);
+      else await page.locator('[data-action="settings"]').waitFor();
       assert.equal(await page.evaluate(name => name === 'game' ? GameApp.getState().settings.reverseSendNewline : __UI_STATE__.settings.reverseSendNewline, name), true);
       if (name === 'game') {
         await page.evaluate(async () => {

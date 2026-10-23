@@ -6,6 +6,7 @@ const GameTransport=(()=>{
   const toolArguments=typeof module!=='undefined'&&module.exports?require('./shared/tool-arguments.js'):ToolArguments;
   const core=typeof module!=='undefined'&&module.exports?require('./game-core.js'):GameCore;
   const defaults=typeof module!=='undefined'&&module.exports?require('./frontend-config').game:FrontendConfig.game;
+  const retry=typeof module!=='undefined'&&module.exports?require('./shared/request-retry.js'):RequestRetry;
   const tiers=new Map();
   const object=x=>!!x&&typeof x==='object'&&!Array.isArray(x);
   function customBody(settings){
@@ -55,7 +56,7 @@ const GameTransport=(()=>{
   }
   function create(settings,tools,hooks={}){
     const fetcher=hooks.fetch||globalThis.fetch.bind(globalThis);
-    return async function(messages){
+    return retry.wrap(async function(messages){
       const base=apiUrl.root(settings.baseUrl),url=base+'/chat/completions';
       const key=base+'|'+settings.model;let tier=tiers.get(key)||0;
       const ctrl=new AbortController();
@@ -63,11 +64,11 @@ const GameTransport=(()=>{
       if(hooks.signal?.aborted)cancel();
       const timeoutMs=Math.max(1,settings.httpTimeoutSeconds||defaults.httpTimeoutSeconds)*1000;
       let timer;
-      const armTimeout=()=>{clearTimeout(timer);timer=setTimeout(()=>ctrl.abort(Error('模型请求超时，请重试本回合')),timeoutMs);};
+      const armTimeout=()=>{clearTimeout(timer);timer=setTimeout(()=>ctrl.abort(Object.assign(Error('模型请求超时，请重试本回合'),{code:'MODEL_TIMEOUT'})),timeoutMs);};
       armTimeout();
       try{
         let resp,responseStreams=!!settings.stream,outputCap;
-        for(let attempt=0;;){
+        for(;;){
           let body={model:settings.model,messages,stream:!!settings.stream,max_tokens:settings.maxOutputTokens||defaults.maxOutputTokens};
           if(tools?.length)body.tools=tools;
           const effort=settings.reasoningEffort||defaults.reasoningEffort;
@@ -84,20 +85,17 @@ const GameTransport=(()=>{
           if(ctrl.signal.aborted)throw ctrl.signal.reason||Error('已中止请求');
           if(hooks.onRequest)await hooks.onRequest(body);
           if(ctrl.signal.aborted)throw ctrl.signal.reason||Error('已中止请求');
-          resp=await fetcher(url,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+(settings.apiKey||'')},body:JSON.stringify(body),signal:ctrl.signal});
+          resp=await fetcher(url,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+(settings.apiKey||'')},body:JSON.stringify(body),signal:ctrl.signal}).catch(error=>{throw ctrl.signal.aborted?error:retry.networkError(error);});
           if(requestStreams)armTimeout();
           if(resp.ok){responseStreams=requestStreams;break;}
           const text=await resp.text();
           if(/context_length_exceeded|maximum context length|context window|context length.{0,80}(exceed|limit|long)|上下文.{0,8}(超|满)/is.test(text))
             throw Object.assign(Error('API '+resp.status+'：'+text.slice(0,500)+'\n'+contextHint),{code:'CONTEXT_LIMIT',contextSource:Object.hasOwn(customBody(settings),'messages')?'custom':'provider'});
           if(tier===0&&[400,422].includes(resp.status)&&/reasoning|thinking/i.test(text)){tier=1;continue;}
-          if([429,500,502,503,504].includes(resp.status)&&attempt<(settings.maxRetries??defaults.maxRetries)){
-            attempt++;await new Promise((resolve,reject)=>{const stop=()=>{clearTimeout(t);reject(Error('已中止请求'));};const t=setTimeout(()=>{ctrl.signal.removeEventListener('abort',stop);resolve();},Math.min(1000*attempt,3000));ctrl.signal.addEventListener('abort',stop,{once:true});});continue;
-          }
-          throw Error('API '+resp.status+'：'+text.slice(0,500));
+          throw Object.assign(Error('API '+resp.status+'：'+text.slice(0,500)),{status:resp.status});
         }
         tiers.set(key,tier);
-        if(!responseStreams){const data=await sse.readJSON(resp);const choice=data.choices[0];
+        if(!responseStreams){const data=await sse.readJSON(resp).catch(error=>{throw error.code?error:sse.streamError(error);});const choice=data.choices[0];
           outputLimit.assertComplete(choice?.finish_reason,data.usage,outputCap);
           hooks.onUsage?.(data.usage);const m=sse.checkMessage(choice?.message);return {content:m.content||'',reasoning:sse.readReasoning(m),tool_calls:m.tool_calls||[]};}
         if(!resp.body)throw sse.protocolError('模型未返回流式响应体');
@@ -118,7 +116,7 @@ const GameTransport=(()=>{
         return acc.result();
       }catch(e){if(ctrl.signal.aborted)throw ctrl.signal.reason||Object.assign(Error('已中止请求'),{name:'AbortError'});throw e;}
       finally{clearTimeout(timer);hooks.signal?.removeEventListener('abort',cancel);}
-    };
+    },settings,hooks);
   }
   async function listModels(settings,hooks={}){
     if(!String(settings.apiKey||'').trim())throw Error('请填写 API Key');
@@ -144,7 +142,7 @@ const GameTransport=(()=>{
     if(!String(settings.apiKey||'').trim())throw Error('请填写 API Key');
     if(!String(settings.model||'').trim())throw Error('请填写模型名称');
     const start=Date.now();
-    await create({...settings,stream:false,maxOutputTokens:64,reasoningEffort:'none',maxRetries:0,httpTimeoutSeconds:30},[],hooks)([{role:'user',content:'Reply with OK.'}]);
+    await create({...settings,stream:false,maxOutputTokens:64,reasoningEffort:'none',autoRetry:false,httpTimeoutSeconds:30},[],hooks)([{role:'user',content:'Reply with OK.'}]);
     return {elapsedMs:Date.now()-start};
   }
   return {create,testConnection,listModels,mergeBody,customBody,inputBudget,budgetDetails,budgetText};

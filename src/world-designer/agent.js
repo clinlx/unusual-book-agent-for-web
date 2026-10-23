@@ -8,6 +8,7 @@ const Agent = (() => {
   const _BuilderTools = (typeof module !== 'undefined') ? require('./builder-tools.js') : BuilderTools;
   const _CardTools = (typeof module !== 'undefined') ? require('./card-tools.js') : CardTools;
   const _ApiUrl = (typeof module !== 'undefined') ? require('../shared/api-url.js') : ApiUrl;
+  const _Retry = (typeof module !== 'undefined') ? require('../shared/request-retry.js') : RequestRetry;
   const _OutputLimit = (typeof module !== 'undefined') ? require('../shared/output-limit.js') : OutputLimit;
   const _Arguments = (typeof module !== 'undefined') ? require('../shared/tool-arguments.js') : ToolArguments;
   const _Knowledge = (typeof module !== 'undefined') ? require('../shared/file-knowledge.js') : FileKnowledge;
@@ -547,8 +548,8 @@ const Agent = (() => {
     return THINK_FIELDS.some(f => String(text).includes(f));
   }
 
-  function createHttpTransport(settings, toolDefs, callbacks) {
-    return async function transport(messages) {
+  function createHttpTransport(settings, toolDefs, callbacks = {}) {
+    return _Retry.wrap(async function transport(messages) {
       const base = _ApiUrl.root(settings.baseUrl);
       const tierKey = base + '|' + settings.model;
       let tier = _thinkTiers.get(tierKey) || 0;
@@ -577,18 +578,18 @@ const Agent = (() => {
           headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + settings.apiKey },
           body: encoded,
           signal: callbacks && callbacks.signal,
-        });
+        }).catch(error => { throw callbacks.signal?.aborted ? error : _Retry.networkError(error); });
         if (resp.ok) break;
         const text = await resp.text().catch(() => '');
         // 思考字段不被认（OpenAI/Azure 风格的 400）→ 减字段重试，其余错误照常抛
         if (tier < 2 && isThinkFieldError(resp.status, text)) { tier++; continue; }
-        const error = new Error('API 错误 ' + resp.status + ': ' + text.slice(0, 300));
+        const error = Object.assign(new Error('API 错误 ' + resp.status + ': ' + text.slice(0, 300)), { status: resp.status });
         if (_Budget.isLimitError(error)) { error.code = 'CONTEXT_LIMIT'; error.message += '\n' + _Budget.HINT; }
         throw error;
       }
       _thinkTiers.set(tierKey, tier);
       if (!settings.stream) {
-        const json = await waitWithAbort(_SSE.readJSON(resp), callbacks && callbacks.signal);
+        const json = await waitWithAbort(_SSE.readJSON(resp).catch(error => { throw error.code ? error : _SSE.streamError(error); }), callbacks && callbacks.signal);
         _OutputLimit.assertComplete(json.choices?.[0]?.finish_reason, json.usage, outputLimit);
         const m = _SSE.checkMessage(json.choices[0]?.message);
         // 非流式：思考与正文在同一条 message 里一并返回
@@ -637,7 +638,7 @@ const Agent = (() => {
         try { await reader.cancel(); } catch (_) { /* 保留原始响应错误 */ }
         reader.releaseLock();
       }
-    };
+    }, settings, callbacks);
   }
 
   function toolDefinitions(skills, { imageSending = true } = {}) {

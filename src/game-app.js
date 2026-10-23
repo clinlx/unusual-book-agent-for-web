@@ -432,6 +432,8 @@ const GameApp=(()=>{
       const defs=GameTools.build(Prompts,snapshot.overrides);
       let currentRequest;
       const raw=GameTransport.create(settings,defs,{signal:controller.signal,
+        onAttempt:()=>{S.retryStatus='';clearStream();emit();},
+        onRetry:info=>{if(currentRequest){currentRequest.status='interrupted';currentRequest.error=info.error.message;}S.retryStatus=RequestRetry.message(info);clearStream();emit();},
         onRequest:async body=>{if(currentRequest?.status==='pending')currentRequest.status='retried';currentRequest={round:s.activeRound.number,roundId:s.activeRound.id,at:Date.now(),body:structuredClone(body),status:'pending',response:{content:'',reasoning:'',tools:[]}};(s.requestHistory||=[]).push(currentRequest);s.activeRound.requestCount++;S.lastRequest=structuredClone(body);S.lastRequestSaveId=s.id;await persist();emit();},onUsage:usage=>{S.usage=usage||null;if(currentRequest)currentRequest.usage=structuredClone(usage||null);},
         onDelta:t=>{S.stream.content+=t;if(currentRequest)currentRequest.response.content+=t;emit();},onReasoningDelta:t=>{S.stream.reasoning+=t;if(currentRequest)currentRequest.response.reasoning+=t;emit();},onToolDelta:t=>{S.stream.tools=t;
           const storyCalls=t.filter(tc=>tc?.function?.name==='append_story');
@@ -463,7 +465,7 @@ const GameApp=(()=>{
       try{if(!lease?.lostWhileRunning(s.id))await persist();}catch(storageError){S.storageWarning='存档保存失败：'+storageError.message+'。请导出存档保留当前内容。';}throw e;
     }finally{
       try{await settleCompletedBatch(s);}catch(e){S.storageWarning='工具记录保存失败：'+e.message+'。请导出存档保留当前内容。';}
-      clearInterval(timer);lease?.releaseLease(s.id);if(pendingBatch(s))s.status='interrupted';S.running=false;controller=null;clearStream();emit();
+      clearInterval(timer);lease?.releaseLease(s.id);if(pendingBatch(s))s.status='interrupted';S.running=false;S.retryStatus='';controller=null;clearStream();emit();
     }
   }
   const send=(text,privateContent='',options={})=>submitAction(text,privateContent,options);
@@ -490,8 +492,10 @@ const GameApp=(()=>{
   async function rollback(){return decideHostRollback('approve');}
   async function updateSettings(values){
     const next={...S.settings};for(const k of Object.keys(defaults))if(k!=='promptOverrides'&&Object.hasOwn(values,k))next[k]=values[k];
-    for(const [key,min,max]of [['maxContextK',4,4000],['maxOutputTokens',256,200000],['maxToolLoops',1,300],['httpTimeoutSeconds',10,3600],['maxRetries',0,10],['temperature',0,2]]){
+    for(const [key,min,max]of [['maxContextK',4,4000],['maxOutputTokens',256,200000],['maxToolLoops',1,300],['httpTimeoutSeconds',10,3600],['maxConsecutiveFailures',1,100],['retryCooldownSeconds',0,3600],['temperature',0,2]]){
       const n=Number(next[key]);if(!Number.isFinite(n)||n<min||n>max)throw Error(key+' 超出有效范围');next[key]=n;}
+    if(!Number.isInteger(next.maxConsecutiveFailures))throw Error('最大连续失败次数须为整数');
+    next.autoRetry=next.autoRetry===true;
     for(const [key,min,max,integer]of [['topP',0,1,false],['frequencyPenalty',-2,2,false],['presencePenalty',-2,2,false],['seed',-2147483648,2147483647,true]]){
       const raw=String(next[key]??'').trim();if(!raw){next[key]='';continue;}const n=Number(raw);
       if(!Number.isFinite(n)||n<min||n>max||(integer&&!Number.isInteger(n)))throw Error(key+' 超出有效范围');next[key]=n;
