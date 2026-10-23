@@ -86,8 +86,9 @@ test('all registered game prompt IDs resolve to unique definitions and discovera
   const lookup = sources['system/runtime.md'].split('## 内部参考文件速查表\n')[1]?.split('\n### ')[0];
   assert.ok(lookup, 'system provides a reference-file lookup table');
   const indexedPaths = [];
-  for (const row of lookup.matchAll(/^\| `([^`]+)` \| (.+) \|$/gm)) {
-    const [, resource, labels] = row;
+  for (const row of lookup.matchAll(/^\| `([^`]+)` \| ([^|]+) \| ([^|]+) \|$/gm)) {
+    const [, resource, labels, usage] = row;
+    assert.ok(usage.trim(), `${resource} explains when to read it`);
     const file = 'reference/' + resource.slice('/.reference/'.length);
     assert.ok(resource.startsWith('/.reference/'), 'lookup contains only readable reference paths');
     assert.equal(prompts.file(resource), sources[file], `${resource} resolves to the indexed file`);
