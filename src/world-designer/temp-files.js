@@ -22,7 +22,7 @@ const TempFiles = (() => {
           if (used.has(p)) { touch(tree, p, now); changed = true; }
           else if (advance) { child.tmp.idleTurns++; changed = true; }
           // Conservative storage estimate: includes original base64, previews and metadata.
-          files.push({ path: p, node: child, bytes: JSON.stringify(child).length * 2 });
+          files.push({ path: p, node: child, bytes: (typeof module !== 'undefined' && module.exports ? require('./storage') : DesignerStorage).jsonChars(child) * 2 });
         }
       }
     }

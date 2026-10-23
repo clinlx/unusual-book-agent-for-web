@@ -508,10 +508,11 @@
     const pendRec = await DB.get('config', 'pending:' + id);
     S.pending = (pendRec && pendRec.value && typeof pendRec.value === 'object') ? pendRec.value : {};
     await recoverInterruptedStream(id);
-    S.snapshots = (await DB.all('snapshots')).filter(s => s.projectId === id);
+    try { S.snapshots = await DB.snapshotHeaders(id); }
+    catch (error) { S.snapshots = []; toast('撤回目录暂时无法加载：' + error.message); }
     reconcileLease();
     renderAll();
-    validateWorkspace();
+    validateWorkspace(true, false);
   }
   async function deleteProject(id) {
     const p = S.projects.find(x => x.id === id);
@@ -691,13 +692,15 @@
   function validationSummary(report) {
     return report.valid ? '格式校验通过' : `存在 ${report.issues.length} 项格式错误`;
   }
-  function validateWorkspace(persist = true) {
+  function validateWorkspace(persist = true, saveWorkspace = true) {
     if (!S.tree) return;
     S.validation = WorldValidation.check(S.tree);
     S.validationDirty = false;
     S.validation.checkedAt = Date.now();
     if (persist && !lease.isHeldByOther(S.projectId)) {
-      S.validationSave = DB.putWorkspace(S.projectId, S.tree, DesignerProjects.summary(S.validation, !S.validationPending));
+      const summary = DesignerProjects.summary(S.validation, !S.validationPending);
+      S.validationSave = saveWorkspace ? DB.putWorkspace(S.projectId, S.tree, summary)
+        : DB.put('config', { id: DesignerProjects.key(S.projectId), value: summary });
       S.validationSave.catch(error => toast('校验状态保存失败：' + error.message));
     }
     const button = $('#worldValidationBtn');
@@ -1148,7 +1151,6 @@
       setupFloatingEditor();
       bootStep('打开本地数据库…', 20);
       await DB.open();
-      await sweepStoredTmp();
       if (DB.isMemoryMode()) {
         $('#banner').textContent = '⚠ 浏览器存储不可用，数据不会被保存（多标签保护已关闭）';
         $('#banner').style.display = 'block';
@@ -2241,12 +2243,6 @@
       }
     }
   }
-  async function sweepStoredTmp() {
-    for (const record of await DB.all('vfs')) {
-      if (lease.isHeldByOther(record.id)) continue;
-      if (TempFiles.sweep(record.tree, tmpOptions()).changed) await DB.put('vfs', record);
-    }
-  }
   async function viewImage(args) {
     if (!S.settings.imageSending) throw new Error('图片发送已关闭');
     const cleanup = TempFiles.sweep(S.tree, { ...tmpOptions(), protect: S.activeTmpPaths });
@@ -2688,7 +2684,9 @@
           const snap = { id: uid(), projectId,
             turnRef: { sessionId: sess.id, msgIndex: userIdx + (sess.__baseSeq || 0), msgId: userMsg.msgId },
             tree: preTree, createdAt: Date.now() };
-          S.snapshots.push(snap); await DB.put('snapshots', snap);
+          await DB.put('snapshots', snap);
+          const { tree, ...header } = snap;
+          S.snapshots.push(header);
           await saveTree();
         }
         sess.updatedAt = Date.now();
@@ -3143,9 +3141,12 @@
 
   async function doRollback(snapId, rerender) {
     const plan = Versioning.planRollback(S.snapshots, snapId);
+    const projectId = S.projectId;
+    const snapshot = await DB.get('snapshots', snapId);
+    if (!snapshot?.tree || snapshot.projectId !== projectId || S.projectId !== projectId)
+      throw new Error('撤回点已不可用，请重新打开项目');
     const ws = getWorkspaceNode();
-    const restored = VFS.clone(plan.restoreTree);
-    ws.children = restored.children;
+    ws.children = snapshot.tree.children;
     // 回滚整体换掉了文件内容，AI 手里的「已读」记录全部过期。
     // 不清的话它写任何一个自己刚改过的文件都会被判成「已被外部改动」而拒绝。
     S.readState.clear();
@@ -5134,9 +5135,9 @@
   }
 
   // ---------- 存储占用估算 ----------
-  async function estimateStorage() {
+  async function estimateStorage(signal) {
     await flushDraft();
-    return DesignerStorage.estimate(DB, SEED_FILES);
+    return DesignerStorage.estimate(DB, SEED_FILES, { signal });
   }
 
   // 可折叠分区：count > 5 时默认折叠
@@ -5203,7 +5204,8 @@
   function openSettings() {
     const s = S.settings;
     const ov = el('div', { class: 'overlay' });
-    const close = () => ov.remove();
+    let storageRequest = null;
+    const close = () => { storageRequest?.abort(); ov.remove(); };
     ov.dismissFromBack = close;
     const field = (labelText, inputEl, helpKey) => el('div', { class: 'row' },
       el('label', { text: labelText }), inputEl, helpKey ? helpBtn(helpKey) : null);
@@ -5363,9 +5365,31 @@
     // 项目存储列表：分开显示 撤回/文件/对话 占用，支持单独清理与删除项目
     const projStoreList = el('div');
     const projSection = el('div');
-    const renderProjStore = async () => {
+    const storageStatus = el('span', { class: 'hint', role: 'status' });
+    const storageButton = el('button', { text: '统计存储占用', onclick: async () => {
+      if (storageRequest) { storageRequest.abort(); return; }
+      const request = new AbortController(); storageRequest = request;
+      storageButton.textContent = '取消统计'; storageStatus.textContent = '正在统计…';
+      try {
+        const stats = await estimateStorage(request.signal);
+        if (request.signal.aborted || !ov.isConnected) return;
+        renderProjStore(stats);
+        storageStatus.textContent = stats.stale ? '数据在统计期间有变化，可重新统计。' : '';
+      } catch (error) {
+        if (ov.isConnected) {
+          renderProjStore(null, error.name === 'AbortError' ? '未统计' : '无法计算');
+          storageStatus.textContent = error.name === 'AbortError' ? '已取消统计' : '无法计算：' + error.message;
+        }
+      } finally {
+        if (storageRequest === request) storageRequest = null;
+        storageButton.textContent = '统计存储占用';
+      }
+    } });
+    projSection.append(collapsible('项目与存储', el('div', {},
+      el('div', { class: 'row' }, storageButton, storageStatus), projStoreList), S.projects.length));
+    const renderProjStore = (stats = null, unknown = '未统计') => {
       projStoreList.innerHTML = '';
-      const { perProject, total } = await estimateStorage();
+      const { perProject = new Map(), total = 0 } = stats || {};
       for (const p of S.projects) {
         const e = perProject.get(p.id) || { chat: 0, files: 0, snaps: 0, snapCount: 0, other: 0 };
         const sub = e.chat + e.files + e.snaps + e.other;
@@ -5373,29 +5397,27 @@
         projStoreList.append(el('div', { class: 'proj-store-item' },
           el('div', { class: 'head' },
             el('span', { class: 'name', text: p.name + (p.id === S.projectId ? '（当前）' : '') }),
-            el('span', { class: 'total', text: fmtBytes(sub) })),
+            el('span', { class: 'total', text: stats ? fmtBytes(sub) : unknown })),
           el('div', { class: 'store-actions' },
-            el('button', { class: 'danger', text: '清理撤回', disabled: busy || !e.snapCount, title: '删除该项目的全部撤回点（文件与对话保留）', onclick: async () => {
+            el('button', { class: 'danger', text: '清理撤回', disabled: busy || (stats && !e.snapCount), title: '删除该项目的全部撤回点（文件与对话保留）', onclick: async () => {
               if (!await confirmDialog('清理撤回数据',
-                `删除项目「${p.name}」的全部撤回点（${e.snapCount} 个）？其历史轮次将无法再回滚；文件与对话不受影响。`, true)) return;
+                `删除项目「${p.name}」的全部撤回点${stats ? '（' + e.snapCount + ' 个）' : ''}？其历史轮次将无法再回滚；文件与对话不受影响。`, true)) return;
               if (S.storageBusy || S.handoffBusy || (S.running && S.projectId === p.id) || lease.isHeldByOther(p.id)) return toast('项目正在执行任务，请稍后清理');
               await DB.delWhere('snapshots', x => x.projectId === p.id);
               if (p.id === S.projectId) S.snapshots = [];
               p.historyLocked = true; await DB.put('projects', p);
               renderChat(); renderProjStore(); toast('已清理');
             } }),
-            el('button', { class: 'danger', text: '清理项目数据', disabled: busy || !sub, onclick: async () => { await clearProjectData(p); await renderProjStore(); } })),
-          el('div', { class: 'detail' },
+            el('button', { class: 'danger', text: '清理项目数据', disabled: busy || (stats && !sub), onclick: async () => { await clearProjectData(p); await renderProjStore(); } })),
+          stats ? el('div', { class: 'detail' },
             el('span', { text: '撤回数据 ' + fmtBytes(e.snaps) + '（' + e.snapCount + ' 点）' }),
             el('span', { text: '文件 ' + fmtBytes(e.files) }),
             el('span', { text: '对话与草稿 ' + fmtBytes(e.chat) }),
-            e.other ? el('span', { text: '其他数据 ' + fmtBytes(e.other) }) : null)));
+            e.other ? el('span', { text: '其他数据 ' + fmtBytes(e.other) }) : null) : null));
       }
-      projStoreList.append(el('div', { class: 'store-total' },
+      if (stats) projStoreList.append(el('div', { class: 'store-total' },
         el('span', { text: '总占用（估算）' }), el('span', { text: fmtBytes(total) })));
-      // 重建折叠外壳以更新计数
-      projSection.innerHTML = '';
-      projSection.append(collapsible('项目与存储', projStoreList, S.projects.length));
+
     };
     renderProjStore();
 
