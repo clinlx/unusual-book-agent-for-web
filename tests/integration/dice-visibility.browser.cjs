@@ -55,6 +55,8 @@ for (const count of [1, 3, 4, 6, 12, 20]) {
         const zip = ZIP.makeZip([{ name: 'Player-pc/基础信息.json', text: '{"姓名":"测试"}' }, { name: 'Player-pc/背包.json', text: '[]' }]);
         await GameApp.importSave(new File([zip], '多骰子.zip'));
       });
+      await page.locator('[data-action="slot-choose"][data-actor="pc"]').click();
+      await page.locator('[data-action="slot-confirm"]').click();
       await page.locator('[data-action="start"]').click();
       await page.waitForFunction(() => GameApp.getState().active?.activeRound?.complete);
       await page.locator('article.dice').first().click();

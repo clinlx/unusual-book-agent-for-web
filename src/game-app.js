@@ -524,6 +524,7 @@ const GameApp=(()=>{
       const n=Number(next[key]);if(!Number.isFinite(n)||n<min||n>max)throw Error(key+' 超出有效范围');next[key]=n;}
     if(!Number.isInteger(next.maxConsecutiveFailures))throw Error('最大连续失败次数须为整数');
     next.autoRetry=next.autoRetry===true;
+    next.diceQuality=FrontendConfig.normalizeDiceQuality(next.diceQuality);
     for(const [key,min,max,integer]of [['topP',0,1,false],['frequencyPenalty',-2,2,false],['presencePenalty',-2,2,false],['seed',-2147483648,2147483647,true]]){
       const raw=String(next[key]??'').trim();if(!raw){next[key]='';continue;}const n=Number(raw);
       if(!Number.isFinite(n)||n<min||n>max||(integer&&!Number.isInteger(n)))throw Error(key+' 超出有效范围');next[key]=n;

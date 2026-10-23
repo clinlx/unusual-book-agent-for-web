@@ -43,6 +43,14 @@ test('dice preference survives hidden settings saves and spectators never send i
  assert.equal(requests,0);
 });
 
+test('client dice quality persists independently and invalid values fall back',async t=>{
+ const f=setup(t);await f.app.init();assert.equal(f.app.getState().settings.diceQuality,'standard');
+ await f.app.updateSettings({diceQuality:'ultra'});await f.app.updateSettings({reverseSendNewline:true});
+ assert.equal(f.app.getState().settings.diceQuality,'ultra');
+ await f.app.init();assert.equal(f.app.getState().settings.diceQuality,'ultra');
+ await f.app.updateSettings({diceQuality:'invalid'});assert.equal(f.app.getState().settings.diceQuality,'standard');
+});
+
 test('a stale-round dice preference fetches current scope before retrying',async t=>{
  const f=setup(t);await f.app.init();await f.app.connect(f.transport,'guest');let requests=0;
  f.setAction(c=>{

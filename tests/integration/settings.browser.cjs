@@ -459,13 +459,13 @@ test('client settings use invitation routing and a compact shortcut card with a 
     await page.evaluate(()=>localStorage.setItem('trpg-client-settings',JSON.stringify({bridgeUrl:'wss://obsolete.invalid/',reverseSendNewline:false})));
     await page.reload();await page.locator('[data-action="settings"]').click();
     assert.equal(await page.locator('[name="bridgeUrl"]').count(),0);assert.equal(await page.locator('.settings-section').count(),0);
-    assert.deepEqual(await page.evaluate(()=>GameApp.getState().settings),{reverseSendNewline:false,roundNotifications:false,skipMultiplayerManualDice:false});
+    assert.deepEqual(await page.evaluate(()=>GameApp.getState().settings),{reverseSendNewline:false,roundNotifications:false,skipMultiplayerManualDice:false,diceQuality:'standard'});
     const toggle=page.getByRole('checkbox',{name:'反转发送与换行'});
     assert.deepEqual(await page.locator('.client-shortcut-preview kbd').allTextContents(),['Ctrl / ⌘ + Enter','Enter']);
     await toggle.check();assert.deepEqual(await page.locator('.client-shortcut-preview kbd').allTextContents(),['Enter','Ctrl / ⌘ + Enter']);
     await page.getByRole('button',{name:'取消',exact:true}).click();assert.equal(await page.evaluate(()=>GameApp.getState().settings.reverseSendNewline),false);
     await page.locator('[data-action="settings"]').click();await toggle.check();await page.getByRole('button',{name:'保存设置',exact:true}).click();
-    assert.deepEqual(await page.evaluate(()=>JSON.parse(localStorage.getItem('trpg-client-settings'))),{reverseSendNewline:true,roundNotifications:false,skipMultiplayerManualDice:false});
+    assert.deepEqual(await page.evaluate(()=>JSON.parse(localStorage.getItem('trpg-client-settings'))),{reverseSendNewline:true,roundNotifications:false,skipMultiplayerManualDice:false,diceQuality:'standard'});
     await page.reload();await page.locator('[data-action="settings"]').click();assert.equal(await toggle.isChecked(),true);
     for(const width of [1440,390,320]){
       await page.setViewportSize({width,height:700});

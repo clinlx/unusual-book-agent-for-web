@@ -426,7 +426,7 @@ const GameUI = (() => {
     const detailModal=modalRoot.querySelector('[data-player-detail-scope]');if(detailModal&&detailModal.dataset.playerDetailScope!==detailScope())modalRoot.innerHTML='';
     const scopedModal=modalRoot.querySelector('[data-spectator-scope]'),scopeChanged=scopedModal&&scopedModal.dataset.spectatorScope!==JSON.stringify([a?.id,s.room?.bindingVersion,s.room?.epoch]);
     const refreshSpectatorRoom=scopeChanged&&scopedModal.classList.contains('room-modal')&&a?.spectator&&scopedModal.dataset.saveId===a.id;
-    if(scopeChanged){diceBoxToken++;activeDiceBox=null;modalRoot.innerHTML='';}
+    if(scopeChanged){diceBoxToken++;releaseDice3D();modalRoot.innerHTML='';}
     if(!a||viewSave!==a.id)closeModeMenu();
     const binding=a?GameInputs.owner(a):null,key=binding?JSON.stringify([binding,!!a?.debrief]):'';
     if(key!==renderedDraftOwner){const current=a&&(a.draftRound==null||a.draftRound===binding.round);draft=current?a.draft||'':'';privateDraft=current?a.privateDraft||'':'';hiddenSend=current?(a.hiddenSend??!!privateDraft):false;disguiseSend=current?(a.disguiseSend??!!(privateDraft&&draft)):false;renderedDraftOwner=key;}
@@ -447,7 +447,7 @@ const GameUI = (() => {
     if(preview&&filePath){const ta=document.getElementById('file-editor');if(ta){const pane=document.createElement('div');pane.id='file-preview';pane.tabIndex=0;pane.className='panel-scroll';pane.innerHTML=markdown(fileDraft);ta.replaceWith(pane);pane.focus();}}
     refreshClientDiceSetting();
     const diceFooter=modalRoot.querySelector('.manual-dice-footer');
-    if(diceFooter?.querySelector('[data-action="manual-dice-roll"]')&&!modalRoot.querySelector('[data-dice-rolling="true"]')&&diceFooter.dataset.eventId!==a?.pendingManualDice?.eventId){diceBoxToken++;activeDiceBox=null;modalRoot.innerHTML='';}
+    if(diceFooter?.querySelector('[data-action="manual-dice-roll"]')&&!modalRoot.querySelector('[data-dice-rolling="true"]')&&diceFooter.dataset.eventId!==a?.pendingManualDice?.eventId){diceBoxToken++;releaseDice3D();modalRoot.innerHTML='';}
     if(a?.pendingManualDice&&!modalRoot.firstChild){const e=a.events?.find(x=>x.id===a.pendingManualDice.eventId);if(e)setTimeout(()=>{if(!modalRoot.firstChild&&!state.home&&state.active?.pendingManualDice?.eventId===e.id)diceDetailModal(e);},0);}
   }
   let catalog=[],catalogError='';
@@ -799,6 +799,7 @@ const GameUI = (() => {
     body.append(...fields);form.classList.add('modal-form-layout');form.append(body,footer);modal.append(form);
   }
   function showModal(title,content) {
+    diceBoxToken++;releaseDice3D();
     characterWorldObserver?.disconnect();characterWorldObserver=null;
     const previous=modalRoot.querySelector('.room-modal'),reuse=previous?.dataset.saveId===state.active?.id&&previous?.getAttribute('aria-label')===title;
     const scrollTop=reuse?previous.querySelector('.modal-body').scrollTop:0;
@@ -1116,10 +1117,11 @@ const GameUI = (() => {
   function settingsModal() {
     const s=state.settings||{},opened=settingsSectionState();
     const notificationSetting=`<label class="check-label stream-setting"><input name="roundNotifications" type="checkbox" ${s.roundNotifications===true?'checked':''}><span>回合完成通知<small>本机收到新回合完成时，尝试发送系统通知。</small></span></label><small class="settings-field-result" data-notification-status role="status">${esc(RoundNotifications.permissionMessage())}</small>`;
+    const diceQualitySetting=`<label>骰子画质<select name="diceQuality">${[['low','低 · 省电'],['standard','标准'],['high','高'],['ultra','极高']].map(([value,label])=>`<option value="${value}" ${FrontendConfig.normalizeDiceQuality(s.diceQuality)===value?'selected':''}>${label}</option>`).join('')}</select><small>仅影响本机显示，下次打开骰盘生效。高画质更清晰，也更耗电。</small></label>`;
     const relaySetting=`<label>多人游戏中转服务器地址<input name="bridgeUrl" value="${esc(s.bridgeUrl||FrontendConfig.game.bridgeUrl)}" placeholder="wss://服务器地址"></label>`;
     if(state.client){
       const shortcuts=reverse=>`<div><span>发送</span><kbd>${reverse?'Enter':'Ctrl / ⌘ + Enter'}</kbd></div><div><span>换行</span><kbd>${reverse?'Ctrl / ⌘ + Enter':'Enter'}</kbd></div>`;
-      showModal('设置',`<form id="settings-form"><section class="client-shortcut-card" aria-label="输入快捷键"><h3>输入快捷键</h3><label class="client-shortcut-toggle"><span>反转发送与换行</span><input name="reverseSendNewline" type="checkbox" ${s.reverseSendNewline?'checked':''}></label><div class="client-shortcut-preview" aria-live="polite">${shortcuts(s.reverseSendNewline===true)}</div></section><div data-client-dice-settings></div><section class="client-shortcut-card" aria-label="提醒"><h3>提醒</h3>${notificationSetting}</section>${backupSettingsHTML()}<div class="modal-actions"><button type="button" data-action="close-modal">取消</button><button class="primary" type="submit">保存设置</button></div></form>`);
+      showModal('设置',`<form id="settings-form"><section class="client-shortcut-card" aria-label="输入快捷键"><h3>输入快捷键</h3><label class="client-shortcut-toggle"><span>反转发送与换行</span><input name="reverseSendNewline" type="checkbox" ${s.reverseSendNewline?'checked':''}></label><div class="client-shortcut-preview" aria-live="polite">${shortcuts(s.reverseSendNewline===true)}</div></section><section class="client-shortcut-card" aria-label="骰子画质">${diceQualitySetting}</section><div data-client-dice-settings></div><section class="client-shortcut-card" aria-label="提醒"><h3>提醒</h3>${notificationSetting}</section>${backupSettingsHTML()}<div class="modal-actions"><button type="button" data-action="close-modal">取消</button><button class="primary" type="submit">保存设置</button></div></form>`);
       refreshClientDiceSetting();
       modalRoot.querySelector('.modal').classList.add('client-settings-modal');
       modalRoot.querySelector('[name="reverseSendNewline"]').addEventListener('change',event=>{modalRoot.querySelector('.client-shortcut-preview').innerHTML=shortcuts(event.target.checked);});
@@ -1135,7 +1137,7 @@ const GameUI = (() => {
     const api=`<div class="api-settings-heading"><span>请求参数</span>${button('api-options-help','i','class="settings-info-button" aria-expanded="false" aria-controls="api-options-help" aria-label="参数说明与示例" title="参数说明与示例"')}</div>${apiHelp}<div class="settings-grid">${apiBase}${model}${apiKey}${field('temperature','Temperature','number',FrontendConfig.game.temperature)}${optionalField('topP','Top P',0,1)}${optionalField('frequencyPenalty','Frequency Penalty',-2,2)}${optionalField('presencePenalty','Presence Penalty',-2,2)}${optionalField('seed','Seed',-2147483648,2147483647,'1')}${field('maxContextK','上下文上限（K tokens）','number',FrontendConfig.game.maxContextK)}${field('maxOutputTokens','最大输出 tokens','number',FrontendConfig.game.maxOutputTokens)}${field('maxToolLoops','每轮最大模型调用次数','number',FrontendConfig.game.maxToolLoops)}${field('httpTimeoutSeconds','请求超时（秒）','number',FrontendConfig.game.httpTimeoutSeconds)}<label class="check-label stream-setting"><input name="autoRetry" type="checkbox" ${s.autoRetry===true?'checked':''}><span>失败自动重试<small>仅开启后生效。请求成功后清零失败计数；已完成的工具不会重复执行。</small></span></label><label>最大连续失败次数<input name="maxConsecutiveFailures" type="number" min="1" max="100" step="1" value="${esc(s.maxConsecutiveFailures??FrontendConfig.game.maxConsecutiveFailures)}"><small>包含首次失败，默认第 3 次连续失败时中断。</small></label><label>重试冷却时间（秒）<input name="retryCooldownSeconds" type="number" min="0" max="3600" step="any" value="${esc(s.retryCooldownSeconds??FrontendConfig.game.retryCooldownSeconds)}"></label><label>思考强度<select name="reasoningEffort">${['none','low','high','xhigh','max'].map(v=>`<option ${s.reasoningEffort===v?'selected':''}>${v}</option>`).join('')}</select></label><label class="check-label stream-setting"><input name="stream" type="checkbox" ${s.stream!==false?'checked':''}><span>流式输出</span></label></div><label class="custom-request-body-setting"><span>自定义请求包体 JSON</span><textarea name="customRequestBody" class="custom-request-body" spellcheck="false" placeholder='{"top_p":0.92,"stream_options":{"include_usage":true}}'>${esc(s.customRequestBody||'')}</textarea><small>留空则不追加。标准字段先生成，自定义 JSON 后合并，因此同名字段以这里为准。</small></label>`;
     const game=`<label class="check-label stream-setting"><input name="openingPreload" type="checkbox" ${s.openingPreload!==false?'checked':''}><span>开局预读取<small>默认开启，自动预读模组、角色资料和开局预读.json 指定的文件。关闭后不自动预读；开局内部说明.md 与预设第一回合.md 仍生效。</small></span></label><label class="check-label stream-setting"><input name="autoAdvanceUnconscious" type="checkbox" ${s.autoAdvanceUnconscious!==false?'checked':''}><span>昏迷时自动推进<small>所有存活玩家均失去意识时自动推进剧情；关闭后由房主手动推进。</small></span></label><label class="check-label stream-setting"><input name="reverseSendNewline" type="checkbox" ${s.reverseSendNewline===true?'checked':''}><span>反转发送与换行<small>默认 Ctrl / ⌘ + Enter 发送、Enter 换行；开启后 Enter 发送、Ctrl / ⌘ + Enter 换行。</small></span></label><label class="check-label manual-dice-setting"><input name="manualDice" type="checkbox" ${s.manualDice===true?'checked':''}><span>手动掷骰<small>开启后，玩家可见的公开检定会暂停流程，等待你亲自掷骰。暗骰和非玩家检定仍自动结算。</small></span></label>`;
     const advanced=`${relaySetting}<label class="world-list-setting"><span>世界列表源</span><div class="settings-inline-control"><input id="world-list-source" name="worldListSource" type="text" value="${esc(s.worldListSource||'')}" placeholder="${esc(GameCatalog.DEFAULT_SOURCE)}" autocomplete="off" spellcheck="false">${button('test-world-list','测试')}${button('reset-world-list','恢复默认')}</div><small>留空时使用 ${esc(GameCatalog.DEFAULT_SOURCE)}；可填写公开的 HTTP / HTTPS JSON 地址或站内路径。外部地址需要允许浏览器跨域读取。</small></label><p id="world-list-result" class="settings-field-result" role="status"></p>`;
-    showModal('设置',`<aside class="settings-github" aria-label="GitHub"><div><strong>GitHub</strong><p>查看源代码，或联系作者反馈问题。</p></div><a class="github-link" href="${esc(FrontendConfig.links.github)}" target="_blank" rel="noopener noreferrer" aria-label="打开 GitHub 项目页面">GitHub ↗</a></aside><form id="settings-form"><div class="settings-sections">${section('api','API 设置',api)}${section('game','游戏设置',game+notificationSetting)}${section('advanced','高级选项',advanced)}${backupSettingsHTML()}</div><div class="modal-actions"><button class="primary" type="submit">保存设置</button></div></form>`);
+    showModal('设置',`<aside class="settings-github" aria-label="GitHub"><div><strong>GitHub</strong><p>查看源代码，或联系作者反馈问题。</p></div><a class="github-link" href="${esc(FrontendConfig.links.github)}" target="_blank" rel="noopener noreferrer" aria-label="打开 GitHub 项目页面">GitHub ↗</a></aside><form id="settings-form"><div class="settings-sections">${section('api','API 设置',api)}${section('game','游戏设置',game+diceQualitySetting+notificationSetting)}${section('advanced','高级选项',advanced)}${backupSettingsHTML()}</div><div class="modal-actions"><button class="primary" type="submit">保存设置</button></div></form>`);
     const autoRetry=modalRoot.querySelector('[name="autoRetry"]');
     const refreshRetry=()=>{for(const name of ['maxConsecutiveFailures','retryCooldownSeconds'])modalRoot.querySelector(`[name="${name}"]`).disabled=!autoRetry.checked;};
     autoRetry.addEventListener('change',refreshRetry);refreshRetry();
@@ -1371,6 +1373,10 @@ const GameUI = (() => {
       foreground:'#e6bd62',background:'#171a18',outline:'#8b682e',texture:'none',material:'metal'};
   }
   let activeDiceBox=null,diceBoxToken=0;
+  function releaseDice3D(){
+    const box=activeDiceBox;activeDiceBox=null;
+    try{box?.disposeQuality?.();}catch(error){console.warn('骰盘资源释放失败',error);}
+  }
   function diceViewProfile(count){
     if(count<=1)return {scale:78,strength:1.5,camera:1.06,cameraLift:.02,tray:215,world:1.08};
     if(count<=3)return {scale:70,strength:1.34,camera:1.2,cameraLift:.06,tray:230,world:1.2};
@@ -1380,7 +1386,7 @@ const GameUI = (() => {
   }
   function tweenDiceCamera(box,fromZ,toZ,fromY,toY,duration=620){
     return new Promise(resolve=>{
-      const start=performance.now(),tick=now=>{const t=Math.min(1,(now-start)/duration),ease=1-Math.pow(1-t,3);
+      const start=performance.now(),tick=now=>{if(box.renderDisposed)return resolve();const t=Math.min(1,(now-start)/duration),ease=1-Math.pow(1-t,3);
         box.camera.position.z=fromZ+(toZ-fromZ)*ease;box.camera.position.y=fromY+(toY-fromY)*ease;box.camera.lookAt(0,0,0);box.renderer.render(box.scene,box.camera);
         if(t<1)requestAnimationFrame(tick);else resolve();
       };requestAnimationFrame(tick);
@@ -1434,7 +1440,7 @@ const GameUI = (() => {
       if(mesh.body)mesh.body.type=4;return {mesh,fromP,targetP};
     });
     const start=performance.now();
-    await new Promise(resolve=>{const tick=now=>{const t=Math.min(1,(now-start)/duration),ease=1-Math.pow(1-t,3);
+    await new Promise(resolve=>{const tick=now=>{if(box.renderDisposed)return resolve();const t=Math.min(1,(now-start)/duration),ease=1-Math.pow(1-t,3);
       for(const m of moves)m.mesh.position.lerpVectors(m.fromP,m.targetP,ease);
       box.renderer.render(box.scene,box.camera);if(t<1)requestAnimationFrame(tick);else resolve();
     };requestAnimationFrame(tick);});
@@ -1465,11 +1471,14 @@ const GameUI = (() => {
     if(!host||!Ctor||!plan.notation)return null;
     const physicalCount=plan.physicalCount,profile=diceViewProfile(Math.max(1,physicalCount));
     host.parentElement?.style.setProperty('--dice-tray-height',profile.tray+'px');
-    const token=++diceBoxToken;host.innerHTML='';
+    const token=++diceBoxToken;releaseDice3D();host.innerHTML='';
     const box=new Ctor('#manual-dice-3d',{sounds:false,shadows:true,theme_surface:'green-felt',
       theme_customColorset:dice3dTheme(),theme_material:'metal',theme_texture:'',color_spotlight:0xd7ad58,
       light_intensity:.72,gravity_multiplier:420,baseScale:profile.scale,strength:quiet?Math.max(.45,profile.strength*.45):profile.strength,iterationLimit:1200});
-    activeDiceBox=box;await box.initialize();if(token!==diceBoxToken)return null;host.classList.add('ready');
+    DiceQuality.install(box,FrontendConfig.normalizeDiceQuality(state.settings?.diceQuality));
+    activeDiceBox=box;
+    try{await box.initialize();}catch(error){box.disposeQuality();if(activeDiceBox===box)activeDiceBox=null;if(token!==diceBoxToken)return null;throw error;}
+    if(token!==diceBoxToken){box.disposeQuality();return null;}host.classList.add('ready');
 
     // DiceBox's stock launcher has a relatively narrow random cone. Rebuild the launch vectors
     // with crypto-backed jitter so successive throws do not keep sharing similar trajectories.
@@ -1587,7 +1596,7 @@ const GameUI = (() => {
     if(final.some(v=>!Number.isFinite(v)))throw Error('手动掷骰未能取得完整结果');
     await GameApp.resolveManualDice(final);
     modalRoot.querySelector('.manual-dice-shell')?.removeAttribute('data-dice-rolling');
-    modalRoot.innerHTML='';activeDiceBox=null;diceBoxToken++;
+    modalRoot.innerHTML='';releaseDice3D();diceBoxToken++;
     await GameApp.resume();
   }
   function changesModal() {
@@ -1604,9 +1613,9 @@ const GameUI = (() => {
     if(name==='warehouse-transfer')return transferWarehouse(el);
     if(name==='choose-library-character')return chooseLibraryCharacter();
     if(name==='latest-map'){const view=GameApp.exportView(),e=view?.events?.findLast(e=>e.type==='map');if(e)NodeMap.open(NodeMap.focus(e.map,view.mapFocus?.eventId===e.id?view.mapFocus.currentId:null),el);return;}
-    if(name==='close-modal'){characterWorldObserver?.disconnect();characterWorldObserver=null;if(modalRoot.querySelector('[data-slot-selection]'))return;if(modalRoot.querySelector('.manual-dice-shell[data-dice-rolling="true"]'))return toast('骰子正在结算，请等待结果');if(modalRoot.querySelector('.room-modal')&&!await resolveRoomChanges())return;resetRoomDraft();diceBoxToken++;activeDiceBox=null;modalRoot.innerHTML='';return;}
+    if(name==='close-modal'){characterWorldObserver?.disconnect();characterWorldObserver=null;if(modalRoot.querySelector('[data-slot-selection]'))return;if(modalRoot.querySelector('.manual-dice-shell[data-dice-rolling="true"]'))return toast('骰子正在结算，请等待结果');if(modalRoot.querySelector('.room-modal')&&!await resolveRoomChanges())return;resetRoomDraft();diceBoxToken++;releaseDice3D();modalRoot.innerHTML='';return;}
     if(name==='dice-detail'){const e=(state.active?.hostSpectator&&state.mode!=='debug'?GameApp.spectatorView()?.events:state.active?.events)?.find(x=>x.id===el.dataset.eventId);if(e)return diceDetailModal(e);}
-    if(name==='manual-dice-later'){modalRoot.innerHTML='';return;}
+    if(name==='manual-dice-later'){diceBoxToken++;releaseDice3D();modalRoot.innerHTML='';return;}
     if(name==='manual-dice-roll'&&state.client)return;
     if(name==='manual-dice-roll'){const eventId=el.closest('.manual-dice-footer')?.dataset.eventId||el.closest('.manual-dice-modal')?.dataset.eventId,e=state.active?.events?.find(x=>x.id===eventId);if(!e?.pending)return;return animateManualDice(e);}
     if(name==='api-key-settings'){settingsModal();const input=modalRoot.querySelector('input[name="apiKey"]');input?.focus();return;}

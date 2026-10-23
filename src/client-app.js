@@ -8,7 +8,7 @@ const GameApp=(()=>{
   let settingsListening=false,dicePreferenceJob=null;
   function loadSettings(){
     let saved={};try{saved=JSON.parse(localStorage.getItem(settingsKey)||'{}');}catch(_){}
-    return {...FrontendConfig.defaults('client'),...Object.fromEntries(settingNames.filter(key=>typeof saved?.[key]==='boolean').map(key=>[key,saved[key]]))};
+    return {...FrontendConfig.defaults('client'),...Object.fromEntries(settingNames.filter(key=>typeof saved?.[key]==='boolean').map(key=>[key,saved[key]])),diceQuality:FrontendConfig.normalizeDiceQuality(saved?.diceQuality??FrontendConfig.client.diceQuality)};
   }
   const diceScope=()=>JSON.stringify([S.active?.id,S.room?.roomId,S.room?.epoch,S.room?.memberId,S.room?.bindingVersion]);
   function syncDicePreference(){
@@ -170,7 +170,7 @@ const GameApp=(()=>{
     preSubmit,send:(text,privateContent,options)=>submitInput(text,privateContent,options),cancelAction,profile:async actorId=>(await command('profile.request',{actorId})).profile,inventory:async actorId=>(await command('inventory.request',{actorId})).inventory,skip:(options={})=>submitInput('','',{draftState:GameInputs.draftState(S.active||{}),...options},true),requestRollback:()=>command('rollback.request',{targetRound:S.active.rollbackTargetRound??Math.max(0,S.active.round-1)}),roomCommand:command,
     player:()=>({info:S.active?.info||{},items:S.active?.items||[],name:S.active?.playerName}),exportView:()=>cache.getState()?.view,setSpectatorView:async view=>{await command('spectator.view',{view});await sync();},
     stageDraft,saveDraft:async(...args)=>stageDraft(...args),
-    updateSettings:async values=>{S.settings={...loadSettings(),...Object.fromEntries(settingNames.filter(key=>Object.hasOwn(values,key)).map(key=>[key,values[key]===true]))};localStorage.setItem(settingsKey,JSON.stringify(S.settings));emit();syncDicePreference();},
+    updateSettings:async values=>{S.settings={...loadSettings(),...Object.fromEntries(settingNames.filter(key=>Object.hasOwn(values,key)).map(key=>[key,values[key]===true])),...Object.hasOwn(values,'diceQuality')?{diceQuality:FrontendConfig.normalizeDiceQuality(values.diceQuality)}:{}};localStorage.setItem(settingsKey,JSON.stringify(S.settings));emit();syncDicePreference();},
     setMode:()=>{},returnHome:()=>{S.home=true;emit();},returnToGame:()=>{if(S.active){S.home=false;emit();}},closeSave:()=>{stopNetwork();S.joinFailure=null;S.joining=null;S.active=null;S.home=false;S.room=null;S.network=null;preSubmit.tick();emit();}
   };
 })();
