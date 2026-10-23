@@ -89,14 +89,19 @@ test('all registered game prompt IDs resolve to unique definitions and discovera
   for (const row of lookup.matchAll(/^\| `([^`]+)` \| ([^|]+) \| ([^|]+) \|$/gm)) {
     const [, resource, labels, usage] = row;
     assert.ok(usage.trim(), `${resource} explains when to read it`);
-    const file = 'reference/' + resource.slice('/.reference/'.length);
     assert.ok(resource.startsWith('/.reference/'), 'lookup contains only readable reference paths');
-    assert.equal(prompts.file(resource), sources[file], `${resource} resolves to the indexed file`);
-    assert.equal(typeof prompts.file(resource), 'string', `${resource} is directly readable`);
-    const expected = [...definitions].filter(([, owner]) => owner === file).map(([id]) => id).sort();
+    const paths = resource === '/.reference/安全性-*.md'
+      ? ['A', 'B', 'C', 'D'].map(state => resource.replace('*', state)) : [resource];
+    const expected = [];
+    for (const resolved of paths) {
+      const file = 'reference/' + resolved.slice('/.reference/'.length);
+      assert.equal(prompts.file(resolved), sources[file], `${resolved} resolves to the indexed file`);
+      assert.equal(typeof prompts.file(resolved), 'string', `${resolved} is directly readable`);
+      expected.push(...[...definitions].filter(([, owner]) => owner === file).map(([id]) => id));
+      indexedPaths.push(resolved);
+    }
     const actual = [...labels.matchAll(/§(?:0|[A-Z]+[1-9]\d*)/g)].map(match => match[0]).sort();
-    assert.deepEqual(actual, expected, `${resource} lists its own definitions, not references to other files`);
-    indexedPaths.push(resource);
+    assert.deepEqual(actual, expected.sort(), `${resource} lists its own definitions, not references to other files`);
   }
   assert.deepEqual(indexedPaths.sort(), prompts.referencePaths().sort(),
     'each built-in reference file appears once; injected system and flow files are excluded');
@@ -104,7 +109,7 @@ test('all registered game prompt IDs resolve to unique definitions and discovera
     assert.ok(system.includes(id), `${id} is discoverable from the system index`);
     if (file.startsWith('reference/')) {
       const resource = '/.reference/' + file.slice('reference/'.length);
-      assert.ok(system.includes(resource), `${file} has a system routing entry`);
+      assert.ok(indexedPaths.includes(resource), `${file} has a system routing entry`);
       assert.equal(prompts.file(resource), sources[file], `${file} is readable at runtime`);
     } else {
       assert.ok(file.startsWith('system/'), `${id} is defined in a system or reference document`);
