@@ -83,6 +83,22 @@ test('all registered game prompt IDs resolve to unique definitions and discovera
   assert.ok(definitions.size > 0, 'game prompts define numbered rules');
   const prompts = Prompts.create(sources);
   const system = prompts.buildSystem();
+  const lookup = sources['system/runtime.md'].split('## 内部参考文件速查表\n')[1]?.split('\n### ')[0];
+  assert.ok(lookup, 'system provides a reference-file lookup table');
+  const indexedPaths = [];
+  for (const row of lookup.matchAll(/^\| `([^`]+)` \| (.+) \|$/gm)) {
+    const [, resource, labels] = row;
+    const file = 'reference/' + resource.slice('/.reference/'.length);
+    assert.ok(resource.startsWith('/.reference/'), 'lookup contains only readable reference paths');
+    assert.equal(prompts.file(resource), sources[file], `${resource} resolves to the indexed file`);
+    assert.equal(typeof prompts.file(resource), 'string', `${resource} is directly readable`);
+    const expected = [...definitions].filter(([, owner]) => owner === file).map(([id]) => id).sort();
+    const actual = [...labels.matchAll(/§(?:0|[A-Z]+[1-9]\d*)/g)].map(match => match[0]).sort();
+    assert.deepEqual(actual, expected, `${resource} lists its own definitions, not references to other files`);
+    indexedPaths.push(resource);
+  }
+  assert.deepEqual(indexedPaths.sort(), prompts.referencePaths().sort(),
+    'each built-in reference file appears once; injected system and flow files are excluded');
   for (const [id, file] of definitions) {
     assert.ok(system.includes(id), `${id} is discoverable from the system index`);
     if (file.startsWith('reference/')) {
