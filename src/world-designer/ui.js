@@ -1399,12 +1399,14 @@
         el('div', { text: sess.contextInterrupted.message }),
         sess.contextInterrupted.kind === 'output'
           ? el('button', { text: '调整最大输出', disabled: S.continuing, onclick: openSettings })
-          : el('button', { text: '压缩上下文', disabled: S.continuing || sess.contextInterrupted.compressed, onclick: ctxMenu }),
+          : sess.contextInterrupted.kind === 'context'
+          ? el('button', { text: '压缩上下文', disabled: S.continuing || sess.contextInterrupted.compressed, onclick: ctxMenu }) : null,
+        el('div', { class: 'hint', text: '继续使用当前进度，不清空本轮消息或回滚文件。' }),
         el('button', { class: 'primary', text: '继续', disabled: S.continuing, onclick: () => continueInterrupted(sess) })));
     } else if (S.lastError && S.lastError.sessionId === sess.id) {
       box.append(el('div', { class: 'error-card' },
         el('div', { text: S.lastError.message }),
-        el('button', { text: S.lastError.actionLabel || '重试', onclick: S.lastError.retry })));
+        S.lastError.action ? el('button', { text: S.lastError.actionLabel, onclick: S.lastError.action }) : null));
     }
     // 收起的提问停在对话末尾等待作答（Agent 仍挂起）
     if (S.pendingAsk && S.pendingAsk.minimized && S.pendingAsk.sessionId === sess.id)
@@ -1898,7 +1900,7 @@
     input.textContent = '';
     if (text) input.append(document.createTextNode(text));
     placeCaretAtEnd(input);
-    scheduleDraftSave();     // 历史回溯、撤回回填、重试回填都经过这里，一并存草稿
+    scheduleDraftSave();     // 历史回溯、撤回回填都经过这里，一并存草稿
   }
   function clearInput(input) { input.textContent = ''; }
   function isInputEmpty(input) { return inputText(input).trim() === '' && !input.querySelector('.image-attachment'); }
@@ -2717,27 +2719,15 @@
         sess.messages.push(m);
         await saveSession(sess);
       } else {
-        // 响应格式/传输失败即使发生在“继续”时，也不误报为上下文不足。
-        const responseFailure = ['MODEL_PROTOCOL_ERROR', 'MODEL_STREAM_ERROR', 'MODEL_RESPONSE_ERROR'].includes(e.code);
-        // 挂到状态上由 renderChat 渲染，否则 finally 的 renderChat() 会清掉直接 append 的卡片
-        if (ContextBudget.isLimitError(e) || e.code === 'OUTPUT_LIMIT' || resume && !responseFailure) {
-          sess.contextInterrupted = { userMsgId: [...sess.messages].reverse().find(m => m.role === 'user' && !m.displayOnly)?.msgId || sentUserId,
-            message: e.message, kind: e.code === 'OUTPUT_LIMIT' ? 'output' : 'context', writeGuardTurn: sess.writeGuardTurn, at: Date.now() };
-        }
-        S.lastError = e.code === 'OUTPUT_LIMIT'
-          ? { sessionId: sess.id, message: e.message, actionLabel: '调整最大输出', retry: openSettings }
-          : ContextBudget.isLimitError(e) || resume && !responseFailure
-          ? { sessionId: sess.id, message: e.message.includes(ContextBudget.HINT) ? e.message : e.message + '\n' + ContextBudget.HINT,
-            actionLabel: '压缩上下文', retry: () => ctxMenu() }
-          : { sessionId: sess.id, message: e.message, retry: () => {
-          S.lastError = null;
-          const retryFrom = sess.messages.findIndex(m => m.msgId === sentUserId && !m.displayOnly);
-          if (retryFrom >= 0) { sess.messages.splice(retryFrom); markSessionDirty(sess); }
-          if (repair) { renderChat(); send(repair); return; }
-          setInputText(input, rawText);
-          for (const src of images) input.append(imageAttachment(src));
-          scheduleDraftSave(); renderChat(); saveSession(sess);
-        } };
+        // 所有失败均保留当前进度；恢复时沿用消息与工具回执，不撤回或重新发送原输入。
+        const kind = e.code === 'OUTPUT_LIMIT' ? 'output' : ContextBudget.isLimitError(e) ? 'context' : 'request';
+        const message = kind === 'context' && !e.message.includes(ContextBudget.HINT)
+          ? e.message + '\n' + ContextBudget.HINT : e.message;
+        const userMsgId = [...sess.messages].reverse().find(m => m.role === 'user' && !m.displayOnly)?.msgId || sentUserId;
+        if (userMsgId) sess.contextInterrupted = { userMsgId, message, kind, writeGuardTurn: sess.writeGuardTurn, at: Date.now() };
+        S.lastError = { sessionId: sess.id, message,
+          actionLabel: kind === 'output' ? '调整最大输出' : kind === 'context' ? '压缩上下文' : '继续',
+          action: kind === 'output' ? openSettings : kind === 'context' ? ctxMenu : userMsgId ? () => continueInterrupted(sess) : null };
         await saveSession(sess);
       }
     } finally {
@@ -3212,7 +3202,7 @@
     sess.messages = candidate;
     if (sess.contextInterrupted) {
       sess.contextInterrupted.compressed = true;
-      if (sess.contextInterrupted.kind !== 'output' && ContextBudget.requestCost(S.settings, ContextBudget.cost(requestMessages(sess), toolDefs)) <= S.settings.maxContextK * 1000)
+      if (sess.contextInterrupted.kind === 'context' && ContextBudget.requestCost(S.settings, ContextBudget.cost(requestMessages(sess), toolDefs)) <= S.settings.maxContextK * 1000)
         sess.contextInterrupted.message = '本轮已中断，可点击继续执行。';
     }
     markSessionDirty(sess);
